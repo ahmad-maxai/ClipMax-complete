@@ -131,29 +131,30 @@ export function LibraryScreen({
       />
 
       <div className="shrink-0 space-y-2.5 px-4 pt-2.5 pb-1">
-        {/* Search Bar */}
-        <form
-          className="flex gap-2"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setQuery(searchDraft);
-          }}
-        >
-          <label className="relative flex-1">
-            <span className="sr-only">Search saved title and content</span>
+        {/* Full-width Instant Search Bar */}
+        <div className="relative w-full" role="search">
+          <label className="relative block w-full">
+            <span className="sr-only">Search saved clipboard items by text content</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
+              type="search"
               value={searchDraft}
               onChange={(e) => {
                 const val = e.target.value;
                 setSearchDraft(val);
                 setQuery(val);
               }}
-              placeholder="Search title or content…"
-              className="h-11 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-sm outline-none placeholder:text-muted-foreground focus:border-mint focus:ring-2 focus:ring-ring/30"
+              placeholder="Search clipboard text & snippets…"
+              className="h-10.5 w-full rounded-xl border border-border bg-surface pl-9.5 pr-22 text-xs sm:text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-mint focus:ring-2 focus:ring-mint/20 shadow-2xs transition-all"
             />
-            {searchDraft && (
+          </label>
+
+          {/* Quick Clear & Matches Counter inside Search Bar */}
+          {searchDraft && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+              <span className="rounded-full bg-surface-2 border border-border px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                {visible.length} found
+              </span>
               <button
                 type="button"
                 aria-label="Clear search"
@@ -161,25 +162,25 @@ export function LibraryScreen({
                   setSearchDraft("");
                   setQuery("");
                 }}
-                className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-accent"
+                className="grid h-6.5 w-6.5 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent tap-target transition-colors"
+                title="Clear search"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
-            )}
-          </label>
-          <Btn type="submit" variant="primary">
-            Search
-          </Btn>
-        </form>
+            </div>
+          )}
+        </div>
 
         {/* Section Header with Stats and Sort Selector */}
-        <div className="flex items-end justify-between gap-2 pt-1">
+        <div className="flex items-end justify-between gap-2 pt-0.5">
           <div>
-            <h1 className="text-base font-semibold tracking-tight text-foreground">
-              Saved items
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-foreground">
+              {query ? `Search: "${query}"` : "Saved items"}
             </h1>
-            <p className="text-xs text-muted-foreground">
-              {items.length} {items.length === 1 ? "item" : "items"} · {pinnedCount} pinned · {formatBytes(totalBytes)}
+            <p className="text-[11px] text-muted-foreground">
+              {query
+                ? `${visible.length} of ${items.length} clips match`
+                : `${items.length} ${items.length === 1 ? "item" : "items"} · ${pinnedCount} pinned · ${formatBytes(totalBytes)}`}
             </p>
           </div>
 
@@ -193,7 +194,7 @@ export function LibraryScreen({
               value={sort}
               onChange={(e) => setSort(e.target.value as SortKey)}
               aria-label="Sort items selector"
-              className="h-9 appearance-none rounded-lg border border-input bg-surface pl-3 pr-8 text-[12px] font-medium outline-none focus:border-mint focus:ring-2 focus:ring-ring/30"
+              className="h-8.5 appearance-none rounded-lg border border-border bg-surface pl-2.5 pr-7 text-[11px] font-medium outline-none focus:border-mint focus:ring-2 focus:ring-mint/20"
             >
               {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
                 <option key={k} value={k}>
@@ -201,12 +202,12 @@ export function LibraryScreen({
                 </option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
 
         {/* Filter Chips */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <FilterChip active={!pinnedOnly} onClick={() => setPinnedOnly(false)}>
             All ({items.length})
           </FilterChip>
@@ -215,9 +216,16 @@ export function LibraryScreen({
             Pinned ({pinnedCount})
           </FilterChip>
           {query && (
-            <span className="ml-auto text-xs text-muted-foreground">
-              {visible.length} match{visible.length === 1 ? "" : "es"}
-            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchDraft("");
+                setQuery("");
+              }}
+              className="ml-auto text-[11px] font-semibold text-mint hover:underline tap-target"
+            >
+              Reset filter
+            </button>
           )}
         </div>
       </div>
@@ -244,11 +252,25 @@ export function LibraryScreen({
                 </p>
               </div>
             ) : (
-              <div className="space-y-1.5">
-                <p className="font-semibold text-foreground">No matches found</p>
-                <p className="text-xs text-muted-foreground">
-                  Try adjusting your search query or switching off Pinned.
+              <div className="space-y-2 py-2">
+                <Search className="h-7 w-7 text-muted-foreground/60 mx-auto" />
+                <p className="font-bold text-foreground">No clips match "{query}"</p>
+                <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                  Try searching for different keywords, or check if the clip is unpinned.
                 </p>
+                <Btn
+                  size="sm"
+                  variant="outline"
+                  className="mx-auto text-xs mt-1"
+                  onClick={() => {
+                    setSearchDraft("");
+                    setQuery("");
+                    setPinnedOnly(false);
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Clear Search Filter
+                </Btn>
               </div>
             )}
           </li>
@@ -343,7 +365,7 @@ function ClipCard({
           isCodeOrHash && "font-mono text-[12px] text-foreground/85"
         )}
       >
-        <Highlight text={preview || "Empty text"} q={query} />
+        <Highlight text={preview || "Empty text"} q={query} truncateStart={true} />
       </p>
 
       <div className="mt-2.5 flex items-center gap-2 text-[11px] text-muted-foreground/80">
@@ -357,14 +379,22 @@ function ClipCard({
   );
 }
 
-function Highlight({ text, q }: { text: string; q: string }) {
+function Highlight({
+  text,
+  q,
+  truncateStart = false,
+}: {
+  text: string;
+  q: string;
+  truncateStart?: boolean;
+}) {
   const term = q.trim();
   if (!term) return <>{text}</>;
 
   const idx = text.toLowerCase().indexOf(term.toLowerCase());
   if (idx < 0) return <>{text}</>;
 
-  const start = Math.max(0, idx - 25);
+  const start = truncateStart ? Math.max(0, idx - 25) : 0;
   return (
     <>
       {start > 0 && "…"}
