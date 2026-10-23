@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-mint: var(--mint);
+  --color-mint-soft: var(--mint-soft);
+  --color-mint-foreground: var(--mint-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-stage: var(--stage);
+  --color-key: var(--key);
+}
+
+:root {
+  --radius: 0.75rem;
+  --stage: oklch(0.93 0.004 160);
+  --background: oklch(0.975 0.002 160);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.955 0.003 160);
+  --foreground: oklch(0.22 0.006 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.006 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.006 250);
+  --primary: oklch(0.24 0.006 250);
+  --primary-foreground: oklch(0.98 0.002 160);
+  --mint: oklch(0.56 0.08 165);
+  --mint-soft: oklch(0.94 0.03 165);
+  --mint-foreground: oklch(0.36 0.06 165);
+  --secondary: oklch(0.945 0.003 160);
+  --secondary-foreground: oklch(0.24 0.006 250);
+  --muted: oklch(0.945 0.003 160);
+  --muted-foreground: oklch(0.5 0.008 250);
+  --accent: oklch(0.935 0.004 160);
+  --accent-foreground: oklch(0.22 0.006 250);
+  --destructive: oklch(0.55 0.18 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.9 0.004 250);
+  --input: oklch(0.88 0.004 250);
+  --ring: oklch(0.56 0.08 165);
+  --key: oklch(0.99 0 0);
+}
+
+.dark {
+  --stage: oklch(0.13 0.003 250);
+  --background: oklch(0.18 0.004 250);
+  --surface: oklch(0.215 0.004 250);
+  --surface-2: oklch(0.245 0.005 250);
+  --foreground: oklch(0.96 0.003 160);
+  --card: oklch(0.215 0.004 250);
+  --card-foreground: oklch(0.96 0.003 160);
+  --popover: oklch(0.235 0.004 250);
+  --popover-foreground: oklch(0.96 0.003 160);
+  --primary: oklch(0.94 0.004 160);
+  --primary-foreground: oklch(0.2 0.004 250);
+  --mint: oklch(0.78 0.08 165);
+  --mint-soft: oklch(0.3 0.03 165);
+  --mint-foreground: oklch(0.85 0.07 165);
+  --secondary: oklch(0.26 0.005 250);
+  --secondary-foreground: oklch(0.96 0.003 160);
+  --muted: oklch(0.26 0.005 250);
+  --muted-foreground: oklch(0.7 0.006 250);
+  --accent: oklch(0.28 0.005 250);
+  --accent-foreground: oklch(0.96 0.003 160);
+  --destructive: oklch(0.68 0.16 25);
+  --destructive-foreground: oklch(0.15 0 0);
+  --border: oklch(0.3 0.005 250);
+  --input: oklch(0.34 0.005 250);
+  --ring: oklch(0.78 0.08 165);
+  --key: oklch(0.3 0.005 250);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body, #root {
+    height: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    touch-action: manipulation;
+  }
+}
+
+.tap-target {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
