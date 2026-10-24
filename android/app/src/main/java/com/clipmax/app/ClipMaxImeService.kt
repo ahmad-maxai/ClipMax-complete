@@ -204,8 +204,7 @@ class ClipMaxImeService : InputMethodService() {
             wv.addJavascriptInterface(AndroidBridge(this, store), "ClipMaxNative")
 
             val assetLoader = WebViewAssetLoader.Builder()
-                .addPathHandler("/assets/web/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
-                .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
+                .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
                 .build()
 
             wv.webViewClient = object : WebViewClient() {
@@ -234,7 +233,9 @@ class ClipMaxImeService : InputMethodService() {
         main.post {
             val item = store.getItem(idOrText)
             if (item != null) {
-                beginInsertion(item.title, "Inserting ${item.title}…") { store.openSource(item) }
+                beginInsertion(item.title, "Inserting ${item.title}…") {
+                    InsertionSource(store.openTextReader(item.id), item.characterCount)
+                }
             } else {
                 beginInsertion("Clip", "Inserting…") {
                     InsertionSource(java.io.StringReader(idOrText), idOrText.length)

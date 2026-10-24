@@ -79,8 +79,7 @@ class MainActivity : Activity() {
         webView.addJavascriptInterface(bridge, "ClipMaxNative")
 
         val assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/web/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         webView.webViewClient = object : WebViewClient() {

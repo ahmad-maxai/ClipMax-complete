@@ -256,9 +256,8 @@ class AndroidBridge(
             val prefs = CapturePreferences.preferences(context)
             CapturePreferences.isEnabled(CapturePreferences.mode(prefs))
         } catch (e: Throwable) {
-            // ignore
+            true
         }
-        return true
     }
 
     @JavascriptInterface
