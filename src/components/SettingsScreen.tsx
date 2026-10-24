@@ -33,6 +33,7 @@ import { formatBytes } from "../lib/chunker";
 import { createZipBackup, restoreZipBackup, downloadFile } from "../lib/backup";
 import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
+import { isNativeAndroid } from "../lib/nativeBridge";
 
 interface SettingsScreenProps {
   items: ClipItem[];
@@ -89,12 +90,30 @@ export function SettingsScreen({
 
   // Open Android Settings Intent with fallback simulation
   const handleOpenAndroidSettings = () => {
+    if (isNativeAndroid() && window.ClipMaxNative?.openImeSettings) {
+      try {
+        window.ClipMaxNative.openImeSettings();
+        toast("Opening Android Keyboard Settings...");
+        return;
+      } catch {}
+    }
     try {
-      // In Android WebView / browser, try launching system intent
       window.location.href = "intent:#Intent;action=android.settings.INPUT_METHOD_SETTINGS;end";
     } catch {}
     // Open in-app Android System Settings simulator modal
     setShowSystemSettingsModal(true);
+  };
+
+  // Open native Android Input Method Picker or fallback simulation
+  const handleOpenImePicker = () => {
+    if (isNativeAndroid() && window.ClipMaxNative?.showImePicker) {
+      try {
+        window.ClipMaxNative.showImePicker();
+        toast("Opening Android Input Method Picker...");
+        return;
+      } catch {}
+    }
+    setShowImePickerModal(true);
   };
 
   // Handle selecting active IME in picker
@@ -327,7 +346,7 @@ export function SettingsScreen({
                 size="sm"
                 variant={activeIme === "clipmax" ? "outline" : "mint"}
                 className="w-full justify-start text-xs font-bold gap-2 h-9.5"
-                onClick={() => setShowImePickerModal(true)}
+                onClick={handleOpenImePicker}
               >
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-mint" />
                 <span className="truncate">2. Switch Active Input Method</span>
@@ -505,30 +524,77 @@ export function SettingsScreen({
         </Section>
 
         {/* Source Export */}
-        <Section title="Export Source Code">
-          <div className="flex items-center justify-between px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-foreground">Experimental Android Project</p>
-              <p className="text-xs text-muted-foreground">
-                Download the redesigned Kotlin/Java Android package ready for Android Studio.
-              </p>
+        <Section title="Export Source Code & Project ZIPs">
+          <div className="divide-y divide-border">
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="pr-2">
+                <p className="text-sm font-semibold text-foreground">Complete Project (Everything)</p>
+                <p className="text-xs text-muted-foreground">
+                  Full codebase: native Android project + React web app in one complete ZIP (869 KB).
+                </p>
+              </div>
+              <Btn
+                size="sm"
+                variant="mint"
+                className="shrink-0 font-bold"
+                onClick={async () => {
+                  try {
+                    toast("Preparing complete ZIP download...");
+                    const res = await fetch("/assets/ClipMax-complete.zip");
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "ClipMax-complete.zip";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    success("Download started: ClipMax-complete.zip");
+                  } catch (e) {
+                    window.location.href = "/assets/ClipMax-complete.zip";
+                  }
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Complete ZIP
+              </Btn>
             </div>
-            <Btn
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const a = document.createElement("a");
-                a.href = "/assets/ClipMax-experimental-android.zip";
-                a.download = "ClipMax-experimental-android.zip";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                toast("Downloading Android source ZIP");
-              }}
-            >
-              <Download className="h-4 w-4" />
-              Download ZIP
-            </Btn>
+
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="pr-2">
+                <p className="text-sm font-semibold text-foreground">Native Android Project Only</p>
+                <p className="text-xs text-muted-foreground">
+                  Kotlin/Android Studio source with ClipMax IME service & custom icons (286 KB).
+                </p>
+              </div>
+              <Btn
+                size="sm"
+                variant="outline"
+                className="shrink-0 font-semibold"
+                onClick={async () => {
+                  try {
+                    toast("Preparing Android ZIP download...");
+                    const res = await fetch("/assets/ClipMax-experimental-android.zip");
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "ClipMax-experimental-android.zip";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    success("Download started: ClipMax-experimental-android.zip");
+                  } catch (e) {
+                    window.location.href = "/assets/ClipMax-experimental-android.zip";
+                  }
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Android ZIP
+              </Btn>
+            </div>
           </div>
         </Section>
 

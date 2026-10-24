@@ -1,5 +1,6 @@
 import { ClipItem, ClipDraft, Retention, SortKey } from "./types";
 import { utf8ByteLength, MAX_ITEM_BYTES } from "./chunker";
+import { isNativeAndroid } from "./nativeBridge";
 
 const STORAGE_KEY_ITEMS = "clipmax_items_v1";
 const STORAGE_KEY_RETENTION = "clipmax_retention_v1";
@@ -12,6 +13,22 @@ const H = 3600_000;
 const now = Date.now();
 
 export function getStoredItems(): ClipItem[] {
+  // Read directly from native Kotlin ClipStore when in Android WebView
+  if (isNativeAndroid() && window.ClipMaxNative?.getItems) {
+    try {
+      const raw = window.ClipMaxNative.getItems();
+      if (raw && raw !== "[]") {
+        const parsed = JSON.parse(raw) as ClipItem[];
+        try {
+          localStorage.setItem(STORAGE_KEY_ITEMS, raw);
+        } catch {}
+        return cleanExpiredItems(parsed);
+      }
+    } catch (e) {
+      console.warn("Failed to getItems from native ClipStore bridge, falling back to cache", e);
+    }
+  }
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ITEMS);
     if (!raw) {
@@ -26,6 +43,14 @@ export function getStoredItems(): ClipItem[] {
 }
 
 export function saveStoredItems(items: ClipItem[]): void {
+  // Sync to native Kotlin ClipStore when in Android WebView
+  if (isNativeAndroid() && window.ClipMaxNative?.syncItems) {
+    try {
+      window.ClipMaxNative.syncItems(JSON.stringify(items));
+    } catch (e) {
+      console.error("Failed to sync items to native ClipStore", e);
+    }
+  }
   try {
     localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
   } catch (e) {
@@ -34,6 +59,14 @@ export function saveStoredItems(items: ClipItem[]): void {
 }
 
 export function getStoredRetention(): Retention {
+  if (isNativeAndroid() && window.ClipMaxNative?.getRetention) {
+    try {
+      const r = window.ClipMaxNative.getRetention() as Retention;
+      if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
+        return r;
+      }
+    } catch {}
+  }
   try {
     const r = localStorage.getItem(STORAGE_KEY_RETENTION) as Retention;
     if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
@@ -44,12 +77,22 @@ export function getStoredRetention(): Retention {
 }
 
 export function saveStoredRetention(retention: Retention): void {
+  if (isNativeAndroid() && window.ClipMaxNative?.setRetention) {
+    try {
+      window.ClipMaxNative.setRetention(retention);
+    } catch {}
+  }
   try {
     localStorage.setItem(STORAGE_KEY_RETENTION, retention);
   } catch {}
 }
 
 export function getStoredCaptureEnabled(): boolean {
+  if (isNativeAndroid() && window.ClipMaxNative?.getCaptureEnabled) {
+    try {
+      return Boolean(window.ClipMaxNative.getCaptureEnabled());
+    } catch {}
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CAPTURE);
     if (raw !== null) {
@@ -60,6 +103,11 @@ export function getStoredCaptureEnabled(): boolean {
 }
 
 export function saveStoredCaptureEnabled(enabled: boolean): void {
+  if (isNativeAndroid() && window.ClipMaxNative?.setCaptureEnabled) {
+    try {
+      window.ClipMaxNative.setCaptureEnabled(enabled);
+    } catch {}
+  }
   try {
     localStorage.setItem(STORAGE_KEY_CAPTURE, String(enabled));
   } catch {}

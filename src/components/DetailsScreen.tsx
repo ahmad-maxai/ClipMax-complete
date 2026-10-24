@@ -17,6 +17,7 @@ import { ClipItem, Nav } from "../lib/types";
 import { fullDateTime } from "../lib/storage";
 import { formatBytes } from "../lib/chunker";
 import { downloadFile } from "../lib/backup";
+import { nativeCopy, nativeShare } from "../lib/nativeBridge";
 import { useToast } from "./ui/Toast";
 
 interface DetailsScreenProps {
@@ -96,9 +97,7 @@ export function DetailsScreen({
 
   // Copy to clipboard
   const handleCopy = () => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(clip.content).catch(() => {});
-    }
+    nativeCopy(clip.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     success("Copied to clipboard", {
@@ -108,16 +107,9 @@ export function DetailsScreen({
 
   // Share
   const handleShare = () => {
-    if (navigator.share) {
-      navigator
-        .share({
-          title: clip.title,
-          text: clip.content,
-        })
-        .catch(() => {});
-    } else {
+    const shared = nativeShare(clip.content, clip.title);
+    if (!shared) {
       handleCopy();
-      toast("Share sheet opened or copied to clipboard");
     }
   };
 

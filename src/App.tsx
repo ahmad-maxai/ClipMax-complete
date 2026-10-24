@@ -46,6 +46,31 @@ export default function App() {
     } catch {}
   }, [dark]);
 
+  // Listen for native Android events (resume refresh, edit intent from IME)
+  useEffect(() => {
+    const handleRefresh = () => {
+      setItems(getStoredItems());
+    };
+
+    const handleNav = (e: Event) => {
+      const custom = e as CustomEvent<{ screen: string; id?: string }>;
+      if (custom.detail?.screen === "editor") {
+        setScreen({ name: "editor", id: custom.detail.id });
+      } else if (custom.detail?.screen === "details" && custom.detail.id) {
+        setScreen({ name: "details", id: custom.detail.id });
+      } else if (custom.detail?.screen === "library") {
+        setScreen({ name: "library" });
+      }
+    };
+
+    window.addEventListener("clipmax:refresh", handleRefresh);
+    window.addEventListener("clipmax:nav", handleNav);
+    return () => {
+      window.removeEventListener("clipmax:refresh", handleRefresh);
+      window.removeEventListener("clipmax:nav", handleNav);
+    };
+  }, []);
+
   // Persist items on state change
   const handleUpdateItems = (updated: ClipItem[]) => {
     setItems(updated);
