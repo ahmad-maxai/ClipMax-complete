@@ -392,7 +392,7 @@ export function KeyboardPanelScreen({
             </div>
 
             {/* Virtual Keypad Rows: Sleek, Compact, Contained Flex Width */}
-            <div className="w-full max-w-full space-y-1 select-none box-border overflow-hidden" role="group" aria-label="Search Keypad">
+            <div className="w-full max-w-full px-1.5 space-y-1 select-none box-border overflow-hidden" role="group" aria-label="Search Keypad">
               {/* Row 1: 10 Keys (Q W E R T Y U I O P) */}
               <div className="flex w-full max-w-full gap-0.5 box-border">
                 {(numericMode ? numRow1 : alphaRow1).map((k) => (

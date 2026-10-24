@@ -82,7 +82,7 @@ export function TopBar({
   subtitle?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm">
+    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm pt-[env(safe-area-inset-top,0px)]">
       <div className="flex h-14 items-center gap-1.5 px-3">
         {left}
         <div className="min-w-0 flex-1 px-1">

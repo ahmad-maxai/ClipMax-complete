@@ -1,27 +1,27 @@
 package com.clipmax.app
 
-import android.inputmethodservice.InputMethodService
-import android.content.Intent
 import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.text.Html
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.webkit.WebViewAssetLoader
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -35,78 +35,16 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
- * JavaScript to Kotlin bridge specifically for the IME keyboard view.
- */
-class ImeBridge(
-    private val service: ClipMaxImeService,
-    private val store: ClipStore
-) {
-    @JavascriptInterface
-    fun isNative(): Boolean = true
-
-    @JavascriptInterface
-    fun insertClip(idOrText: String): Boolean {
-        service.insertFromBridge(idOrText)
-        return true
-    }
-
-    @JavascriptInterface
-    fun deleteItem(id: String): Boolean {
-        return try {
-            store.delete(id)
-            service.reloadItems()
-            true
-        } catch (e: Throwable) {
-            false
-        }
-    }
-
-    @JavascriptInterface
-    fun setPinned(id: String, pinned: Boolean): Boolean {
-        return try {
-            store.setPinned(id, pinned)
-            service.reloadItems()
-            true
-        } catch (e: Throwable) {
-            false
-        }
-    }
-
-    @JavascriptInterface
-    fun switchKeyboard() {
-        service.showSystemImePicker()
-    }
-
-    @JavascriptInterface
-    fun hideKeyboard() {
-        service.requestHideSelf(0)
-    }
-
-    @JavascriptInterface
-    fun openClipMaxApp(itemId: String?) {
-        try {
-            val intent = Intent(service, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (!itemId.isNullOrEmpty()) {
-                    putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, itemId)
-                }
-            }
-            service.startActivity(intent)
-        } catch (e: Throwable) {
-            // ignore
-        }
-    }
-}
-
-/**
- * A privacy-focused keyboard displaying the redesigned ClipMax UI.
- * Captures clipboard text locally and inserts only on user command.
+ * ClipMax Redesigned Native IME Service.
+ * Provides a high-fidelity, responsive native keyboard experience
+ * matching the approved dark charcoal (#111916) and mint (#2DD4BF) visual identity.
+ * Features 50k-character chunked insertion, live search keypad,
+ * pin filtering, and direct app editor integration.
  */
 class ClipMaxImeService : InputMethodService() {
+
     private lateinit var store: ClipStore
     private lateinit var capturePreferences: SharedPreferences
     private var clipboardManager: ClipboardManager? = null
@@ -124,29 +62,40 @@ class ClipMaxImeService : InputMethodService() {
     private var isInserting = false
     private var pinnedOnly = false
     private var searchMode = false
-    private var searchShowingResults = false
     private var numericSearchKeys = false
     private var keyboardSearchQuery = ""
     private var keyboardSearchResults: List<ClipItem> = emptyList()
     private var keyboardSearchRequest = 0
-    private var actionMenuItemId: String? = null
     private var insertedCodePoints = 0
     private var lastReportedCodePoints = 0
     private var activeItemCodePoints = 0
     private var insertTask: Future<*>? = null
     private var items: List<ClipItem> = emptyList()
 
+    private var rootView: LinearLayout? = null
     private var itemContainer: LinearLayout? = null
     private var statusLabel: TextView? = null
+    private var searchInputLabel: TextView? = null
     private var cancelButton: Button? = null
     private var pinnedButton: Button? = null
-    private var rootView: LinearLayout? = null
+    private var searchButton: Button? = null
     private var pendingSelectionCapture: Runnable? = null
     private var expiryCleanupRunnable: Runnable? = null
     private var lastCaptureFingerprint: Int? = null
     private var lastCaptureAtElapsed = 0L
 
-    private var imeWebView: WebView? = null
+    // Approved Redesign Palette (Dark Charcoal & Vibrant Mint)
+    private val bg = 0xFF111916.toInt()
+    private val surface = 0xFF18241F.toInt()
+    private val surfaceBorder = 0xFF273931.toInt()
+    private val accent = 0xFF2DD4BF.toInt()
+    private val accentInk = 0xFF0A1F18.toInt()
+    private val accentSoft = 0xFF15332A.toInt()
+    private val ink = 0xFFEAF1ED.toInt()
+    private val muted = 0xFF8A9E96.toInt()
+    private val danger = 0xFFF87171.toInt()
+    private val keyBg = 0xFF202E28.toInt()
+    private val keySpecialBg = 0xFF18231E.toInt()
 
     private val capturePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == CapturePreferences.MODE_KEY) {
@@ -155,14 +104,6 @@ class ClipMaxImeService : InputMethodService() {
             main.post { updateCaptureStatus(); renderItems() }
         }
     }
-
-    private val darkMode get() = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    // Use modern redesign palette
-    private val bg = 0xFF111916.toInt()
-    private val card = 0xFF1A2621.toInt()
-    private val ink = 0xFFEAF1ED.toInt()
-    private val muted = 0xFF8A9E96.toInt()
-    private val accent = 0xFF2DD4BF.toInt()
 
     override fun onCreate() {
         super.onCreate()
@@ -174,103 +115,16 @@ class ClipMaxImeService : InputMethodService() {
         clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
             main.post { capturePrimaryClip(initialCheck = false) }
         }
-        initImeWebView()
-    }
-
-    private fun initImeWebView() {
-        try {
-            val wv = WebView(this).apply {
-                setBackgroundColor(0xFF111916.toInt())
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(310)
-                )
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    databaseEnabled = true
-                    allowFileAccess = true
-                    allowContentAccess = true
-                    useWideViewPort = true
-                    loadWithOverviewMode = true
-                    @Suppress("DEPRECATION")
-                    allowFileAccessFromFileURLs = true
-                    @Suppress("DEPRECATION")
-                    allowUniversalAccessFromFileURLs = true
-                    cacheMode = WebSettings.LOAD_DEFAULT
-                }
-            }
-            wv.addJavascriptInterface(ImeBridge(this, store), "ClipMaxIme")
-            wv.addJavascriptInterface(AndroidBridge(this, store), "ClipMaxNative")
-
-            val assetLoader = WebViewAssetLoader.Builder()
-                .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
-                .build()
-
-            wv.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): WebResourceResponse? {
-                    return assetLoader.shouldInterceptRequest(request.url)
-                }
-            }
-            wv.loadUrl("https://appassets.androidplatform.net/assets/web/index.html?mode=ime")
-            imeWebView = wv
-        } catch (e: Throwable) {
-            imeWebView = null
-        }
-    }
-
-    fun showSystemImePicker() {
-        main.post {
-            val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showInputMethodPicker()
-        }
-    }
-
-    fun insertFromBridge(idOrText: String) {
-        main.post {
-            val item = store.getItem(idOrText)
-            if (item != null) {
-                beginInsertion(item.title, "Inserting ${item.title}…") {
-                    InsertionSource(store.openTextReader(item.id), item.characterCount)
-                }
-            } else {
-                beginInsertion("Clip", "Inserting…") {
-                    InsertionSource(java.io.StringReader(idOrText), idOrText.length)
-                }
-            }
-        }
     }
 
     override fun onCreateInputView(): View {
-        if (imeWebView == null) {
-            initImeWebView()
-        }
-        val wv = imeWebView
-        if (wv != null) {
-            (wv.parent as? ViewGroup)?.removeView(wv)
-            val container = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(0xFF111916.toInt())
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(310)
-                )
-            }
-            container.addView(wv, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-            return container
-        }
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(8))
             setBackgroundColor(bg)
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(310))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(315)
+            )
         }
         rootView = root
         renderKeyboardLayout()
@@ -282,171 +136,613 @@ class ClipMaxImeService : InputMethodService() {
         root.removeAllViews()
         itemContainer = null
         statusLabel = null
+        searchInputLabel = null
         cancelButton = null
         pinnedButton = null
-        if (searchMode) buildSearchLayout(root) else buildCardLayout(root)
-    }
+        searchButton = null
 
-    private fun buildCardLayout(root: LinearLayout) {
-        val toolbar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        // 1. Top Header Bar (ClipMax branding, Search, Pinned, Switch IME, Close)
+        root.addView(buildHeaderBar())
+
+        // 2. Status / Insertion Progress Banner
+        root.addView(buildStatusBar())
+
+        // 3. Main Area (Search keypad + results, or Full Card List)
+        if (searchMode) {
+            buildSearchLayout(root)
+        } else {
+            buildCardListLayout(root)
         }
-        toolbar.addView(label("ClipMax · clipboard", 17f, true), LinearLayout.LayoutParams(0, dp(42), 1f))
-        val pinned = actionButton("Pinned") { pinnedOnly = !pinnedOnly; renderItems() }
-        pinnedButton = pinned
-        toolbar.addView(actionButton("Search") { beginKeyboardSearch() }, LinearLayout.LayoutParams(-2, dp(40)))
-        toolbar.addView(pinned, LinearLayout.LayoutParams(-2, dp(40)))
-        root.addView(toolbar)
 
-        val help = label("Copies are saved as serially numbered 50,000-character cards. Search cards here. Tap More or long-press a card for Edit, Pin, or Delete.", 11f)
-        help.setPadding(dp(3), dp(2), dp(3), dp(5))
-        root.addView(help, LinearLayout.LayoutParams(-1, -2))
-        val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
-        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        itemContainer = container
-        scroll.addView(container)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        val bottom = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        statusLabel = label("Choose a saved item.", 12f, color = muted)
-        bottom.addView(statusLabel, LinearLayout.LayoutParams(0, dp(42), 1f))
-        cancelButton = actionButton("Cancel") { cancelInsertion(userInitiated = true) }.apply { visibility = View.GONE }
-        bottom.addView(cancelButton, LinearLayout.LayoutParams(-2, dp(40)))
-        root.addView(bottom)
-        updateCaptureStatus()
         renderItems()
     }
 
-    private fun beginKeyboardSearch() {
-        if (isPasswordTarget) return
-        searchMode = true
-        searchShowingResults = false
-        numericSearchKeys = false
-        keyboardSearchQuery = ""
-        keyboardSearchResults = emptyList()
-        renderKeyboardLayout()
+    private fun buildHeaderBar(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(10), dp(4), dp(10), dp(4))
+        setBackgroundColor(bg)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
+
+        // ClipMax Mint Logo Mark
+        val logoBox = TextView(this@ClipMaxImeService).apply {
+            text = "C"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(accentInk)
+            background = roundedDrawable(accent, dp(6f))
+        }
+        addView(logoBox, LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(8) })
+
+        // App Title
+        val titleText = TextView(this@ClipMaxImeService).apply {
+            text = "ClipMax"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(ink)
+        }
+        addView(titleText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // Pinned Toggle Button
+        pinnedButton = makePillButton(if (pinnedOnly) "Pinned ★" else "Pinned", pinnedOnly) {
+            pinnedOnly = !pinnedOnly
+            pinnedButton?.text = if (pinnedOnly) "Pinned ★" else "Pinned"
+            pinnedButton?.background = roundedDrawable(if (pinnedOnly) accent else surface, dp(6f), if (pinnedOnly) 0 else surfaceBorder)
+            pinnedButton?.setTextColor(if (pinnedOnly) accentInk else muted)
+            renderItems()
+        }
+        addView(pinnedButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply { rightMargin = dp(6) })
+
+        // Search Toggle Button
+        searchButton = makePillButton("Search 🔍", searchMode) {
+            searchMode = !searchMode
+            if (!searchMode) {
+                keyboardSearchQuery = ""
+                keyboardSearchResults = emptyList()
+            }
+            renderKeyboardLayout()
+        }
+        addView(searchButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply { rightMargin = dp(6) })
+
+        // Switch Keyboard (IME Picker) Button
+        val switchImeBtn = makeIconButton("⌨") {
+            showSystemImePicker()
+        }
+        addView(switchImeBtn, LinearLayout.LayoutParams(dp(34), dp(34)).apply { rightMargin = dp(4) })
+
+        // Close / Hide Keyboard Button
+        val hideBtn = makeIconButton("⌄") {
+            requestHideSelf(0)
+        }
+        addView(hideBtn, LinearLayout.LayoutParams(dp(34), dp(34)))
+    }
+
+    private fun buildStatusBar(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(12), dp(2), dp(10), dp(2))
+        setBackgroundColor(0xFF141F1A.toInt())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26))
+
+        val label = TextView(this@ClipMaxImeService).apply {
+            textSize = 11f
+            setTextColor(muted)
+            text = "Tap a card to insert • Auto-capture on"
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        statusLabel = label
+        addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val cancel = Button(this@ClipMaxImeService).apply {
+            text = "Cancel"
+            textSize = 11f
+            setTextColor(danger)
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(dp(6), 0, dp(6), 0)
+            background = roundedDrawable(0x22F87171, dp(4f))
+            visibility = View.GONE
+            setOnClickListener { cancelInsertion(userInitiated = true) }
+        }
+        cancelButton = cancel
+        addView(cancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22)))
+    }
+
+    private fun buildCardListLayout(root: LinearLayout) {
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        itemContainer = container
+        scroll.addView(container, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     private fun buildSearchLayout(root: LinearLayout) {
-        val toolbar = LinearLayout(this).apply {
+        // Query Input Display
+        val searchBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            setBackgroundColor(bg)
         }
-        toolbar.addView(label(if (searchShowingResults) "Search results" else "Search cards", 16f, true), LinearLayout.LayoutParams(0, dp(40), 1f))
-        toolbar.addView(actionButton(if (searchShowingResults) "Edit" else "Close") {
-            if (searchShowingResults) {
-                searchShowingResults = false
-                renderKeyboardLayout()
-            } else {
-                searchMode = false
-                keyboardSearchRequest++
-                renderKeyboardLayout()
+        val queryBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(8), dp(4))
+            background = roundedDrawable(surface, dp(8f), surfaceBorder)
+        }
+        val queryText = TextView(this).apply {
+            text = if (keyboardSearchQuery.isEmpty()) "Type to filter clips…" else keyboardSearchQuery
+            setTextColor(if (keyboardSearchQuery.isEmpty()) muted else ink)
+            textSize = 13f
+            typeface = if (keyboardSearchQuery.isEmpty()) Typeface.DEFAULT else Typeface.DEFAULT_BOLD
+            setSingleLine(true)
+        }
+        searchInputLabel = queryText
+        queryBox.addView(queryText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        if (keyboardSearchQuery.isNotEmpty()) {
+            val clearBtn = TextView(this).apply {
+                text = "✕"
+                textSize = 13f
+                setTextColor(muted)
+                gravity = Gravity.CENTER
+                setPadding(dp(6), 0, dp(4), 0)
+                setOnClickListener {
+                    keyboardSearchQuery = ""
+                    runKeyboardSearch()
+                }
             }
-        }, LinearLayout.LayoutParams(-2, dp(38)))
-        root.addView(toolbar)
-
-        val queryRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            queryBox.addView(clearBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        queryRow.addView(label(if (keyboardSearchQuery.isBlank()) "Type a word or phrase" else keyboardSearchQuery, 14f, color = if (keyboardSearchQuery.isBlank()) muted else ink), LinearLayout.LayoutParams(0, dp(34), 1f))
-        queryRow.addView(actionButton("Clear") { keyboardSearchQuery = ""; searchShowingResults = false; renderKeyboardLayout() }, LinearLayout.LayoutParams(-2, dp(32)))
-        root.addView(queryRow)
+        searchBar.addView(queryBox, LinearLayout.LayoutParams(0, dp(34), 1f))
 
-        if (searchShowingResults) {
-            val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
-            val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            itemContainer = container
-            scroll.addView(container)
-            root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-            val bottom = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            statusLabel = label("${keyboardSearchResults.size} matching cards", 12f, color = muted)
-            bottom.addView(statusLabel, LinearLayout.LayoutParams(0, dp(34), 1f))
-            bottom.addView(actionButton("Done") { searchMode = false; keyboardSearchRequest++; renderKeyboardLayout() }, LinearLayout.LayoutParams(-2, dp(34)))
-            root.addView(bottom)
-            renderItems()
-            return
+        val closeSearch = makePillButton("Done", true) {
+            searchMode = false
+            keyboardSearchQuery = ""
+            keyboardSearchResults = emptyList()
+            renderKeyboardLayout()
         }
+        searchBar.addView(closeSearch, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply { leftMargin = dp(8) })
+        root.addView(searchBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        // Results Scroll Area (compact height)
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+        }
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        itemContainer = container
+        scroll.addView(container, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // On-Screen Keypad
         val keypad = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF0E1513.toInt())
+            setPadding(dp(3), dp(4), dp(3), dp(4))
         }
         if (!numericSearchKeys) {
-            addSearchKeyRow(keypad, listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p"))
-            addSearchKeyRow(keypad, listOf("a", "s", "d", "f", "g", "h", "j", "k", "l"))
-            addSearchKeyRow(keypad, listOf("123", "z", "x", "c", "v", "b", "n", "m", "⌫"))
+            addKeypadRow(keypad, listOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"))
+            addKeypadRow(keypad, listOf("A", "S", "D", "F", "G", "H", "J", "K", "L"))
+            addKeypadRow(keypad, listOf("123", "Z", "X", "C", "V", "B", "N", "M", "⌫"))
         } else {
-            addSearchKeyRow(keypad, listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"))
-            addSearchKeyRow(keypad, listOf("-", "/", ":", ";", "(", ")", "\$", "&", "@", "\""))
-            addSearchKeyRow(keypad, listOf("ABC", "#", ".", ",", "?", "!", "'", "⌫"))
+            addKeypadRow(keypad, listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"))
+            addKeypadRow(keypad, listOf("-", "/", ":", ";", "(", ")", "\$", "&", "@", "\""))
+            addKeypadRow(keypad, listOf("ABC", "#", ".", ",", "?", "!", "'", "⌫"))
         }
-        addSearchKeyRow(keypad, listOf("Clear", "Space", "Search"))
-        root.addView(keypad, LinearLayout.LayoutParams(-1, 0, 1f))
-        statusLabel = label("Searches titles and card text", 11f, color = muted)
-        root.addView(statusLabel, LinearLayout.LayoutParams(-1, dp(26)))
+        addKeypadRow(keypad, listOf("Clear", "Space", "Done"))
+        root.addView(keypad, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
-    private fun addSearchKeyRow(parent: LinearLayout, keys: List<String>) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+    private fun addKeypadRow(parent: LinearLayout, keys: List<String>) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(35))
+        }
         keys.forEach { key ->
-            val weight = when (key) { "Space" -> 3f; "Search" -> 1.5f; "Clear", "123", "ABC", "⌫" -> 1.2f; else -> 1f }
-            row.addView(searchKeyButton(key) { pressSearchKey(key) }, LinearLayout.LayoutParams(0, dp(31), weight).apply {
-                leftMargin = dp(1); rightMargin = dp(1); bottomMargin = dp(2)
+            val weight = when (key) {
+                "Space" -> 3.5f
+                "Done", "Clear" -> 1.4f
+                "123", "ABC", "⌫" -> 1.3f
+                else -> 1.0f
+            }
+            val btn = Button(this).apply {
+                text = key
+                isAllCaps = false
+                textSize = if (key.length > 1) 11f else 14f
+                typeface = Typeface.DEFAULT_BOLD
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(0, 0, 0, 0)
+                val isSpecial = key in listOf("123", "ABC", "Done", "Clear", "⌫")
+                setTextColor(if (key == "Done") accentInk else ink)
+                background = if (key == "Done") roundedRipple(accent, dp(6f)) else roundedRipple(if (isSpecial) keySpecialBg else keyBg, dp(6f))
+                setOnClickListener { pressKey(key) }
+            }
+            row.addView(btn, LinearLayout.LayoutParams(0, dp(31), weight).apply {
+                leftMargin = dp(2)
+                rightMargin = dp(2)
+                bottomMargin = dp(3)
             })
         }
-        parent.addView(row, LinearLayout.LayoutParams(-1, dp(33)))
+        parent.addView(row)
     }
 
-    private fun searchKeyButton(title: String, action: () -> Unit): Button = Button(this).apply {
-        text = title
-        isAllCaps = false
-        textSize = if (title.length > 1) 11f else 14f
-        minHeight = 0
-        minimumHeight = dp(29)
-        minWidth = 0
-        minimumWidth = 0
-        setPadding(0, 0, 0, 0)
-        setTextColor(if (darkMode) 0xFF13231D.toInt() else 0xFFFFFFFF.toInt())
-        backgroundTintList = android.content.res.ColorStateList.valueOf(accent)
-        setOnClickListener { action() }
-    }
-
-    private fun pressSearchKey(key: String) {
+    private fun pressKey(key: String) {
         when (key) {
-            "123" -> numericSearchKeys = true
-            "ABC" -> numericSearchKeys = false
+            "123" -> { numericSearchKeys = true; renderKeyboardLayout(); return }
+            "ABC" -> { numericSearchKeys = false; renderKeyboardLayout(); return }
             "⌫" -> if (keyboardSearchQuery.isNotEmpty()) keyboardSearchQuery = keyboardSearchQuery.dropLast(1)
             "Clear" -> keyboardSearchQuery = ""
             "Space" -> keyboardSearchQuery += " "
-            "Search" -> { runKeyboardSearch(); return }
-            else -> keyboardSearchQuery += key
+            "Done" -> {
+                searchMode = false
+                keyboardSearchQuery = ""
+                keyboardSearchResults = emptyList()
+                renderKeyboardLayout()
+                return
+            }
+            else -> keyboardSearchQuery += key.lowercase(Locale.ROOT)
         }
-        renderKeyboardLayout()
+        searchInputLabel?.text = if (keyboardSearchQuery.isEmpty()) "Type to filter clips…" else keyboardSearchQuery
+        searchInputLabel?.setTextColor(if (keyboardSearchQuery.isEmpty()) muted else ink)
+        runKeyboardSearch()
     }
 
     private fun runKeyboardSearch() {
         val query = keyboardSearchQuery.trim()
-        if (query.isEmpty()) { setStatus("Enter a word or phrase to search."); return }
-        searchShowingResults = true
-        keyboardSearchResults = emptyList()
-        renderKeyboardLayout()
-        setStatus("Searching cards…")
         val request = ++keyboardSearchRequest
         io.execute {
-            val found = runCatching { store.search(query) }.getOrElse { emptyList() }
-                .sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt }.thenBy { it.title })
+            val found = if (query.isEmpty()) {
+                items
+            } else {
+                runCatching { store.search(query) }.getOrElse { emptyList() }
+            }.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt })
             main.post {
-                if (!searchMode || !searchShowingResults || request != keyboardSearchRequest) return@post
+                if (request != keyboardSearchRequest || rootView == null) return@post
                 keyboardSearchResults = found
-                renderKeyboardLayout()
-                setStatus(if (found.isEmpty()) "No matching cards." else "${found.size} matching cards.")
+                renderItems()
+                setStatus(if (query.isEmpty()) "Showing all ${found.size} clips" else "${found.size} clips matching \"$query\"")
             }
         }
+    }
+
+    fun showSystemImePicker() {
+        main.post {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showInputMethodPicker()
+        }
+    }
+
+    fun reloadItems() {
+        val request = ++listRequest
+        io.execute {
+            CapturePreferences.cleanupExpired(store, capturePreferences)
+            val found = runCatching { store.listItems() }.getOrElse { emptyList() }
+            main.post {
+                if (request != listRequest || rootView == null) return@post
+                items = found.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt })
+                renderItems()
+                if (searchMode && keyboardSearchQuery.isNotEmpty()) runKeyboardSearch()
+            }
+        }
+    }
+
+    private fun renderItems() {
+        val container = itemContainer ?: return
+        container.removeAllViews()
+
+        if (isPasswordTarget) {
+            container.addView(TextView(this).apply {
+                text = "🔒 Clipboard capture and clips are hidden in password fields for your privacy."
+                textSize = 13f
+                setTextColor(muted)
+                gravity = Gravity.CENTER
+                setPadding(dp(20), dp(30), dp(20), dp(30))
+            })
+            return
+        }
+
+        val visible = when {
+            searchMode && keyboardSearchQuery.isNotEmpty() -> keyboardSearchResults
+            pinnedOnly -> items.filter { it.pinned }
+            else -> items
+        }
+
+        if (visible.isEmpty()) {
+            val emptyMsg = when {
+                searchMode && keyboardSearchQuery.isNotEmpty() -> "No clips matching \"$keyboardSearchQuery\""
+                pinnedOnly -> "No pinned clips yet. Pin important clips for fast access."
+                else -> "No saved clips yet. Copy text anywhere on Android to capture cards here."
+            }
+            container.addView(TextView(this).apply {
+                text = emptyMsg
+                textSize = 13f
+                setTextColor(muted)
+                gravity = Gravity.CENTER
+                setPadding(dp(20), dp(24), dp(20), dp(24))
+            })
+            return
+        }
+
+        visible.forEach { item ->
+            container.addView(buildCardRow(item))
+        }
+    }
+
+    /**
+     * Builds a modern redesigned clip card matching the dark charcoal/mint styling.
+     */
+    private fun buildCardRow(item: ClipItem): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        background = roundedDrawable(surface, dp(10f), surfaceBorder)
+        val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            leftMargin = dp(8)
+            rightMargin = dp(8)
+            topMargin = dp(4)
+            bottomMargin = dp(4)
+        }
+        layoutParams = params
+
+        // Top Row: Title + Pin Star + Chars Badge
+        val topRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this@ClipMaxImeService).apply {
+            text = (if (item.pinned) "★ " else "") + item.title
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(if (item.pinned) accent else ink)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        topRow.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val badge = TextView(this@ClipMaxImeService).apply {
+            text = "${item.characterCount.grouped()} chars"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(accent)
+            background = roundedDrawable(accentSoft, dp(4f))
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+        }
+        topRow.addView(badge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(topRow)
+
+        // Middle Row: Text preview snippet
+        val snippetText = getSnippet(item).ifEmpty { "Card content ready to insert" }
+        val snippet = TextView(this@ClipMaxImeService).apply {
+            text = snippetText
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setTextColor(0xFFA7BDB6.toInt())
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        addView(snippet)
+
+        // Bottom Row: Action buttons (Insert, Pin, Edit, Delete)
+        val actionRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        // Primary INSERT Button
+        val insertBtn = Button(this@ClipMaxImeService).apply {
+            text = "Insert ↵"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(accentInk)
+            background = roundedRipple(accent, dp(6f))
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(dp(16), 0, dp(16), 0)
+            setOnClickListener { insertItem(item) }
+        }
+        actionRow.addView(insertBtn, LinearLayout.LayoutParams(0, dp(34), 1.6f).apply { rightMargin = dp(6) })
+
+        // Pin Toggle Button
+        val pinBtn = Button(this@ClipMaxImeService).apply {
+            text = if (item.pinned) "Unpin" else "Pin"
+            textSize = 12f
+            setTextColor(if (item.pinned) accent else ink)
+            background = roundedRipple(surfaceBorder, dp(6f))
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { togglePin(item) }
+        }
+        actionRow.addView(pinBtn, LinearLayout.LayoutParams(0, dp(34), 1.0f).apply { rightMargin = dp(6) })
+
+        // Edit Button (opens in full ClipMax app)
+        val editBtn = Button(this@ClipMaxImeService).apply {
+            text = "Edit"
+            textSize = 12f
+            setTextColor(ink)
+            background = roundedRipple(surfaceBorder, dp(6f))
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { editCard(item) }
+        }
+        actionRow.addView(editBtn, LinearLayout.LayoutParams(0, dp(34), 1.0f).apply { rightMargin = dp(6) })
+
+        // Delete Button
+        val delBtn = Button(this@ClipMaxImeService).apply {
+            text = "Delete"
+            textSize = 12f
+            setTextColor(danger)
+            background = roundedRipple(0x22F87171, dp(6f))
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            setOnClickListener { deleteCard(item) }
+        }
+        actionRow.addView(delBtn, LinearLayout.LayoutParams(0, dp(34), 1.0f))
+
+        addView(actionRow)
+    }
+
+    private fun getSnippet(item: ClipItem, maxChars: Int = 120): String {
+        return try {
+            store.openTextReader(item.id).use { reader ->
+                val buf = CharArray(maxChars)
+                val read = reader.read(buf, 0, maxChars)
+                if (read > 0) String(buf, 0, read).replace("\n", " ").trim() else ""
+            }
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    private fun togglePin(item: ClipItem) {
+        io.execute {
+            val result = runCatching { store.setPinned(item.id, !item.pinned) }
+            main.post {
+                if (result.isSuccess) {
+                    setStatus(if (item.pinned) "Unpinned ${item.title}" else "Pinned ${item.title}")
+                    reloadItems()
+                }
+            }
+        }
+    }
+
+    private fun editCard(item: ClipItem) {
+        runCatching {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
+            }
+            startActivity(intent)
+        }
+    }
+
+    private fun deleteCard(item: ClipItem) {
+        io.execute {
+            val result = runCatching {
+                store.delete(item.id)
+                CapturePreferences.removeExpiry(capturePreferences, item.id)
+            }
+            main.post {
+                if (result.isSuccess) {
+                    setStatus("Deleted ${item.title}")
+                    reloadItems()
+                }
+            }
+        }
+    }
+
+    private data class InsertionSource(val reader: Reader, val characterCount: Int)
+
+    private fun insertItem(item: ClipItem) {
+        beginInsertion(item.title, "Inserting ${item.title}…") {
+            InsertionSource(store.openTextReader(item.id), item.characterCount)
+        }
+    }
+
+    private fun beginInsertion(title: String, initialStatus: String, openSource: () -> InsertionSource) {
+        if (isPasswordTarget) {
+            setStatus("Saved items are unavailable in password fields.")
+            return
+        }
+        val connection = currentInputConnection
+        if (connection == null) {
+            setStatus("No active text field in destination app.")
+            return
+        }
+        if (isInserting) cancelInsertion(userInitiated = false)
+        generation++
+        val token = generation
+        isInserting = true
+        insertedCodePoints = 0
+        lastReportedCodePoints = 0
+        activeItemCodePoints = 0
+        setStatus(initialStatus)
+
+        insertTask = inserter.submit {
+            try {
+                val source = openSource()
+                activeItemCodePoints = source.characterCount
+                main.post {
+                    if (generation == token) setStatus("Inserting $title (${activeItemCodePoints.grouped()} chars)…")
+                }
+                val complete = source.reader.use { reader ->
+                    TextChunker.forEachChunk(
+                        reader = reader,
+                        isCancelled = { generation != token || Thread.currentThread().isInterrupted }
+                    ) { chunk -> deliverChunk(connection, token, chunk) }
+                }
+                main.post {
+                    if (generation == token) {
+                        isInserting = false
+                        setStatus(if (complete) "Inserted ${insertedCodePoints.grouped()} chars." else "Insertion paused.")
+                    }
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (failure: Exception) {
+                main.post {
+                    if (generation == token) {
+                        isInserting = false
+                        setStatus("Insertion ended: ${failure.message ?: "destination closed"}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun deliverChunk(connection: android.view.inputmethod.InputConnection, token: Int, chunk: String): Boolean {
+        val latch = CountDownLatch(1)
+        var accepted = false
+        var failure: Throwable? = null
+        val points = chunk.codePointCount(0, chunk.length)
+        main.post {
+            try {
+                if (generation == token && isInserting) {
+                    accepted = connection.commitText(chunk, 1)
+                    if (!accepted) {
+                        failure = IOException("Destination app rejected chunk")
+                    } else {
+                        insertedCodePoints += points
+                        if (insertedCodePoints - lastReportedCodePoints >= 16_384 || insertedCodePoints >= activeItemCodePoints) {
+                            lastReportedCodePoints = insertedCodePoints
+                            setStatus("Inserted ${insertedCodePoints.grouped()} / ${activeItemCodePoints.grouped()} chars…")
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                failure = error
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!latch.await(60, TimeUnit.SECONDS)) throw IOException("Timed out waiting for destination app")
+        if (generation != token) return false
+        failure?.let { throw IOException(it.message ?: "Destination app rejected text", it) }
+        return accepted
+    }
+
+    private fun cancelInsertion(userInitiated: Boolean) {
+        if (!isInserting) return
+        generation++
+        insertTask?.cancel(true)
+        insertTask = null
+        isInserting = false
+        setStatus(if (userInitiated) "Insertion cancelled." else "Insertion stopped.")
     }
 
     override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
@@ -459,23 +755,15 @@ class ClipMaxImeService : InputMethodService() {
         inputSessionActive = true
         inputViewActive = false
         updateCaptureMonitoring()
-        if (isPasswordTarget) setStatus("Clipboard capture and saved items are disabled in password fields.")
-        else updateCaptureStatus()
+        if (isPasswordTarget) {
+            setStatus("🔒 Sensitive field: Clipboard capture is paused.")
+        } else {
+            updateCaptureStatus()
+        }
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
             main.postDelayed({ captureCurrentSelection() }, 250)
         }
         renderItems()
-    }
-
-    override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
-        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        if (!inputSessionActive || !inputViewActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode) || newSelStart < 0 || newSelEnd < 0 || newSelStart == newSelEnd) return
-        val selected = runCatching { currentInputConnection?.getSelectedText(0) }.getOrNull() ?: return
-        if (selected.isEmpty()) return
-        pendingSelectionCapture?.let(main::removeCallbacks)
-        val snapshot = selected
-        pendingSelectionCapture = Runnable { queueAutomaticCapture(snapshot, "selection") }
-        main.postDelayed(pendingSelectionCapture!!, 350)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
@@ -485,10 +773,6 @@ class ClipMaxImeService : InputMethodService() {
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) capturePrimaryClip(initialCheck = true)
         reloadItems()
         scheduleExpiryCleanup()
-        imeWebView?.evaluateJavascript("""
-            window.dispatchEvent(new CustomEvent('clipmax:password', { detail: { isPassword: $isPasswordTarget } }));
-            window.dispatchEvent(new CustomEvent('clipmax:refresh'));
-        """.trimIndent(), null)
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -521,8 +805,6 @@ class ClipMaxImeService : InputMethodService() {
         pendingSelectionCapture?.let(main::removeCallbacks)
         expiryCleanupRunnable?.let(main::removeCallbacks)
         insertTask?.cancel(true)
-        imeWebView?.destroy()
-        imeWebView = null
         io.shutdownNow()
         inserter.shutdownNow()
         super.onDestroy()
@@ -536,115 +818,6 @@ class ClipMaxImeService : InputMethodService() {
             InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
             InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
         )) || (fieldClass == InputType.TYPE_CLASS_NUMBER && variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
-    }
-
-    fun reloadItems() {
-        val request = ++listRequest
-        io.execute {
-            CapturePreferences.cleanupExpired(store, capturePreferences)
-            val found = runCatching { store.listItems() }.getOrElse { emptyList() }
-            main.post {
-                imeWebView?.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
-                if (request != listRequest || rootView == null) return@post
-                items = found.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt }.thenBy { it.title })
-                renderItems()
-                if (searchMode && searchShowingResults) runKeyboardSearch()
-            }
-        }
-    }
-
-    private fun renderItems() {
-        val container = itemContainer ?: return
-        container.removeAllViews()
-        pinnedButton?.text = if (pinnedOnly) "All items" else "Pinned"
-        if (isPasswordTarget) {
-            container.addView(label("ClipMax does not capture or show saved text in password fields.", 14f, true).apply { setPadding(dp(12), dp(16), dp(12), dp(16)) })
-            cancelButton?.visibility = if (isInserting) View.VISIBLE else View.GONE
-            return
-        }
-        val visible = when {
-            searchMode && searchShowingResults -> keyboardSearchResults
-            pinnedOnly -> items.filter { it.pinned }
-            else -> items
-        }
-        if (visible.isEmpty()) {
-            val emptyMessage = when {
-                searchMode && searchShowingResults -> "No matching cards. Edit the search and try again."
-                pinnedOnly -> "No pinned items yet. Pin items in the ClipMax library."
-                else -> "No captured cards yet. Copy text while ClipMax is active, or switch to ClipMax after copying. New cards appear here automatically."
-            }
-            container.addView(label(emptyMessage, 14f, color = muted).apply {
-                setPadding(dp(12), dp(16), dp(12), dp(16))
-            })
-        } else visible.forEach { item ->
-            container.addView(itemRow(item))
-            if (actionMenuItemId == item.id) container.addView(cardActionRow(item))
-        }
-        cancelButton?.visibility = if (isInserting) View.VISIBLE else View.GONE
-    }
-
-    private fun itemRow(item: ClipItem): View = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(10), dp(5), dp(6), dp(5))
-        setBackgroundColor(card)
-        contentDescription = "${item.title}. Tap More or long-press for Edit, Pin, and Delete actions."
-        val details = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(label((if (item.pinned) "★  " else "") + item.title, 14f, true, ink), LinearLayout.LayoutParams(-1, -2))
-            addView(label("${item.characterCount.grouped()} chars · ${humanSize(item.sizeBytes)}", 11f, color = muted), LinearLayout.LayoutParams(-1, -2))
-            setOnLongClickListener { toggleCardActions(item); true }
-        }
-        addView(details, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(actionButton("Insert") { insertItem(item) }, LinearLayout.LayoutParams(-2, dp(42)))
-        addView(actionButton("More") { toggleCardActions(item) }, LinearLayout.LayoutParams(-2, dp(42)))
-        val params = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(5) }
-        layoutParams = params
-        alpha = if (isInserting) 0.68f else 1f
-        setOnLongClickListener {
-            toggleCardActions(item)
-            true
-        }
-    }
-
-    private fun cardActionRow(item: ClipItem): View = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(4), 0, dp(4), dp(6))
-        addView(actionButton("Edit") {
-            actionMenuItemId = null
-            renderItems()
-            editCard(item)
-        }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(4) })
-        addView(actionButton(if (item.pinned) "Unpin" else "Pin") {
-            actionMenuItemId = null
-            io.execute {
-                val result = runCatching { store.setPinned(item.id, !item.pinned) }
-                main.post {
-                    if (result.isSuccess) setStatus(if (item.pinned) "Card unpinned." else "Card pinned.")
-                    else setStatus("Could not update pin: ${result.exceptionOrNull()?.message ?: "storage error"}")
-                    reloadItems()
-                }
-            }
-        }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(4) })
-        addView(actionButton("Delete") {
-            actionMenuItemId = null
-            deleteCard(item)
-        }, LinearLayout.LayoutParams(0, dp(38), 1f))
-    }
-
-    private fun toggleCardActions(item: ClipItem) {
-        actionMenuItemId = if (actionMenuItemId == item.id) null else item.id
-        setStatus(if (actionMenuItemId == null) "Card actions closed." else "Choose Edit, Pin, or Delete for ${item.title}.")
-        renderItems()
-    }
-
-    private data class InsertionSource(val reader: Reader, val characterCount: Int)
-
-    private fun insertItem(item: ClipItem) {
-        beginInsertion("${item.title}", "Inserting ${item.title}…") {
-            InsertionSource(store.openTextReader(item.id), item.characterCount)
-        }
     }
 
     private fun captureCurrentSelection() {
@@ -663,41 +836,26 @@ class ClipMaxImeService : InputMethodService() {
             runCatching { manager.removePrimaryClipChangedListener(listener) }
             clipboardRegistered = false
         }
-        if (!inputSessionActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) {
-            pendingSelectionCapture?.let(main::removeCallbacks)
-            pendingSelectionCapture = null
-        }
     }
 
     private fun updateCaptureStatus() {
-        setStatus(if (CapturePreferences.isEnabled(captureMode)) "Auto-capture on · ${CapturePreferences.modeLabel(captureMode)}" else "Automatic capture is off. Choose a saved card to insert.")
+        setStatus(if (CapturePreferences.isEnabled(captureMode)) "Auto-capture active • ${CapturePreferences.modeLabel(captureMode)}" else "Auto-capture off")
     }
 
     private fun capturePrimaryClip(initialCheck: Boolean) {
         if (!inputSessionActive || !inputViewActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
         if (!initialCheck && !clipboardRegistered) return
         val clipResult = runCatching { clipboardManager?.primaryClip }
-        if (clipResult.isFailure) {
-            setStatus("Android did not provide clipboard text. Use the source app's Copy action, then reopen ClipMax.")
-            return
-        }
-        val clip = clipResult.getOrNull()
-        if (clip == null) {
-            if (initialCheck) setStatus("No clipboard text found. In read-only content, use the app's Copy action.")
-            return
-        }
-        var foundText = false
+        val clip = clipResult.getOrNull() ?: return
         for (index in 0 until clip.itemCount) {
             val item = clip.getItemAt(index)
             val text = item.text ?: item.htmlText?.let { runCatching { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }.getOrNull() }
             if (!text.isNullOrEmpty()) {
-                foundText = true
                 val signature = contentSignature(text)
                 if (initialCheck && CapturePreferences.lastClipboardSignature(capturePreferences) == signature) continue
                 queueAutomaticCapture(text, "copy", signature)
             }
         }
-        if (initialCheck && !foundText) setStatus("Clipboard has no text. In read-only content, use the app's Copy action.")
     }
 
     private fun queueAutomaticCapture(text: CharSequence, source: String, clipboardSignature: String? = null) {
@@ -725,11 +883,9 @@ class ClipMaxImeService : InputMethodService() {
             main.post {
                 if (result.isSuccess && chunkIndex > 0) {
                     CaptureExpiryReceiver.schedule(this@ClipMaxImeService)
-                    setStatus("Captured $chunkIndex ${if (chunkIndex == 1) "card" else "cards"} · ${CapturePreferences.modeLabel(mode)}")
+                    setStatus("Captured $chunkIndex ${if (chunkIndex == 1) "card" else "cards"} • ${CapturePreferences.modeLabel(mode)}")
                     reloadItems()
                     scheduleExpiryCleanup()
-                } else if (result.isFailure) {
-                    setStatus("Auto-capture failed: ${result.exceptionOrNull()?.message ?: "storage unavailable"}")
                 }
             }
         }
@@ -750,27 +906,6 @@ class ClipMaxImeService : InputMethodService() {
         return "${text.length}:$hash"
     }
 
-    private fun deleteCard(item: ClipItem) {
-        io.execute {
-            val result = runCatching {
-                store.delete(item.id)
-                CapturePreferences.removeExpiry(capturePreferences, item.id)
-            }
-            main.post {
-                if (result.isSuccess) { CaptureExpiryReceiver.schedule(this@ClipMaxImeService); setStatus("Card deleted."); reloadItems() }
-                else setStatus("Could not delete card: ${result.exceptionOrNull()?.message ?: "storage error"}")
-            }
-        }
-    }
-
-    private fun editCard(item: ClipItem) {
-        runCatching {
-            startActivity(Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id))
-        }.onFailure { setStatus("Could not open editor: ${it.message ?: "activity unavailable"}") }
-    }
-
     private fun scheduleExpiryCleanup() {
         expiryCleanupRunnable?.let(main::removeCallbacks)
         if (!inputSessionActive) return
@@ -788,126 +923,58 @@ class ClipMaxImeService : InputMethodService() {
         main.postDelayed(task, (next - System.currentTimeMillis()).coerceAtLeast(1_000L))
     }
 
-    private fun beginInsertion(title: String, initialStatus: String, openSource: () -> InsertionSource) {
-        if (isPasswordTarget) { setStatus("Selection capture and saved items are unavailable in password fields."); return }
-        val connection = currentInputConnection
-        if (connection == null) { setStatus("No active text field. Tap a text box in the destination app first."); return }
-        if (isInserting) cancelInsertion(userInitiated = false)
-        generation++
-        val token = generation
-        isInserting = true
-        insertedCodePoints = 0
-        lastReportedCodePoints = 0
-        activeItemCodePoints = 0
-        setStatus(initialStatus)
-        renderItems()
-        insertTask = inserter.submit {
-            try {
-                val source = openSource()
-                activeItemCodePoints = source.characterCount
-                main.post {
-                    if (generation == token) setStatus("Inserting $title in 50,000-character chunks…")
-                }
-                val complete = source.reader.use { reader ->
-                    TextChunker.forEachChunk(
-                        reader = reader,
-                        isCancelled = { generation != token || Thread.currentThread().isInterrupted }
-                    ) { chunk -> deliverChunk(connection, token, chunk) }
-                }
-                main.post {
-                    if (generation == token) {
-                        isInserting = false
-                        setStatus(if (complete) "Inserted ${insertedCodePoints.grouped()} of ${activeItemCodePoints.grouped()} characters." else "Insertion stopped; the inserted part remains in the field.")
-                        renderItems()
-                    }
-                }
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (failure: Exception) {
-                main.post {
-                    if (generation == token) {
-                        isInserting = false
-                        setStatus("Insertion stopped: ${failure.message ?: "destination did not accept text"}. The inserted part remains.")
-                        renderItems()
-                    }
-                }
-            }
-        }
-    }
-
-    /** Dispatch each chunk on the IME/main thread and wait before reading the next disk chunk. */
-    private fun deliverChunk(connection: android.view.inputmethod.InputConnection, token: Int, chunk: String): Boolean {
-        val latch = CountDownLatch(1)
-        var accepted = false
-        var failure: Throwable? = null
-        val points = chunk.codePointCount(0, chunk.length)
-        main.post {
-            try {
-                if (generation == token && isInserting) {
-                    accepted = connection.commitText(chunk, 1)
-                    if (!accepted) failure = IOException("The destination field rejected a text chunk")
-                    else {
-                        insertedCodePoints += points
-                        if (insertedCodePoints - lastReportedCodePoints >= 16_384 || insertedCodePoints >= activeItemCodePoints) {
-                            lastReportedCodePoints = insertedCodePoints
-                            setStatus("Inserted ${insertedCodePoints.grouped()} of ${activeItemCodePoints.grouped()} characters…")
-                        }
-                    }
-                }
-            } catch (error: Throwable) {
-                failure = error
-            } finally {
-                latch.countDown()
-            }
-        }
-        if (!latch.await(60, TimeUnit.SECONDS)) throw IOException("Timed out waiting for the destination app")
-        if (generation != token) return false
-        failure?.let { throw IOException(it.message ?: "The destination rejected text", it) }
-        return accepted
-    }
-
-    private fun cancelInsertion(userInitiated: Boolean) {
-        if (!isInserting) return
-        generation++
-        insertTask?.cancel(true)
-        insertTask = null
-        isInserting = false
-        setStatus(if (userInitiated) "Cancelled after ${insertedCodePoints.grouped()} characters; inserted text remains." else "Insertion stopped because the text field changed.")
-        renderItems()
-    }
-
-    private fun label(value: String, size: Float, bold: Boolean = false, color: Int = ink): TextView = TextView(this).apply {
-        text = value
-        textSize = size
-        setTextColor(color)
-        if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-        gravity = Gravity.CENTER_VERTICAL
-        maxLines = 2
-    }
-
-    private fun actionButton(title: String, action: () -> Unit): Button = Button(this).apply {
-        text = title
-        isAllCaps = false
-        textSize = 13f
-        minHeight = dp(40)
-        setPadding(dp(8), 0, dp(8), 0)
-        setTextColor(if (darkMode) 0xFF13231D.toInt() else 0xFFFFFFFF.toInt())
-        backgroundTintList = android.content.res.ColorStateList.valueOf(accent)
-        setOnClickListener { action() }
-    }
-
     private fun setStatus(value: String) {
         statusLabel?.text = value
         cancelButton?.visibility = if (isInserting) View.VISIBLE else View.GONE
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private fun humanSize(bytes: Long): String = when {
-        bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> String.format(Locale.ROOT, "%.1f KiB", bytes / 1024.0)
-        else -> String.format(Locale.ROOT, "%.2f MiB", bytes / (1024.0 * 1024.0))
+    private fun makePillButton(text: String, active: Boolean, onClick: () -> Unit): Button = Button(this).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        minHeight = 0
+        minimumHeight = 0
+        setPadding(dp(12), 0, dp(12), 0)
+        setTextColor(if (active) accentInk else ink)
+        background = if (active) roundedRipple(accent, dp(6f)) else roundedRipple(surface, dp(6f), surfaceBorder)
+        setOnClickListener { onClick() }
     }
 
+    private fun makeIconButton(icon: String, onClick: () -> Unit): Button = Button(this).apply {
+        this.text = icon
+        textSize = 14f
+        setTextColor(ink)
+        minHeight = 0
+        minimumHeight = 0
+        minWidth = 0
+        minimumWidth = 0
+        setPadding(0, 0, 0, 0)
+        background = roundedRipple(surface, dp(6f), surfaceBorder)
+        setOnClickListener { onClick() }
+    }
+
+    private fun roundedDrawable(bgColor: Int, cornerRadiusPx: Float, strokeColor: Int = 0): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(bgColor)
+            cornerRadius = cornerRadiusPx
+            if (strokeColor != 0) {
+                setStroke(dp(1), strokeColor)
+            }
+        }
+    }
+
+    private fun roundedRipple(normalColor: Int, cornerRadiusPx: Float, strokeColor: Int = 0): RippleDrawable {
+        val content = roundedDrawable(normalColor, cornerRadiusPx, strokeColor)
+        val mask = roundedDrawable(0xFFFFFFFF.toInt(), cornerRadiusPx)
+        return RippleDrawable(
+            ColorStateList.valueOf(0x33FFFFFF),
+            content,
+            mask
+        )
+    }
+
+    private fun dp(value: Float): Float = value * resources.displayMetrics.density
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun Int.grouped(): String = String.format(Locale.ROOT, "%,d", this)
 }

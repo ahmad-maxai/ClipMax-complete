@@ -3,11 +3,13 @@ package com.clipmax.app
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.webkit.WebViewAssetLoader
 
 /**
@@ -38,7 +40,6 @@ class MainActivity : Activity() {
 
         webView = WebView(this).apply {
             setBackgroundColor(0xFF111916.toInt())
-            fitsSystemWindows = true
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -52,26 +53,6 @@ class MainActivity : Activity() {
                 @Suppress("DEPRECATION")
                 allowUniversalAccessFromFileURLs = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-            }
-        }
-
-        // Apply WindowInsets safe area padding so status and navigation bars never overlap UI
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            webView.setOnApplyWindowInsetsListener { v, insets ->
-                val sysBars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
-                v.setPadding(sysBars.left, sysBars.top, sysBars.right, sysBars.bottom)
-                insets
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            webView.setOnApplyWindowInsetsListener { v, insets ->
-                v.setPadding(
-                    insets.systemWindowInsetLeft,
-                    insets.systemWindowInsetTop,
-                    insets.systemWindowInsetRight,
-                    insets.systemWindowInsetBottom
-                )
-                insets
             }
         }
 
@@ -100,7 +81,35 @@ class MainActivity : Activity() {
             }
         }
 
-        setContentView(webView)
+        // Wrap WebView in a FrameLayout container that applies WindowInsets margins.
+        // This physically offsets the WebView below the Android status bar (clock, battery)
+        // and above the system navigation bar, preventing ANY overlap or touch interference.
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(0xFF111916.toInt())
+        }
+        val layoutParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        container.addView(webView, layoutParams)
+        setContentView(container)
+
+        container.setOnApplyWindowInsetsListener { _, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val sysBars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                layoutParams.setMargins(sysBars.left, sysBars.top, sysBars.right, sysBars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                layoutParams.setMargins(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+            }
+            webView.layoutParams = layoutParams
+            insets
+        }
 
         handleEditIntent(intent)
 
