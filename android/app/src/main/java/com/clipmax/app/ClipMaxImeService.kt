@@ -13,6 +13,14 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.webkit.WebViewAssetLoader
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -27,10 +35,76 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
- * A privacy-focused keyboard. It never collects key events or reads surrounding host text;
- * it captures only an explicitly selected range and inserts only after a user tap.
+ * JavaScript to Kotlin bridge specifically for the IME keyboard view.
+ */
+class ImeBridge(
+    private val service: ClipMaxImeService,
+    private val store: ClipStore
+) {
+    @JavascriptInterface
+    fun isNative(): Boolean = true
+
+    @JavascriptInterface
+    fun insertClip(idOrText: String): Boolean {
+        service.insertFromBridge(idOrText)
+        return true
+    }
+
+    @JavascriptInterface
+    fun deleteItem(id: String): Boolean {
+        return try {
+            store.delete(id)
+            service.reloadItems()
+            true
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun setPinned(id: String, pinned: Boolean): Boolean {
+        return try {
+            store.setPinned(id, pinned)
+            service.reloadItems()
+            true
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun switchKeyboard() {
+        service.showSystemImePicker()
+    }
+
+    @JavascriptInterface
+    fun hideKeyboard() {
+        service.requestHideSelf(0)
+    }
+
+    @JavascriptInterface
+    fun openClipMaxApp(itemId: String?) {
+        try {
+            val intent = Intent(service, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (!itemId.isNullOrEmpty()) {
+                    putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, itemId)
+                }
+            }
+            service.startActivity(intent)
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+}
+
+/**
+ * A privacy-focused keyboard displaying the redesigned ClipMax UI.
+ * Captures clipboard text locally and inserts only on user command.
  */
 class ClipMaxImeService : InputMethodService() {
     private lateinit var store: ClipStore
@@ -72,6 +146,8 @@ class ClipMaxImeService : InputMethodService() {
     private var lastCaptureFingerprint: Int? = null
     private var lastCaptureAtElapsed = 0L
 
+    private var imeWebView: WebView? = null
+
     private val capturePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == CapturePreferences.MODE_KEY) {
             captureMode = CapturePreferences.mode(capturePreferences)
@@ -81,11 +157,12 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private val darkMode get() = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    private val bg get() = if (darkMode) 0xFF17211D.toInt() else 0xFFF4F7F5.toInt()
-    private val card get() = if (darkMode) 0xFF24312B.toInt() else 0xFFFFFFFF.toInt()
-    private val ink get() = if (darkMode) 0xFFEAF1ED.toInt() else 0xFF17211D.toInt()
-    private val muted get() = if (darkMode) 0xFFB3C2BA.toInt() else 0xFF59665F.toInt()
-    private val accent get() = if (darkMode) 0xFFA8D5C8.toInt() else 0xFF315C52.toInt()
+    // Use modern redesign palette
+    private val bg = 0xFF111916.toInt()
+    private val card = 0xFF1A2621.toInt()
+    private val ink = 0xFFEAF1ED.toInt()
+    private val muted = 0xFF8A9E96.toInt()
+    private val accent = 0xFF2DD4BF.toInt()
 
     override fun onCreate() {
         super.onCreate()
@@ -97,14 +174,102 @@ class ClipMaxImeService : InputMethodService() {
         clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
             main.post { capturePrimaryClip(initialCheck = false) }
         }
+        initImeWebView()
+    }
+
+    private fun initImeWebView() {
+        try {
+            val wv = WebView(this).apply {
+                setBackgroundColor(0xFF111916.toInt())
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(310)
+                )
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    allowFileAccess = true
+                    allowContentAccess = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    @Suppress("DEPRECATION")
+                    allowFileAccessFromFileURLs = true
+                    @Suppress("DEPRECATION")
+                    allowUniversalAccessFromFileURLs = true
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                }
+            }
+            wv.addJavascriptInterface(ImeBridge(this, store), "ClipMaxIme")
+            wv.addJavascriptInterface(AndroidBridge(this, store), "ClipMaxNative")
+
+            val assetLoader = WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/web/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
+                .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
+                .build()
+
+            wv.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): WebResourceResponse? {
+                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+            }
+            wv.loadUrl("https://appassets.androidplatform.net/assets/web/index.html?mode=ime")
+            imeWebView = wv
+        } catch (e: Throwable) {
+            imeWebView = null
+        }
+    }
+
+    fun showSystemImePicker() {
+        main.post {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showInputMethodPicker()
+        }
+    }
+
+    fun insertFromBridge(idOrText: String) {
+        main.post {
+            val item = store.getItem(idOrText)
+            if (item != null) {
+                beginInsertion(item.title, "Inserting ${item.title}…") { store.openSource(item) }
+            } else {
+                beginInsertion("Clip", "Inserting…") {
+                    InsertionSource(java.io.StringReader(idOrText), idOrText.length)
+                }
+            }
+        }
     }
 
     override fun onCreateInputView(): View {
+        if (imeWebView == null) {
+            initImeWebView()
+        }
+        val wv = imeWebView
+        if (wv != null) {
+            (wv.parent as? ViewGroup)?.removeView(wv)
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(0xFF111916.toInt())
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(310)
+                )
+            }
+            container.addView(wv, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            return container
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(6), dp(10), dp(8))
             setBackgroundColor(bg)
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(280))
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(310))
         }
         rootView = root
         renderKeyboardLayout()
@@ -319,6 +484,10 @@ class ClipMaxImeService : InputMethodService() {
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) capturePrimaryClip(initialCheck = true)
         reloadItems()
         scheduleExpiryCleanup()
+        imeWebView?.evaluateJavascript("""
+            window.dispatchEvent(new CustomEvent('clipmax:password', { detail: { isPassword: $isPasswordTarget } }));
+            window.dispatchEvent(new CustomEvent('clipmax:refresh'));
+        """.trimIndent(), null)
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -351,6 +520,8 @@ class ClipMaxImeService : InputMethodService() {
         pendingSelectionCapture?.let(main::removeCallbacks)
         expiryCleanupRunnable?.let(main::removeCallbacks)
         insertTask?.cancel(true)
+        imeWebView?.destroy()
+        imeWebView = null
         io.shutdownNow()
         inserter.shutdownNow()
         super.onDestroy()
@@ -366,12 +537,13 @@ class ClipMaxImeService : InputMethodService() {
         )) || (fieldClass == InputType.TYPE_CLASS_NUMBER && variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
     }
 
-    private fun reloadItems() {
+    fun reloadItems() {
         val request = ++listRequest
         io.execute {
             CapturePreferences.cleanupExpired(store, capturePreferences)
             val found = runCatching { store.listItems() }.getOrElse { emptyList() }
             main.post {
+                imeWebView?.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
                 if (request != listRequest || rootView == null) return@post
                 items = found.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt }.thenBy { it.title })
                 renderItems()

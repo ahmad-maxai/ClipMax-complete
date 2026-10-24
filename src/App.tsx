@@ -16,8 +16,14 @@ import { DetailsScreen } from "./components/DetailsScreen";
 import { EditorScreen } from "./components/EditorScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { KeyboardPanelScreen } from "./components/KeyboardPanelScreen";
+import { ImeKeyboardScreen } from "./components/ImeKeyboardScreen";
 
 export default function App() {
+  const isImeMode =
+    typeof window !== "undefined" &&
+    (new URLSearchParams(window.location.search).get("mode") === "ime" ||
+      Boolean((window as any).isImeMode) ||
+      Boolean((window as any).ClipMaxIme));
   const [screen, setScreen] = useState<Screen>({ name: "library" });
   const [items, setItems] = useState<ClipItem[]>(() => getStoredItems());
   const [retention, setRetention] = useState<Retention>(() => getStoredRetention());
@@ -81,6 +87,15 @@ export default function App() {
 
   // Render active screen
   const renderScreen = () => {
+    if (isImeMode) {
+      return (
+        <ImeKeyboardScreen
+          items={items}
+          onUpdateItems={handleUpdateItems}
+        />
+      );
+    }
+
     switch (screen.name) {
       case "library":
         return (

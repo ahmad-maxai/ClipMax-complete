@@ -1,5 +1,6 @@
 import React, { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../lib/utils";
+import logoImg from "../assets/logo.jpg";
 
 export interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "mint" | "outline" | "ghost" | "subtle" | "danger" | "dangerOutline";
@@ -130,16 +131,34 @@ export function ClipMaxLogo({
     <div
       style={{ width: size, height: size }}
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-[24%] border border-border/80 bg-white shadow-xs flex items-center justify-center select-none",
+        "relative shrink-0 overflow-hidden rounded-[24%] border border-border/80 bg-[#f0f4f2] dark:bg-[#1a2621] shadow-xs flex items-center justify-center select-none",
         className
       )}
     >
+      {/* Crisp SVG Vector Fallback / Base (Always visible, never blank) */}
+      <svg
+        viewBox="0 0 100 100"
+        className="absolute inset-0 h-full w-full p-[14%] text-[#111916] dark:text-[#EAF1ED]"
+        fill="currentColor"
+      >
+        {/* Bold X character */}
+        <polygon points="20,16 38,16 50,36 62,16 80,16 61,46 82,78 64,78 50,56 36,78 18,78 39,46" />
+        {/* Rounded clipboard pill loop below */}
+        <path
+          d="M 28 84 C 28 81, 72 81, 72 84 C 72 87, 28 87, 28 84 Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="6"
+          strokeLinecap="round"
+        />
+      </svg>
+
+      {/* Actual High-Res Rendered Logo from assets */}
       <img
-        src="/assets/aistudio/IMG_20261019_115418_340_d0d1fc21.jpg"
+        src={logoImg}
         alt="ClipMax"
-        className="h-full w-full object-cover scale-[1.02]"
+        className="absolute inset-0 h-full w-full object-cover scale-[1.03]"
         onError={(e) => {
-          // If image fails to load, fallback to crisp SVG
           e.currentTarget.style.display = "none";
         }}
       />

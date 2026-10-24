@@ -17,9 +17,10 @@ import org.json.JSONObject
  * to real Android capabilities (IME settings, clipboard, sharing, retention).
  */
 class AndroidBridge(
-    private val activity: Activity,
+    private val context: Context,
     private val store: ClipStore
 ) {
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     @JavascriptInterface
     fun isNative(): Boolean = true
 
@@ -176,8 +177,8 @@ class AndroidBridge(
     @JavascriptInterface
     fun copyToClipboard(text: String): Boolean {
         return try {
-            activity.runOnUiThread {
-                val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            mainHandler.post {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clip = ClipData.newPlainText("ClipMax", text)
                 clipboard?.setPrimaryClip(clip)
             }
@@ -194,8 +195,12 @@ class AndroidBridge(
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, title)
                 putExtra(Intent.EXTRA_TEXT, text)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            activity.startActivity(Intent.createChooser(shareIntent, "Share clip"))
+            val chooser = Intent.createChooser(shareIntent, "Share clip").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
             true
         } catch (e: Throwable) {
             false
@@ -207,7 +212,7 @@ class AndroidBridge(
         try {
             val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.startActivity(intent)
+            context.startActivity(intent)
         } catch (e: Throwable) {
             // ignore
         }
@@ -216,8 +221,8 @@ class AndroidBridge(
     @JavascriptInterface
     fun showImePicker() {
         try {
-            activity.runOnUiThread {
-                val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            mainHandler.post {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.showInputMethodPicker()
             }
         } catch (e: Throwable) {
@@ -228,7 +233,7 @@ class AndroidBridge(
     @JavascriptInterface
     fun getRetention(): String {
         return try {
-            val prefs = CapturePreferences.preferences(activity)
+            val prefs = CapturePreferences.preferences(context)
             CapturePreferences.mode(prefs)
         } catch (e: Throwable) {
             "24h"
@@ -238,7 +243,7 @@ class AndroidBridge(
     @JavascriptInterface
     fun setRetention(retention: String) {
         try {
-            val prefs = CapturePreferences.preferences(activity)
+            val prefs = CapturePreferences.preferences(context)
             prefs.edit().putString(CapturePreferences.MODE_KEY, retention).apply()
         } catch (e: Throwable) {
             // ignore
@@ -248,17 +253,18 @@ class AndroidBridge(
     @JavascriptInterface
     fun getCaptureEnabled(): Boolean {
         return try {
-            val prefs = CapturePreferences.preferences(activity)
+            val prefs = CapturePreferences.preferences(context)
             CapturePreferences.isEnabled(CapturePreferences.mode(prefs))
         } catch (e: Throwable) {
-            true
+            // ignore
         }
+        return true
     }
 
     @JavascriptInterface
     fun setCaptureEnabled(enabled: Boolean) {
         try {
-            val prefs = CapturePreferences.preferences(activity)
+            val prefs = CapturePreferences.preferences(context)
             val current = CapturePreferences.mode(prefs)
             if (!enabled) {
                 prefs.edit().putString(CapturePreferences.MODE_KEY, "off").apply()

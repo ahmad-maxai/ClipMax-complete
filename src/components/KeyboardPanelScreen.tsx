@@ -286,27 +286,27 @@ export function KeyboardPanelScreen({
         aria-label="ClipMax Input Method View"
       >
         {/* IME Header Bar */}
-        <div className="flex h-8 shrink-0 items-center justify-between border-b border-border bg-surface px-2 sm:px-3">
-          <div className="flex items-center gap-1.5">
+        <div className="flex h-8 shrink-0 items-center justify-between border-b border-border bg-surface px-2 w-full max-w-full box-border gap-1 overflow-hidden">
+          <div className="flex items-center gap-1 min-w-0">
             <button
               type="button"
               onClick={() => setSearchKeypadOpen((v) => !v)}
               className={cn(
-                "inline-flex h-6.5 items-center gap-1.5 rounded-md border px-2 text-[10px] sm:text-[11px] font-bold transition-colors tap-target",
+                "inline-flex h-6.5 items-center gap-1 rounded-md border px-1.5 text-[10px] font-bold transition-colors tap-target shrink-0",
                 searchKeypadOpen || searchQuery
                   ? "border-mint bg-mint-soft text-mint-foreground"
                   : "border-border bg-surface text-foreground hover:bg-accent"
               )}
             >
-              <Search className="h-3 w-3" />
-              {searchKeypadOpen ? "Hide Keypad" : searchQuery ? `"${searchQuery}"` : "Search Keypad"}
+              <Search className="h-3 w-3 shrink-0" />
+              <span>{searchKeypadOpen ? "Hide" : searchQuery ? `"${searchQuery.slice(0, 8)}"` : "Keypad"}</span>
             </button>
 
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery("")}
-                className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-accent tap-target"
+                className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-accent tap-target shrink-0"
                 title="Clear query"
               >
                 <X className="h-3 w-3" />
@@ -317,53 +317,53 @@ export function KeyboardPanelScreen({
               type="button"
               onClick={() => setPinnedOnly((v) => !v)}
               className={cn(
-                "inline-flex h-6.5 items-center gap-1 rounded-md border px-1.5 text-[10px] sm:text-[11px] font-bold tap-target",
+                "inline-flex h-6.5 items-center gap-1 rounded-md border px-1.5 text-[10px] font-bold tap-target shrink-0",
                 pinnedOnly
                   ? "border-mint bg-mint-soft text-mint-foreground"
                   : "border-border bg-surface text-muted-foreground hover:bg-accent"
               )}
             >
-              <Pin className="h-2.5 w-2.5" />
-              Pinned
+              <Pin className="h-2.5 w-2.5 shrink-0" />
+              <span>Pinned</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() =>
                 setKeyboardSize((v) => (v === "compact" ? "normal" : "compact"))
               }
-              className="inline-flex h-6.5 items-center rounded-md border border-border bg-surface px-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-accent tap-target"
+              className="inline-flex h-6.5 items-center rounded-md border border-border bg-surface px-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-accent tap-target shrink-0"
               title="Toggle Keyboard Size"
             >
-              {keyboardSize === "compact" ? "Compact Size" : "Standard Size"}
+              {keyboardSize === "compact" ? "Compact" : "Normal"}
             </button>
-            <span className="text-[9px] font-extrabold tracking-wider text-muted-foreground uppercase hidden xs:inline">
-              ClipMax IME
+            <span className="text-[9px] font-extrabold tracking-wider text-muted-foreground uppercase hidden sm:inline">
+              IME
             </span>
           </div>
         </div>
 
         {/* View Mode 1: Search Keypad Active */}
         {searchKeypadOpen ? (
-          <div className="shrink-0 flex flex-col bg-background px-2 sm:px-3 py-1.5 space-y-1 overflow-hidden box-border max-w-md mx-auto w-full">
+          <div className="shrink-0 flex flex-col bg-background px-1.5 sm:px-3 py-1 space-y-1 overflow-hidden box-border max-w-full w-full">
             {/* Query bar + Live suggestions strip */}
-            <div className="flex items-center justify-between px-1 text-[10px] shrink-0">
+            <div className="flex items-center justify-between px-1 text-[10px] shrink-0 w-full overflow-hidden">
               <span className="font-mono text-muted-foreground truncate">
                 Query: <strong className="text-foreground font-bold">{searchQuery || "(type to search)"}</strong>
               </span>
               <button
                 type="button"
                 onClick={() => setSearchKeypadOpen(false)}
-                className="text-[10px] font-bold text-mint hover:underline pl-2 shrink-0 flex items-center gap-0.5"
+                className="text-[10px] font-bold text-mint hover:underline pl-2 shrink-0 flex items-center gap-0.5 tap-target"
               >
                 Done <ChevronDown className="h-3 w-3" />
               </button>
             </div>
 
             {/* Quick Matched Chips Strip (Above Keypad, allowing one-tap insert while typing) */}
-            <div className="h-7 shrink-0 flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 px-0.5">
+            <div className="h-7 shrink-0 flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 px-0.5 w-full box-border">
               {isPasswordField ? (
                 <span className="text-[10px] text-destructive font-semibold flex items-center gap-1">
                   <Lock className="h-3 w-3" /> Password Field Active — Previews Withheld
@@ -382,7 +382,7 @@ export function KeyboardPanelScreen({
                     title={`Insert "${clip.title}" (${clip.characterCount} chars)`}
                   >
                     {clip.pinned && <Pin className="h-2 w-2 text-mint" />}
-                    <span className="truncate max-w-[120px]">{clip.title}</span>
+                    <span className="truncate max-w-[110px]">{clip.title}</span>
                     <span className="font-mono text-[8px] text-muted-foreground">
                       {formatBytes(clip.sizeBytes)}
                     </span>
@@ -392,9 +392,9 @@ export function KeyboardPanelScreen({
             </div>
 
             {/* Virtual Keypad Rows: Sleek, Compact, Contained Flex Width */}
-            <div className="w-full space-y-1 select-none box-border" role="group" aria-label="Search Keypad">
+            <div className="w-full max-w-full space-y-1 select-none box-border overflow-hidden" role="group" aria-label="Search Keypad">
               {/* Row 1: 10 Keys (Q W E R T Y U I O P) */}
-              <div className="flex w-full gap-0.5 sm:gap-1">
+              <div className="flex w-full max-w-full gap-0.5 box-border">
                 {(numericMode ? numRow1 : alphaRow1).map((k) => (
                   <button
                     key={k}
@@ -403,8 +403,8 @@ export function KeyboardPanelScreen({
                     className={cn(
                       "flex-1 min-w-0 rounded border border-border/80 bg-surface text-foreground font-bold shadow-2xs hover:bg-accent active:bg-mint-soft active:text-mint-foreground flex items-center justify-center tap-target transition-transform active:scale-95",
                       keyboardSize === "compact"
-                        ? "h-8 sm:h-8.5 text-[13px] sm:text-[14px]"
-                        : "h-9 sm:h-9.5 text-sm sm:text-base"
+                        ? "h-8 text-[13px]"
+                        : "h-9 text-sm"
                     )}
                   >
                     {capsLock ? k.toUpperCase() : k.toLowerCase()}
@@ -413,7 +413,7 @@ export function KeyboardPanelScreen({
               </div>
 
               {/* Row 2: 9 Keys with proportional centering (A S D F G H J K L) */}
-              <div className="flex w-full gap-0.5 sm:gap-1 px-[4%]">
+              <div className="flex w-full max-w-full gap-0.5 px-[3%] box-border">
                 {(numericMode ? numRow2 : alphaRow2).map((k) => (
                   <button
                     key={k}
@@ -422,8 +422,8 @@ export function KeyboardPanelScreen({
                     className={cn(
                       "flex-1 min-w-0 rounded border border-border/80 bg-surface text-foreground font-bold shadow-2xs hover:bg-accent active:bg-mint-soft active:text-mint-foreground flex items-center justify-center tap-target transition-transform active:scale-95",
                       keyboardSize === "compact"
-                        ? "h-8 sm:h-8.5 text-[13px] sm:text-[14px]"
-                        : "h-9 sm:h-9.5 text-sm sm:text-base"
+                        ? "h-8 text-[13px]"
+                        : "h-9 text-sm"
                     )}
                   >
                     {capsLock ? k.toUpperCase() : k.toLowerCase()}
@@ -432,13 +432,13 @@ export function KeyboardPanelScreen({
               </div>
 
               {/* Row 3: Shift / 7 Keys / Backspace */}
-              <div className="flex w-full gap-0.5 sm:gap-1">
+              <div className="flex w-full max-w-full gap-0.5 box-border">
                 <button
                   type="button"
                   onClick={() => setCapsLock((v) => !v)}
                   className={cn(
-                    "flex-[1.25] min-w-0 max-w-[40px] rounded border border-border/80 text-xs font-bold flex items-center justify-center tap-target shadow-2xs transition-colors",
-                    keyboardSize === "compact" ? "h-8 sm:h-8.5" : "h-9 sm:h-9.5",
+                    "flex-[1.2] min-w-0 rounded border border-border/80 text-xs font-bold flex items-center justify-center tap-target shadow-2xs transition-colors shrink-0",
+                    keyboardSize === "compact" ? "h-8" : "h-9",
                     capsLock ? "bg-mint text-primary-foreground dark:text-background" : "bg-surface-2 text-foreground hover:bg-accent"
                   )}
                   title="Caps Lock"
@@ -454,8 +454,8 @@ export function KeyboardPanelScreen({
                     className={cn(
                       "flex-1 min-w-0 rounded border border-border/80 bg-surface text-foreground font-bold shadow-2xs hover:bg-accent active:bg-mint-soft active:text-mint-foreground flex items-center justify-center tap-target transition-transform active:scale-95",
                       keyboardSize === "compact"
-                        ? "h-8 sm:h-8.5 text-[13px] sm:text-[14px]"
-                        : "h-9 sm:h-9.5 text-sm sm:text-base"
+                        ? "h-8 text-[13px]"
+                        : "h-9 text-sm"
                     )}
                   >
                     {capsLock ? k.toUpperCase() : k.toLowerCase()}
@@ -466,23 +466,23 @@ export function KeyboardPanelScreen({
                   type="button"
                   onClick={() => setSearchQuery((prev) => prev.slice(0, -1))}
                   className={cn(
-                    "flex-[1.25] min-w-0 max-w-[40px] rounded border border-border/80 bg-surface-2 text-foreground font-bold flex items-center justify-center tap-target shadow-2xs hover:bg-accent active:bg-destructive/15 active:text-destructive",
-                    keyboardSize === "compact" ? "h-8 sm:h-8.5" : "h-9 sm:h-9.5"
+                    "flex-[1.2] min-w-0 rounded border border-border/80 bg-surface-2 text-foreground font-bold flex items-center justify-center tap-target shadow-2xs hover:bg-accent active:bg-destructive/15 active:text-destructive shrink-0",
+                    keyboardSize === "compact" ? "h-8" : "h-9"
                   )}
                   title="Backspace"
                 >
-                  <Delete className="h-4 w-4" />
+                  <Delete className="h-3.5 w-3.5" />
                 </button>
               </div>
 
               {/* Row 4: Mode Switch / Spacebar / Clear Query */}
-              <div className="flex w-full gap-0.5 sm:gap-1 pt-0.5">
+              <div className="flex w-full max-w-full gap-0.5 pt-0.5 box-border">
                 <button
                   type="button"
                   onClick={() => setNumericMode((v) => !v)}
                   className={cn(
-                    "flex-[1.25] min-w-0 max-w-[48px] rounded border border-border/80 bg-surface-2 text-foreground font-bold text-[11px] tap-target shadow-2xs hover:bg-accent",
-                    keyboardSize === "compact" ? "h-7.5 sm:h-8" : "h-8.5 sm:h-9"
+                    "flex-[1.2] min-w-0 rounded border border-border/80 bg-surface-2 text-foreground font-bold text-[10px] sm:text-[11px] tap-target shadow-2xs hover:bg-accent shrink-0",
+                    keyboardSize === "compact" ? "h-7.5" : "h-8.5"
                   )}
                 >
                   {numericMode ? "ABC" : "?123"}
@@ -492,7 +492,7 @@ export function KeyboardPanelScreen({
                   onClick={() => setSearchQuery((prev) => prev + " ")}
                   className={cn(
                     "flex-[4] min-w-0 rounded border border-border/80 bg-surface text-foreground font-semibold text-xs tap-target shadow-2xs hover:bg-accent active:bg-mint-soft",
-                    keyboardSize === "compact" ? "h-7.5 sm:h-8" : "h-8.5 sm:h-9"
+                    keyboardSize === "compact" ? "h-7.5" : "h-8.5"
                   )}
                 >
                   Space
@@ -502,8 +502,8 @@ export function KeyboardPanelScreen({
                   onClick={() => setSearchQuery("")}
                   disabled={!searchQuery}
                   className={cn(
-                    "flex-[1.25] min-w-0 max-w-[48px] rounded border border-border/80 bg-surface-2 text-foreground font-bold text-[11px] tap-target shadow-2xs disabled:opacity-30 hover:bg-accent",
-                    keyboardSize === "compact" ? "h-7.5 sm:h-8" : "h-8.5 sm:h-9"
+                    "flex-[1.2] min-w-0 rounded border border-border/80 bg-surface-2 text-foreground font-bold text-[10px] sm:text-[11px] tap-target shadow-2xs disabled:opacity-30 hover:bg-accent shrink-0",
+                    keyboardSize === "compact" ? "h-7.5" : "h-8.5"
                   )}
                 >
                   Clear

@@ -38,12 +38,15 @@ class MainActivity : Activity() {
 
         webView = WebView(this).apply {
             setBackgroundColor(0xFF111916.toInt())
+            fitsSystemWindows = true
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
                 allowFileAccess = true
                 allowContentAccess = true
+                useWideViewPort = true
+                loadWithOverviewMode = true
                 @Suppress("DEPRECATION")
                 allowFileAccessFromFileURLs = true
                 @Suppress("DEPRECATION")
@@ -52,11 +55,32 @@ class MainActivity : Activity() {
             }
         }
 
+        // Apply WindowInsets safe area padding so status and navigation bars never overlap UI
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            webView.setOnApplyWindowInsetsListener { v, insets ->
+                val sysBars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                v.setPadding(sysBars.left, sysBars.top, sysBars.right, sysBars.bottom)
+                insets
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            webView.setOnApplyWindowInsetsListener { v, insets ->
+                v.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+                insets
+            }
+        }
+
         val bridge = AndroidBridge(this, store)
         webView.addJavascriptInterface(bridge, "ClipMaxNative")
 
         val assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/assets/web/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this, "web"))
             .build()
 
         webView.webViewClient = object : WebViewClient() {
