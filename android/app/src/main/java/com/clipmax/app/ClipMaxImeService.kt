@@ -201,7 +201,7 @@ class ClipMaxImeService : InputMethodService() {
         val kbContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(colorBg)
-            setPadding(dp(1.5f), dp(2), dp(1.5f), dp(4))
+            setPadding(dp(2), dp(2), dp(2), dp(4))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
