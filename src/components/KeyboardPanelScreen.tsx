@@ -208,7 +208,7 @@ export function KeyboardPanelScreen({
           </IconBtn>
         }
         title="ClipMax Keyboard Preview"
-        subtitle="Standard Gboard-inspired portrait QWERTY arrangement"
+        subtitle="In-App Simulation · Real Native Keyboard runs via Android Settings"
         right={
           <button
             type="button"
@@ -221,6 +221,17 @@ export function KeyboardPanelScreen({
           </button>
         }
       />
+
+      {/* Distinction Banner: In-App Simulation vs Real Android IME */}
+      <div className="shrink-0 bg-surface-2 border-b border-border/80 px-3 py-1 flex items-center justify-between text-[10px] text-muted-foreground">
+        <span className="font-semibold text-foreground flex items-center gap-1">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-mint" />
+          Interactive Preview Simulation
+        </span>
+        <span className="hidden sm:inline">
+          To use system-wide, enable ClipMax in Android Settings → Languages & Input
+        </span>
+      </div>
 
       {/* Host App Simulation Area (Flexibly bounded, never forces page scroll) */}
       <div className="flex-1 min-h-[100px] max-h-[160px] sm:max-h-[200px] flex flex-col p-2.5 sm:p-3 overflow-hidden bg-background shrink-0">
@@ -345,19 +356,19 @@ export function KeyboardPanelScreen({
         aria-label="ClipMax Keyboard Preview"
       >
         {/* 1. CLIPMAX SAVED-CLIP TOOLBAR (Visibly distinct, No mystery 'C' button) */}
-        <div className="flex h-8.5 shrink-0 items-center justify-between border-b border-[#D5DED8] dark:border-[#24352D] bg-[#F4F7F5] dark:bg-[#18231E] px-2 w-full max-w-full box-border gap-1.5 overflow-hidden">
+        <div className="flex h-8 shrink-0 items-center justify-between border-b border-[#D5DED8] dark:border-[#24352D] bg-[#F4F7F5] dark:bg-[#18231E] px-1.5 sm:px-2 w-full max-w-full box-border gap-1 overflow-hidden">
           {/* Left: App Identity & Pinned Filter */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             <div className="flex items-center gap-1 text-[11px] font-bold tracking-tight text-foreground">
-              <ClipboardList className="h-3.5 w-3.5 text-[#0D9488] dark:text-mint" />
-              <span>ClipMax</span>
+              <ClipboardList className="h-3.5 w-3.5 text-[#0D9488] dark:text-mint shrink-0" />
+              <span className="hidden xs:inline">ClipMax</span>
             </div>
 
             <button
               type="button"
               onClick={() => setPinnedOnly((v) => !v)}
               className={cn(
-                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px] font-bold cursor-pointer shrink-0 transition-colors",
+                "inline-flex h-5.5 items-center gap-0.5 rounded border px-1.5 text-[9.5px] font-bold cursor-pointer shrink-0 transition-colors",
                 pinnedOnly
                   ? "border-[#0D9488] dark:border-[#2DD4BF] bg-mint/15 text-[#0F766E] dark:text-mint"
                   : "border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] text-muted-foreground hover:text-foreground"
@@ -373,7 +384,7 @@ export function KeyboardPanelScreen({
           <div
             onClick={() => setTypingTarget("search")}
             className={cn(
-              "flex-1 min-w-[90px] max-w-[190px] h-6 rounded-md border px-2 flex items-center gap-1 cursor-pointer transition-colors box-border",
+              "flex-1 min-w-[70px] max-w-[150px] h-5.5 rounded border px-1.5 flex items-center gap-1 cursor-pointer transition-colors box-border",
               typingTarget === "search"
                 ? "border-[#0D9488] dark:border-[#2DD4BF] bg-white dark:bg-[#202E28] text-foreground ring-1 ring-mint/30"
                 : "border-[#D1D9D4] dark:border-[#2B3D35] bg-white/70 dark:bg-[#1A2520] text-muted-foreground hover:border-foreground/30"
@@ -381,8 +392,8 @@ export function KeyboardPanelScreen({
             title="Click to type search query using keyboard"
           >
             <Search className="h-2.5 w-2.5 text-[#0D9488] dark:text-mint shrink-0" />
-            <span className="text-[10px] font-medium truncate flex-1">
-              {searchQuery || "Search clips..."}
+            <span className="text-[9.5px] font-medium truncate flex-1">
+              {searchQuery || "Search..."}
             </span>
             {searchQuery && (
               <button
@@ -407,23 +418,23 @@ export function KeyboardPanelScreen({
                 setTypingTarget((v) => (v === "host" ? "search" : "host"))
               }
               className={cn(
-                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px] font-bold cursor-pointer shrink-0 transition-colors",
+                "inline-flex h-5.5 items-center gap-0.5 rounded border px-1.5 text-[9.5px] font-bold cursor-pointer shrink-0 transition-colors",
                 typingTarget === "search"
                   ? "border-[#0D9488] dark:border-[#2DD4BF] bg-[#0D9488] dark:bg-mint text-white dark:text-[#0A1F18]"
                   : "border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] text-foreground hover:bg-accent"
               )}
               title="Switch whether keyboard types into Host App or Filters clips"
             >
-              <span>{typingTarget === "host" ? "Target: Host" : "Target: Filter"}</span>
+              <span>{typingTarget === "host" ? "Typing: Host" : "Typing: Filter"}</span>
             </button>
 
             <button
               type="button"
               onClick={() => setShowAllCardsSheet(true)}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] px-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
+              className="inline-flex h-5.5 items-center gap-0.5 rounded border border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] px-1.5 text-[9.5px] font-semibold text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
               title="Browse all saved cards"
             >
-              <Layers className="h-3 w-3" />
+              <Layers className="h-2.5 w-2.5" />
               <span className="hidden sm:inline">Cards ({items.length})</span>
             </button>
           </div>

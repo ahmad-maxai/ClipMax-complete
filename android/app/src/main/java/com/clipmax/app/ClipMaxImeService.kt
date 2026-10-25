@@ -147,6 +147,11 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
+    override fun onConfigureWindow(win: android.view.Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        win.navigationBarColor = colorBg
+    }
+
     override fun onCreateInputView(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -157,6 +162,22 @@ class ClipMaxImeService : InputMethodService() {
             )
         }
         rootView = root
+
+        // Navigation Bar Insets Handling:
+        // When running in apps like ChatGPT that render edge-to-edge, the IME window
+        // overlaps the Android system gesture navigation bar unless bottom padding is applied.
+        // We listen to WindowInsets and dynamically add the exact navigationBar bottom inset.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val navBottom = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetBottom
+            }
+            v.setPadding(0, 0, 0, navBottom)
+            insets
+        }
+
         renderFullImeView()
         return root
     }
@@ -180,7 +201,7 @@ class ClipMaxImeService : InputMethodService() {
         val kbContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(colorBg)
-            setPadding(dp(2), dp(2), dp(2), dp(4))
+            setPadding(dp(1.5f), dp(2), dp(1.5f), dp(4))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -199,19 +220,20 @@ class ClipMaxImeService : InputMethodService() {
     private fun buildToolbar(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(2), dp(8), dp(2))
+        setPadding(dp(6), dp(2), dp(6), dp(2))
         setBackgroundColor(colorToolbarBg)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
 
         // Brand Label
         val brand = TextView(this@ClipMaxImeService).apply {
             text = "📋 ClipMax"
-            textSize = 12f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorKeyText)
             gravity = Gravity.CENTER_VERTICAL
+            setSingleLine(true)
         }
-        addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(8) })
+        addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
 
         // Pinned Toggle Button
         val pinBtn = Button(this@ClipMaxImeService).apply {
@@ -468,7 +490,7 @@ class ClipMaxImeService : InputMethodService() {
         val row1 = createKeyRow()
         alphaRow1.forEachIndexed { idx, char ->
             row1.addView(createAlphaKeyWithHint(char, alphaHints[idx]), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         parent.addView(row1)
@@ -478,50 +500,50 @@ class ClipMaxImeService : InputMethodService() {
         row2.addView(View(this), LinearLayout.LayoutParams(0, dp(42), 0.5f))
         alphaRow2.forEach { char ->
             row2.addView(createStandardKey(char), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         row2.addView(View(this), LinearLayout.LayoutParams(0, dp(42), 0.5f))
         parent.addView(row2)
 
-        // Row 3: Shift (1.38f), 7 keys (Z X C V B N M), Backspace (1.38f)
+        // Row 3: Shift (1.35f), 7 keys (Z X C V B N M), Backspace (1.35f)
         val row3 = createKeyRow()
         val shiftBtn = createShiftKey()
         shiftButton = shiftBtn
-        row3.addView(shiftBtn, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row3.addView(shiftBtn, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         alphaRow3.forEach { char ->
             row3.addView(createStandardKey(char), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
-        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row3)
 
-        // Row 4: ?123 (1.38f), comma (1f), Space (4.8f), period (1f), Enter (1.38f)
+        // Row 4: ?123 (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("?123") {
             keyboardMode = 1
             renderKeyboardRows()
-        }, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply { leftMargin = dp(2); rightMargin = dp(2) })
+        }, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply { leftMargin = dp(1); rightMargin = dp(1) })
 
         row4.addView(createStandardKey(","), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.8f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.6f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
         row4.addView(createStandardKey("."), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row4)
     }
@@ -532,7 +554,7 @@ class ClipMaxImeService : InputMethodService() {
         val row1 = createKeyRow()
         numRow1.forEach { digit ->
             row1.addView(createStandardKey(digit), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         parent.addView(row1)
@@ -541,50 +563,50 @@ class ClipMaxImeService : InputMethodService() {
         val row2 = createKeyRow()
         numRow2.forEach { sym ->
             row2.addView(createStandardKey(sym), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         parent.addView(row2)
 
-        // Row 3: =\< toggle (1.38f), 7 symbols (* " ' : ; ! ?), Backspace (1.38f)
+        // Row 3: =\< toggle (1.35f), 7 symbols (* " ' : ; ! ?), Backspace (1.35f)
         val row3 = createKeyRow()
         row3.addView(createModifierKey("=\\<") {
             keyboardMode = 2
             renderKeyboardRows()
-        }, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply { leftMargin = dp(2); rightMargin = dp(2) })
+        }, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply { leftMargin = dp(1); rightMargin = dp(1) })
 
         numRow3.forEach { sym ->
             row3.addView(createStandardKey(sym), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
 
-        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row3)
 
-        // Row 4: ABC (1.38f), comma (1f), Space (4.8f), period (1f), Enter (1.38f)
+        // Row 4: ABC (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
-        }, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply { leftMargin = dp(2); rightMargin = dp(2) })
+        }, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply { leftMargin = dp(1); rightMargin = dp(1) })
 
         row4.addView(createStandardKey(","), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.8f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.6f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
         row4.addView(createStandardKey("."), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row4)
     }
@@ -595,7 +617,7 @@ class ClipMaxImeService : InputMethodService() {
         val row1 = createKeyRow()
         symRow1.forEach { sym ->
             row1.addView(createStandardKey(sym), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         parent.addView(row1)
@@ -604,50 +626,50 @@ class ClipMaxImeService : InputMethodService() {
         val row2 = createKeyRow()
         symRow2.forEach { sym ->
             row2.addView(createStandardKey(sym), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
         parent.addView(row2)
 
-        // Row 3: ?123 toggle (1.38f), 8 symbols (< > % © ® ™ [ ]), Backspace (1.38f)
+        // Row 3: ?123 toggle (1.35f), 8 symbols (< > % © ® ™ [ ]), Backspace (1.35f)
         val row3 = createKeyRow()
         row3.addView(createModifierKey("?123") {
             keyboardMode = 1
             renderKeyboardRows()
-        }, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply { leftMargin = dp(2); rightMargin = dp(2) })
+        }, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply { leftMargin = dp(1); rightMargin = dp(1) })
 
         symRow3.forEach { sym ->
             row3.addView(createStandardKey(sym), LinearLayout.LayoutParams(0, dp(42), 0.875f).apply {
-                leftMargin = dp(2); rightMargin = dp(2)
+                leftMargin = dp(1); rightMargin = dp(1)
             })
         }
 
-        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row3.addView(createBackspaceKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row3)
 
-        // Row 4: ABC (1.38f), comma (1f), Space (4.8f), period (1f), Enter (1.38f)
+        // Row 4: ABC (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
-        }, LinearLayout.LayoutParams(0, dp(42), 1.38f).apply { leftMargin = dp(2); rightMargin = dp(2) })
+        }, LinearLayout.LayoutParams(0, dp(42), 1.35f).apply { leftMargin = dp(1); rightMargin = dp(1) })
 
         row4.addView(createStandardKey(","), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.8f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createSpaceKey(), LinearLayout.LayoutParams(0, dp(42), 4.6f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
         row4.addView(createStandardKey("."), LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+            leftMargin = dp(1); rightMargin = dp(1)
         })
 
-        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.38f).apply {
-            leftMargin = dp(2); rightMargin = dp(2)
+        row4.addView(createEnterKey(), LinearLayout.LayoutParams(0, dp(42), 1.35f).apply {
+            leftMargin = dp(1); rightMargin = dp(1)
         })
         parent.addView(row4)
     }

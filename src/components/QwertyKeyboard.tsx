@@ -126,7 +126,7 @@ export function QwertyKeyboard({
   return (
     <div
       className={cn(
-        "w-full max-w-full select-none bg-[#ECEFF1] dark:bg-[#151C18] p-1 sm:p-1.5 box-border flex flex-col gap-1 sm:gap-1.5 font-sans border-t border-border dark:border-[#26372F]",
+        "w-full max-w-full select-none bg-[#ECEFF1] dark:bg-[#151C18] p-0.5 sm:p-1.5 box-border flex flex-col gap-0.5 sm:gap-1.5 font-sans border-t border-border dark:border-[#26372F]",
         className
       )}
       role="region"
@@ -134,7 +134,7 @@ export function QwertyKeyboard({
     >
       {/* ================= ROW 1 ================= */}
       {mode === "alpha" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {alphaRow1.map((k, idx) => (
             <button
               key={k}
@@ -162,7 +162,7 @@ export function QwertyKeyboard({
       )}
 
       {mode === "numeric" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {numRow1.map((k) => (
             <button
               key={k}
@@ -183,7 +183,7 @@ export function QwertyKeyboard({
       )}
 
       {mode === "symbols" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {symRow1.map((k) => (
             <button
               key={k}
@@ -205,9 +205,9 @@ export function QwertyKeyboard({
 
       {/* ================= ROW 2 (CENTERED) ================= */}
       {mode === "alpha" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {/* Half-key proportional spacer on left to center Row 2 under Row 1 */}
-          <div className="w-[4.6%] shrink-0 pointer-events-none" aria-hidden="true" />
+          <div className="w-[4.8%] shrink-0 pointer-events-none" aria-hidden="true" />
           {alphaRow2.map((k) => (
             <button
               key={k}
@@ -228,12 +228,12 @@ export function QwertyKeyboard({
             </button>
           ))}
           {/* Half-key proportional spacer on right to center Row 2 under Row 1 */}
-          <div className="w-[4.6%] shrink-0 pointer-events-none" aria-hidden="true" />
+          <div className="w-[4.8%] shrink-0 pointer-events-none" aria-hidden="true" />
         </div>
       )}
 
       {mode === "numeric" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {numRow2.map((k) => (
             <button
               key={k}
@@ -254,7 +254,7 @@ export function QwertyKeyboard({
       )}
 
       {mode === "symbols" && (
-        <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+        <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
           {symRow2.map((k) => (
             <button
               key={k}
@@ -275,7 +275,7 @@ export function QwertyKeyboard({
       )}
 
       {/* ================= ROW 3 ================= */}
-      <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border">
+      <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border">
         {mode === "alpha" ? (
           /* Shift Key (Left) */
           <button
@@ -426,7 +426,7 @@ export function QwertyKeyboard({
       </div>
 
       {/* ================= ROW 4 (BOTTOM ROW) ================= */}
-      <div className="flex w-full max-w-full gap-1 sm:gap-1.5 box-border pt-0.5">
+      <div className="flex w-full max-w-full gap-0.5 sm:gap-1.5 box-border pt-0.5">
         {/* Mode Switcher: ?123 / ABC */}
         {mode === "alpha" ? (
           <button
@@ -435,7 +435,7 @@ export function QwertyKeyboard({
             className={cn(
               keyBaseStyles,
               modifierKeyTheme,
-              "flex-[1.38] text-xs font-bold",
+              "flex-[1.35] text-xs font-bold",
               bottomKeyHeightClass
             )}
             aria-label="Switch to numbers and symbols"
@@ -449,7 +449,7 @@ export function QwertyKeyboard({
             className={cn(
               keyBaseStyles,
               modifierKeyTheme,
-              "flex-[1.38] text-xs font-bold",
+              "flex-[1.35] text-xs font-bold",
               bottomKeyHeightClass
             )}
             aria-label="Switch to letters"
@@ -480,7 +480,7 @@ export function QwertyKeyboard({
           className={cn(
             keyBaseStyles,
             standardKeyTheme,
-            "flex-[4.8] text-xs font-medium text-[#6B7280] dark:text-[#8A9992] tracking-wider",
+            "flex-[4.6] text-xs font-medium text-[#6B7280] dark:text-[#8A9992] tracking-wider",
             bottomKeyHeightClass
           )}
           aria-label="Space"
@@ -509,7 +509,7 @@ export function QwertyKeyboard({
           onClick={onEnter}
           className={cn(
             keyBaseStyles,
-            "flex-[1.38] bg-[#0D9488] dark:bg-[#2DD4BF] text-white dark:text-[#0A1F18] border-[#0D9488] dark:border-[#2DD4BF] shadow-[0_1px_4px_rgba(13,148,136,0.25)] dark:shadow-[0_1px_4px_rgba(45,212,191,0.35)] hover:brightness-105 active:scale-[0.96]",
+            "flex-[1.35] bg-[#0D9488] dark:bg-[#2DD4BF] text-white dark:text-[#0A1F18] border-[#0D9488] dark:border-[#2DD4BF] shadow-[0_1px_4px_rgba(13,148,136,0.25)] dark:shadow-[0_1px_4px_rgba(45,212,191,0.35)] hover:brightness-105 active:scale-[0.96]",
             bottomKeyHeightClass
           )}
           title="Enter / Return"
