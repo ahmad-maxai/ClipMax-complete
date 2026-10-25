@@ -17,6 +17,7 @@ import {
   CornerDownLeft,
 } from "lucide-react";
 import { ClipMaxLogo } from "./primitives";
+import { QwertyKeyboard } from "./QwertyKeyboard";
 
 interface ImeKeyboardScreenProps {
   items: ClipItem[];
@@ -28,8 +29,6 @@ export function ImeKeyboardScreen({ items, onUpdateItems }: ImeKeyboardScreenPro
   const [searchQuery, setSearchQuery] = useState("");
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
-  const [numericMode, setNumericMode] = useState(false);
-  const [capsLock, setCapsLock] = useState(false);
   const [isPassword, setIsPassword] = useState(false);
 
   // Listen to password event and refresh from Android IME service
@@ -109,20 +108,6 @@ export function ImeKeyboardScreen({ items, onUpdateItems }: ImeKeyboardScreenPro
     if (ime?.hideKeyboard) {
       ime.hideKeyboard();
     }
-  };
-
-  // Virtual Keypad Definitions
-  const alphaRow1 = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"];
-  const alphaRow2 = ["A", "S", "D", "F", "G", "H", "J", "K", "L"];
-  const alphaRow3 = ["Z", "X", "C", "V", "B", "N", "M"];
-
-  const numRow1 = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
-  const numRow2 = ["-", "/", ":", ";", "(", ")", "$", "&", "@", "\""];
-  const numRow3 = [".", ",", "?", "!", "'", "_", "#"];
-
-  const handleKeyPress = (char: string) => {
-    const letter = capsLock ? char.toUpperCase() : char.toLowerCase();
-    setSearchQuery((prev) => prev + letter);
   };
 
   return (
@@ -252,98 +237,14 @@ export function ImeKeyboardScreen({ items, onUpdateItems }: ImeKeyboardScreenPro
             )}
           </div>
 
-          {/* Virtual Keypad Rows */}
-          <div className="flex-1 flex flex-col justify-end space-y-1 select-none box-border overflow-hidden w-full max-w-full pb-0.5">
-            {/* Row 1 */}
-            <div className="flex w-full max-w-full gap-0.5 box-border">
-              {(numericMode ? numRow1 : alphaRow1).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeyPress(k)}
-                  className="flex-1 min-w-0 h-9 rounded border border-[#263830] bg-[#1B2923] text-[#EAF1ED] font-bold text-sm shadow-xs hover:bg-[#24352E] active:bg-[#2DD4BF] active:text-[#111916] flex items-center justify-center tap-target transition-transform active:scale-95"
-                >
-                  {capsLock ? k.toUpperCase() : k.toLowerCase()}
-                </button>
-              ))}
-            </div>
-
-            {/* Row 2 */}
-            <div className="flex w-full max-w-full gap-0.5 px-[3%] box-border">
-              {(numericMode ? numRow2 : alphaRow2).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeyPress(k)}
-                  className="flex-1 min-w-0 h-9 rounded border border-[#263830] bg-[#1B2923] text-[#EAF1ED] font-bold text-sm shadow-xs hover:bg-[#24352E] active:bg-[#2DD4BF] active:text-[#111916] flex items-center justify-center tap-target transition-transform active:scale-95"
-                >
-                  {capsLock ? k.toUpperCase() : k.toLowerCase()}
-                </button>
-              ))}
-            </div>
-
-            {/* Row 3 */}
-            <div className="flex w-full max-w-full gap-0.5 box-border">
-              <button
-                type="button"
-                onClick={() => setCapsLock((v) => !v)}
-                className={cn(
-                  "flex-[1.2] min-w-0 h-9 rounded border border-[#263830] text-xs font-bold flex items-center justify-center tap-target shadow-xs transition-colors shrink-0",
-                  capsLock ? "bg-[#2DD4BF] text-[#111916]" : "bg-[#16211C] text-[#EAF1ED] hover:bg-[#24352E]"
-                )}
-              >
-                ⇧
-              </button>
-
-              {(numericMode ? numRow3 : alphaRow3).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => handleKeyPress(k)}
-                  className="flex-1 min-w-0 h-9 rounded border border-[#263830] bg-[#1B2923] text-[#EAF1ED] font-bold text-sm shadow-xs hover:bg-[#24352E] active:bg-[#2DD4BF] active:text-[#111916] flex items-center justify-center tap-target transition-transform active:scale-95"
-                >
-                  {capsLock ? k.toUpperCase() : k.toLowerCase()}
-                </button>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => setSearchQuery((prev) => prev.slice(0, -1))}
-                className="flex-[1.2] min-w-0 h-9 rounded border border-[#263830] bg-[#16211C] text-[#EAF1ED] font-bold flex items-center justify-center tap-target shadow-xs hover:bg-[#24352E] active:text-rose-400 shrink-0"
-                title="Backspace"
-              >
-                <Delete className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Row 4 */}
-            <div className="flex w-full max-w-full gap-0.5 pt-0.5 box-border">
-              <button
-                type="button"
-                onClick={() => setNumericMode((v) => !v)}
-                className="flex-[1.2] min-w-0 h-8.5 rounded border border-[#263830] bg-[#16211C] text-[#EAF1ED] font-bold text-[11px] tap-target shadow-xs hover:bg-[#24352E] shrink-0"
-              >
-                {numericMode ? "ABC" : "?123"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSearchQuery((prev) => prev + " ")}
-                className="flex-[4] min-w-0 h-8.5 rounded border border-[#263830] bg-[#1B2923] text-[#EAF1ED] font-semibold text-xs tap-target shadow-xs hover:bg-[#24352E] active:bg-[#2DD4BF]/20"
-              >
-                Space
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                disabled={!searchQuery}
-                className="flex-[1.2] min-w-0 h-8.5 rounded border border-[#263830] bg-[#16211C] text-[#EAF1ED] font-bold text-[11px] tap-target shadow-xs disabled:opacity-30 hover:bg-[#24352E] shrink-0"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
+          {/* Proportional Gboard QWERTY Keyboard */}
+          <QwertyKeyboard
+            onKeyPress={(char) => setSearchQuery((prev) => prev + char)}
+            onBackspace={() => setSearchQuery((prev) => prev.slice(0, -1))}
+            onSpace={() => setSearchQuery((prev) => prev + " ")}
+            onEnter={() => setSearchKeypadOpen(false)}
+            size="compact"
+          />
         </div>
       ) : (
         /* Saved Clips List Mode */
