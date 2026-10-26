@@ -18,6 +18,8 @@ export interface ClipMaxNativeBridge {
   setRetention(retention: string): void;
   getCaptureEnabled(): boolean;
   setCaptureEnabled(enabled: boolean): void;
+  setTheme(theme: string): void;
+  getTheme(): string;
 }
 
 declare global {

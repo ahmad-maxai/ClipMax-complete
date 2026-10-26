@@ -123,8 +123,12 @@ ClipMax/
 - **Issue**: QWERTY keys clipped horizontally on narrow screens (320dp width).
 - **Resolution**: Adjusted key margins to `dp(1)` and flexible weights in `ClipMaxImeService.kt`.
 
-### 5.4 Main App Top Navigation Bar Styling (OUT OF SCOPE)
-- Explicitly marked out of scope for keyboard and import fixes per user instruction.
+### 5.5 Native Keyboard Polish & Ergonomics Pass (RESOLVED)
+- **Dedicated Clipboard Interface & Toolbar**: Added a prominent `📋 Clips` toggle button to the top toolbar. When tapped, it switches into the full saved-clipboard panel inside the keyboard where users can browse, search, chunk-insert, pin/unpin, edit (launches `MainActivity.EXTRA_EDIT_ITEM_ID`), and delete with inline confirmation.
+- **Gesture Navigation Clearance**: Solved bottom key overlap on Android 10-15 edge-to-edge layouts using `updateWindowInsets(insets)` calculating `maxOf(navBars, systemGestures, dp(12))`. Keys and space bar remain completely visible without resting under the gesture handle, while avoiding excessive padding on 3-button nav devices.
+- **Dynamic In-App Light/Dark Theme Sync**: Added `setTheme` and `getTheme` to `AndroidBridge.kt` and `nativeBridge.ts`. The React app notifies the bridge on theme changes (`clipmax_theme_prefs`), and `ClipMaxImeService` listens via `SharedPreferences.OnSharedPreferenceChangeListener`, dynamically updating colors without app restarts.
+- **Tactile Key Feedback & Letter Popups**: Implemented Gboard-style floating key preview popups positioned via `translationX`/`translationY` inside an unclipped wrapper container, paired with native `HapticFeedbackConstants.KEYBOARD_TAP` on all alphanumeric keys, modifiers, and repeating backspace.
+- **In-App Preview Parity**: Synchronized `KeyboardPanelScreen.tsx` toolbar with the dedicated `📋 Clips` toggle button for complete behavioral and visual parity between preview and native IME.
 
 ---
 
@@ -168,5 +172,9 @@ cp -r dist android/app/src/main/assets/web
 - [ ] **Persistence across restarts**: Force close the app and reopen. Verify imported items remain in the list.
 - [ ] **Native IME activation**: Open Android Settings, enable ClipMax Keyboard, switch active input method.
 - [ ] **System-wide typing**: Open WhatsApp or Notes, type with ClipMax. Verify keys, shift, symbols, and backspace.
+- [ ] **Key preview popups & haptics**: Press letter keys. Verify fast letter popups float above key and subtle tap vibration occurs.
+- [ ] **Dedicated "📋 Clips" toggle**: Tap "📋 Clips" in the keyboard toolbar. Verify full clipboard browser opens inside keyboard.
+- [ ] **Clip operations inside IME**: Verify search, pin/unpin, edit (opens app editor), and delete with inline confirmation work in keyboard.
+- [ ] **Theme synchronization**: Change theme between Light and Dark in ClipMax Settings. Open keyboard and verify theme adapts immediately.
 - [ ] **Large snippet insertion**: Insert a clip >50,000 characters. Verify chunk progress bar and no crash.
 - [ ] **Edge-to-edge insets**: Open ChatGPT or Chrome on Android 15. Verify space bar and bottom controls do not collide with gesture bar.

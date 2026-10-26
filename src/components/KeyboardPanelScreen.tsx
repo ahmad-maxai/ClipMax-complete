@@ -357,12 +357,26 @@ export function KeyboardPanelScreen({
       >
         {/* 1. CLIPMAX SAVED-CLIP TOOLBAR (Visibly distinct, No mystery 'C' button) */}
         <div className="flex h-8 shrink-0 items-center justify-between border-b border-[#D5DED8] dark:border-[#24352D] bg-[#F4F7F5] dark:bg-[#18231E] px-1.5 sm:px-2 w-full max-w-full box-border gap-1 overflow-hidden">
-          {/* Left: App Identity & Pinned Filter */}
+          {/* Left: App Identity, Dedicated Clips Toggle & Pinned Filter */}
           <div className="flex items-center gap-1 shrink-0">
             <div className="flex items-center gap-1 text-[11px] font-bold tracking-tight text-foreground">
               <ClipboardList className="h-3.5 w-3.5 text-[#0D9488] dark:text-mint shrink-0" />
               <span className="hidden xs:inline">ClipMax</span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAllCardsSheet((v) => !v)}
+              className={cn(
+                "inline-flex h-5.5 items-center gap-0.5 rounded border px-1.5 text-[9.5px] font-bold cursor-pointer shrink-0 transition-colors",
+                showAllCardsSheet
+                  ? "border-[#0D9488] dark:border-[#2DD4BF] bg-mint/15 text-[#0F766E] dark:text-mint"
+                  : "border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] text-muted-foreground hover:text-foreground"
+              )}
+              title="Toggle Saved Clips Library Panel"
+            >
+              <span>📋 Clips</span>
+            </button>
 
             <button
               type="button"

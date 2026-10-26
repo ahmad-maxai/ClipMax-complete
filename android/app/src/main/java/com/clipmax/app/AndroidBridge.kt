@@ -274,4 +274,24 @@ class AndroidBridge(
             // ignore
         }
     }
+
+    @JavascriptInterface
+    fun setTheme(theme: String) {
+        try {
+            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("app_theme", theme).apply()
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
+    fun getTheme(): String {
+        return try {
+            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
+            prefs.getString("app_theme", "") ?: ""
+        } catch (e: Throwable) {
+            ""
+        }
+    }
 }

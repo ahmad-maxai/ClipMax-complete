@@ -40,16 +40,22 @@ export default function App() {
     }
   });
 
-  // Sync dark class on document element
+  // Sync dark class on document element and notify native Android bridge
   useEffect(() => {
     if (dark) {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
+    const themeStr = dark ? "dark" : "light";
     try {
-      localStorage.setItem("clipmax_theme", dark ? "dark" : "light");
+      localStorage.setItem("clipmax_theme", themeStr);
     } catch {}
+    if (typeof window !== "undefined" && window.ClipMaxNative?.setTheme) {
+      try {
+        window.ClipMaxNative.setTheme(themeStr);
+      } catch {}
+    }
   }, [dark]);
 
   // Listen for native Android events (resume refresh, edit intent from IME)
