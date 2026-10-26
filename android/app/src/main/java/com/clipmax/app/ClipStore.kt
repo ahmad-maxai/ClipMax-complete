@@ -94,8 +94,8 @@ class ClipStore(root: File) {
     fun saveFromReader(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
         val cleanTitle = title.trim().ifEmpty { "Untitled" }
         require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
-        val prior = id?.let { getItem(it) ?: throw IllegalArgumentException("The item no longer exists.") }
-        val stableId = prior?.id ?: UUID.randomUUID().toString()
+        val prior = id?.let { getItem(it) }
+        val stableId = prior?.id ?: (if (id != null && safeId(id)) id else UUID.randomUUID().toString())
         val now = savedAt ?: System.currentTimeMillis()
         val contentName = "$stableId-$now-${UUID.randomUUID().toString().take(8)}.txt"
         val finalContent = File(contentDir, contentName)
@@ -313,7 +313,7 @@ class ClipStore(root: File) {
                     val entry = zip.nextEntry ?: break
                     if (entry.isDirectory) { zip.closeEntry(); continue }
                     val safePath = entry.name
-                    val valid = safePath.matches(Regex("metadata/[a-fA-F0-9-]{20,40}\\.bin")) ||
+                    val valid = safePath.matches(Regex("metadata/[A-Za-z0-9._-]{1,64}\\.(bin|json)")) ||
                         safePath.matches(Regex("content/[A-Za-z0-9._-]{1,180}\\.txt"))
                     if (!valid) throw IllegalArgumentException("This backup contains an unsupported file path.")
                     val target = File(staging, safePath)
@@ -447,7 +447,7 @@ class ClipStore(root: File) {
         }
     }
 
-    private fun safeId(value: String): Boolean = value.matches(Regex("[a-fA-F0-9-]{20,40}"))
+    private fun safeId(value: String): Boolean = value.matches(Regex("[A-Za-z0-9._-]{1,64}"))
     private fun safeContentName(value: String): Boolean = value.matches(Regex("[A-Za-z0-9._-]{1,180}\\.txt")) && !value.startsWith(".")
 
     private fun moveReplace(from: File, to: File) {

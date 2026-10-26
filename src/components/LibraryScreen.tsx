@@ -25,6 +25,7 @@ import {
   createClipItem,
 } from "../lib/storage";
 import { formatBytes, utf8ByteLength } from "../lib/chunker";
+import { restoreZipBackup } from "../lib/backup";
 import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
 
@@ -62,23 +63,78 @@ export function LibraryScreen({
 
   const pinnedCount = useMemo(() => items.filter((i) => i.pinned).length, [items]);
 
-  // Real .txt file import via HTML file input (mimicking Android Storage Access Framework)
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Universal file import supporting .txt, markdown, JSON backups, and ClipMax .zip backups
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith(".txt") && file.type !== "text/plain") {
-      error("Unsupported file format", {
-        description: "Please select a standard plain text (.txt) document.",
-      });
+    const lowerName = file.name.toLowerCase();
+
+    // 1. Handle ZIP Backup Archive
+    if (
+      lowerName.endsWith(".zip") ||
+      file.type === "application/zip" ||
+      file.type === "application/x-zip-compressed"
+    ) {
+      try {
+        const res = await restoreZipBackup(file, items);
+        onUpdateItems(res.items);
+        success(`Restored ${res.restoredCount} items from backup`, {
+          description: res.warnings.length
+            ? `Warnings: ${res.warnings.join(", ")}`
+            : `Archive restored. Total clips: ${res.items.length}`,
+        });
+      } catch (err: any) {
+        error("Restore failed", {
+          description: err?.message || "Invalid or corrupt backup ZIP archive.",
+        });
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
       return;
     }
 
+    // 2. Handle Text, Markdown, JSON, Code, and Document files
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const text = String(event.target?.result || "");
-        const title = file.name.replace(/\.txt$/i, "");
+        let text = String(event.target?.result || "");
+        // Strip UTF-8 BOM if present
+        text = text.replace(/^\uFEFF/, "");
+
+        // Check if this text file is a JSON backup (array of clip objects)
+        if (
+          lowerName.endsWith(".json") ||
+          (text.trim().startsWith("[") && text.trim().endsWith("]"))
+        ) {
+          try {
+            const parsed = JSON.parse(text);
+            if (
+              Array.isArray(parsed) &&
+              parsed.length > 0 &&
+              ("content" in parsed[0] || "title" in parsed[0])
+            ) {
+              const newItems: ClipItem[] = [];
+              for (const p of parsed) {
+                const itemTitle = String(p.title || "Imported clip");
+                const itemContent = String(p.content || "");
+                const isPinned = Boolean(p.pinned);
+                newItems.push(createClipItem(itemTitle, itemContent, isPinned));
+              }
+              const merged = [...newItems, ...items];
+              onUpdateItems(merged);
+              success(`Imported ${newItems.length} clips from JSON`, {
+                description: `Successfully restored ${newItems.length} items to library.`,
+              });
+              return;
+            }
+          } catch {
+            // Not a JSON backup array, treat as regular text content below
+          }
+        }
+
+        // Regular plain text / markdown / code file import
+        const title = file.name.replace(/\.[^/.]+$/, "") || "Imported text";
         const newItem = createClipItem(title, text, false);
         onUpdateItems([newItem, ...items]);
         success(`Imported "${file.name}"`, {
@@ -89,20 +145,31 @@ export function LibraryScreen({
           },
         });
       } catch (err: any) {
-        error("Import failed", { description: err?.message });
+        error("Import failed", {
+          description: err?.message || "Could not process imported file.",
+        });
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
     };
-    reader.readAsText(file);
-    e.target.value = "";
+
+    reader.onerror = () => {
+      error("Import failed", {
+        description: reader.error?.message || "Failed to read file from storage.",
+      });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
+    reader.readAsText(file, "UTF-8");
   };
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
-      {/* Hidden file input for SAF-like document selection */}
+      {/* Hidden file input for SAF document selection */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".txt,text/plain"
+        accept=".txt,.md,.json,.zip,text/plain,text/*,application/zip,application/json"
         className="hidden"
         onChange={handleImportFile}
       />
@@ -285,7 +352,7 @@ export function LibraryScreen({
           onClick={() => fileInputRef.current?.click()}
         >
           <FileUp className="h-4 w-4 text-muted-foreground" />
-          Import .txt
+          Import file
         </Btn>
         <Btn
           className="flex-1"

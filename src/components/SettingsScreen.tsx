@@ -28,6 +28,7 @@ import {
   saveStoredKeyboardEnabled,
   getStoredActiveIme,
   saveStoredActiveIme,
+  createClipItem,
 } from "../lib/storage";
 import { formatBytes } from "../lib/chunker";
 import { createZipBackup, restoreZipBackup, downloadFile } from "../lib/backup";
@@ -166,13 +167,32 @@ export function SettingsScreen({
     }
   };
 
-  // Restore ZIP backup
+  // Restore ZIP or JSON backup
   const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       setIsProcessingBackup(true);
+      const lowerName = file.name.toLowerCase();
+
+      // Check if JSON backup
+      if (lowerName.endsWith(".json")) {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const newItems = parsed.map((p: any) =>
+            createClipItem(p.title || "Imported clip", p.content || "", Boolean(p.pinned))
+          );
+          onUpdateItems([...newItems, ...items]);
+          success(`Restored ${newItems.length} items from JSON backup`, {
+            description: `${newItems.length} items added to device library.`,
+          });
+          return;
+        }
+      }
+
+      // Standard ZIP backup
       const res = await restoreZipBackup(file, items);
       onUpdateItems(res.items);
       success(`Restored ${res.restoredCount} items from backup`, {
@@ -186,7 +206,7 @@ export function SettingsScreen({
       });
     } finally {
       setIsProcessingBackup(false);
-      e.target.value = "";
+      if (zipInputRef.current) zipInputRef.current.value = "";
     }
   };
 
@@ -201,7 +221,7 @@ export function SettingsScreen({
       <input
         ref={zipInputRef}
         type="file"
-        accept=".zip,application/zip"
+        accept=".zip,.json,application/zip,application/json"
         className="hidden"
         onChange={handleRestoreFile}
       />

@@ -2,8 +2,11 @@ package com.clipmax.app
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -22,12 +25,14 @@ class MainActivity : Activity() {
 
     companion object {
         const val EXTRA_EDIT_ITEM_ID = "com.clipmax.app.extra.EDIT_ITEM_ID"
+        private const val REQUEST_SELECT_FILE = 2001
     }
 
     private lateinit var store: ClipStore
     private lateinit var webView: WebView
     private var pendingNavId: String? = null
     private var isPageLoaded = false
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +58,39 @@ class MainActivity : Activity() {
                 @Suppress("DEPRECATION")
                 allowUniversalAccessFromFileURLs = true
                 cacheMode = WebSettings.LOAD_DEFAULT
+            }
+        }
+
+        // Handle HTML <input type="file"> via Android Storage Access Framework
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+
+                val intent = try {
+                    fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+                } catch (e: Throwable) {
+                    Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+                }
+
+                return try {
+                    startActivityForResult(intent, REQUEST_SELECT_FILE)
+                    true
+                } catch (e: Throwable) {
+                    this@MainActivity.filePathCallback?.onReceiveValue(null)
+                    this@MainActivity.filePathCallback = null
+                    false
+                }
             }
         }
 
@@ -121,6 +159,26 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleEditIntent(intent)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_SELECT_FILE) {
+            val callback = filePathCallback ?: return
+            val results: Array<Uri>? = if (resultCode == RESULT_OK && data != null) {
+                val clipData = data.clipData
+                if (clipData != null && clipData.itemCount > 0) {
+                    Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
+                } else {
+                    data.data?.let { arrayOf(it) }
+                }
+            } else {
+                null
+            }
+            callback.onReceiveValue(results)
+            filePathCallback = null
+        }
     }
 
     override fun onResume() {
