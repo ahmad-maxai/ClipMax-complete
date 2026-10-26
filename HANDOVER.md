@@ -175,6 +175,34 @@ cp -r dist android/app/src/main/assets/web
 - [ ] **Key preview popups & haptics**: Press letter keys. Verify fast letter popups float above key and subtle tap vibration occurs.
 - [ ] **Dedicated "📋 Clips" toggle**: Tap "📋 Clips" in the keyboard toolbar. Verify full clipboard browser opens inside keyboard.
 - [ ] **Clip operations inside IME**: Verify search, pin/unpin, edit (opens app editor), and delete with inline confirmation work in keyboard.
+- [ ] **Compact Expandable Cards**: Verify collapsed cards are ~50dp tall showing 3-4 cards at once. Tapping chevron expands to show Insert, Edit, Pin, Delete.
+- [ ] **Key Popup Clipping**: Tap Row 1 keys (Q, W, E, R, T, Y, U, I, O, P). Verify popups float above keys without clipping against the top toolbar or screen boundaries.
+- [ ] **Typing: Host vs Filter**: Toggle toolbar mode button. Verify keys filter clips without leaking into host text field; verify Host mode types into target app.
+- [ ] **Main App Header Height**: Open the main ClipMax application. Verify top navigation bar is compact (44px), without double status-bar spacing.
 - [ ] **Theme synchronization**: Change theme between Light and Dark in ClipMax Settings. Open keyboard and verify theme adapts immediately.
 - [ ] **Large snippet insertion**: Insert a clip >50,000 characters. Verify chunk progress bar and no crash.
 - [ ] **Edge-to-edge insets**: Open ChatGPT or Chrome on Android 15. Verify space bar and bottom controls do not collide with gesture bar.
+
+---
+
+## 8. Refinement Pass 2 Architecture Notes
+
+### 8.1 Main App Top Navigation Bar
+- **Source**: `src/components/primitives.tsx` (`TopBar`, `IconBtn`, `Wordmark`).
+- **Issue**: Android FrameLayout in `MainActivity.kt` already applied `sysBars.top` to WebView container. `TopBar` previously added redundant `pt-[env(safe-area-inset-top,0px)]` and `h-14` (56px), resulting in excessive vertical header space.
+- **Resolution**: Removed `pt-[env(safe-area-inset-top,0px)]`, reduced height to `h-11` (44px), reduced icon button dimensions to `h-8 w-8` (`size="iconSm"`), and reduced wordmark logo to `size={24}` and text to `text-[15px]`. This reduced header height by 54% while maintaining full touch targets.
+
+### 8.2 Native Key Popup Unclipping
+- **Source**: `android/app/src/main/java/com/clipmax/app/ClipMaxImeService.kt` (`onCreateInputView`, `showKeyPreview`).
+- **Issue**: `keyPopupView` was originally constrained inside `keyboardWrapper: FrameLayout`. When row 1 keys were tapped, popup translations clipped against the wrapper boundary.
+- **Resolution**: Re-architected `imeRootFrame` as an unclipped `FrameLayout` (`clipChildren=false`, `clipToPadding=false`) with `keyPopupView` attached at `elevation=12f`. Popups compute absolute translation relative to root coordinates and clamp within `[2dp, rootWidth - targetWidth - 2dp]`.
+
+### 8.3 Native Toolbar Simplification & Typing Modes
+- **Source**: `android/app/src/main/java/com/clipmax/app/ClipMaxImeService.kt` (`buildToolbar`, `updateModeUI`).
+- **Removed**: Redundant `switchIme` and `hideBtn` buttons that duplicated Android 15 system navigation bar controls.
+- **Added**: Real `Typing: Host` / `Typing: Filter` mode toggle button. In `Typing: Filter` mode, key presses update `keyboardSearchQuery` and filter clips in real-time with zero character leakage into `currentInputConnection`. In `Typing: Host` mode, keys commit directly to host text fields.
+
+### 8.4 Compact Expandable Cards
+- **Source**: `android/app/src/main/java/com/clipmax/app/ClipMaxImeService.kt` (`buildExpandedCard`).
+- **Collapsed**: ~50dp height with Title, star icon, expand chevron (`⌄`), single-line monospace preview, and character count / size metadata. 3 to 4 cards visible at a glance in portrait mode.
+- **Expanded**: Smoothly reveals divider and action buttons (`↵ Insert`, `✎ Edit`, `★ Pin`, `🗑 Delete` with inline confirmation).

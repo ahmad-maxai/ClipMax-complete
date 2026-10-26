@@ -64,7 +64,6 @@ class ClipMaxImeService : InputMethodService() {
     private var isPasswordTarget = false
     private var isInserting = false
     private var pinnedOnly = false
-    private var searchActive = false
     private var keyboardSearchQuery = ""
     private var keyboardSearchResults: List<ClipItem> = emptyList()
     private var keyboardSearchRequest = 0
@@ -81,18 +80,23 @@ class ClipMaxImeService : InputMethodService() {
     private var lastShiftTapTime = 0L
 
     // UI View References
-    private var rootView: LinearLayout? = null
+    private var imeRootFrame: FrameLayout? = null
+    private var contentContainer: LinearLayout? = null
     private var chipsContainer: LinearLayout? = null
     private var keyboardRowsContainer: LinearLayout? = null
     private var statusBannerView: LinearLayout? = null
     private var statusLabel: TextView? = null
     private var statusCancelBtn: Button? = null
     private var searchInputText: TextView? = null
+    private var searchPillView: View? = null
+    private var modeButton: Button? = null
     private var shiftButton: View? = null
     private val letterKeyViews = mutableListOf<Pair<TextView, String>>()
 
     // Clipboard & Touch Feedback States
     private var isClipboardPanelOpen = false
+    private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
+    private var expandedCardId: String? = null
     private var deletingItemId: String? = null
     private var keyboardWrapper: FrameLayout? = null
     private var keyPopupView: FrameLayout? = null
@@ -186,7 +190,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun updateWindowInsets(insets: WindowInsets) {
-        val root = rootView ?: return
+        val root = imeRootFrame ?: return
         val (navBottom, gestureBottom) = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             val nav = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             val gesture = insets.getInsets(WindowInsets.Type.systemGestures()).bottom
@@ -208,20 +212,52 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             maxOf(navBottom, maxOf(gestureBottom, dp(12)))
         }
-        root.setPadding(0, 0, 0, bottomPadding)
+        imeRootFrame?.setPadding(0, 0, 0, bottomPadding)
     }
 
     override fun onCreateInputView(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val root = FrameLayout(this).apply {
             setBackgroundColor(colorBg)
             setPadding(0, 0, 0, dp(12))
+            clipChildren = false
+            clipToPadding = false
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        rootView = root
+        imeRootFrame = root
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        contentContainer = content
+        root.addView(content)
+
+        // Floating letter preview popup directly on top-level root FrameLayout
+        val popup = FrameLayout(this).apply {
+            visibility = View.GONE
+            background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(12f)
+            }
+            val tv = TextView(this@ClipMaxImeService).apply {
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                gravity = Gravity.CENTER
+            }
+            keyPopupText = tv
+            addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        keyPopupView = popup
+        root.addView(popup, FrameLayout.LayoutParams(dp(44), dp(52)))
 
         root.setOnApplyWindowInsetsListener { _, insets ->
             updateWindowInsets(insets)
@@ -233,27 +269,30 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun renderFullImeView() {
-        val root = rootView ?: return
-        root.removeAllViews()
-        root.setBackgroundColor(colorBg)
+        val content = contentContainer ?: return
+        imeRootFrame?.setBackgroundColor(colorBg)
+        content.removeAllViews()
+        content.setBackgroundColor(colorBg)
         letterKeyViews.clear()
         shiftButton = null
 
-        // 1. ClipMax Compact Toolbar (Brand, Dedicated Clips button, Pinned, Search, Switch IME, Dismiss)
-        root.addView(buildToolbar())
+        // 1. ClipMax Compact Toolbar (Simplified: Brand, Clips, Pinned, Search, Typing: Host/Filter)
+        content.addView(buildToolbar())
 
         // 2. Status / In-Flight Banner (Hidden unless inserting or in password field)
-        root.addView(buildStatusBanner())
+        content.addView(buildStatusBanner())
 
         if (isClipboardPanelOpen) {
-            // 3. Full-featured, compact Saved-Clipboard Panel
-            root.addView(buildClipboardPanel())
+            // 3. Compact Expandable Saved-Clipboard Panel
+            content.addView(buildClipboardPanel())
         } else {
             // 3B. Compact Saved-Clips Horizontal Strip (~32dp)
-            root.addView(buildSavedClipsStrip())
+            content.addView(buildSavedClipsStrip())
 
-            // 4. Approved QWERTY / Numeric Keyboard Container with Key Pop-up Overlay
+            // 4. Approved QWERTY / Numeric Keyboard Container
             val wrapper = FrameLayout(this).apply {
+                clipChildren = false
+                clipToPadding = false
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -263,6 +302,8 @@ class ClipMaxImeService : InputMethodService() {
 
             val kbContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
+                clipChildren = false
+                clipToPadding = false
                 setBackgroundColor(colorBg)
                 setPadding(dp(2), dp(2), dp(2), dp(2))
                 layoutParams = FrameLayout.LayoutParams(
@@ -274,26 +315,7 @@ class ClipMaxImeService : InputMethodService() {
             renderKeyboardRows()
             wrapper.addView(kbContainer)
 
-            // Floating key preview popup
-            val popup = FrameLayout(this).apply {
-                visibility = View.GONE
-                background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    elevation = dp(6f)
-                }
-                val tv = TextView(this@ClipMaxImeService).apply {
-                    textSize = 22f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorKeyText)
-                    gravity = Gravity.CENTER
-                }
-                keyPopupText = tv
-                addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-            }
-            keyPopupView = popup
-            wrapper.addView(popup, FrameLayout.LayoutParams(dp(44), dp(48)))
-
-            root.addView(wrapper)
+            content.addView(wrapper)
             renderClipChips()
         }
     }
@@ -308,7 +330,7 @@ class ClipMaxImeService : InputMethodService() {
         setBackgroundColor(colorToolbarBg)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
 
-        // Brand Label
+        // 1. Brand Label
         val brand = TextView(this@ClipMaxImeService).apply {
             text = "ClipMax"
             textSize = 10.5f
@@ -319,7 +341,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(4) })
 
-        // Dedicated Clipboard Toggle Button
+        // 2. Dedicated Clipboard Toggle Button
         val clipBtn = Button(this@ClipMaxImeService).apply {
             text = if (isClipboardPanelOpen) "📋 Clips ✓" else "📋 Clips"
             textSize = 9.5f
@@ -337,7 +359,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(clipBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply { rightMargin = dp(4) })
 
-        // Pinned Toggle Button
+        // 3. Pinned Toggle Button
         val pinBtn = Button(this@ClipMaxImeService).apply {
             text = if (pinnedOnly) "★ Pinned" else "Pinned"
             textSize = 9.5f
@@ -354,12 +376,16 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply { rightMargin = dp(4) })
 
-        // Search Filter Pill Button
+        // 4. Search Filter Pill Button (with Clear X)
         val searchPill = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(6), 0, dp(4), 0)
-            background = roundedRipple(colorKeyBg, dp(4f), colorKeyBorder)
+            background = roundedRipple(
+                colorKeyBg,
+                dp(4f),
+                if (isFilterMode) colorAccent else colorKeyBorder
+            )
             val st = TextView(this@ClipMaxImeService).apply {
                 text = if (keyboardSearchQuery.isEmpty()) "Search…" else keyboardSearchQuery
                 textSize = 10f
@@ -375,7 +401,7 @@ class ClipMaxImeService : InputMethodService() {
                     text = "✕"
                     textSize = 10f
                     setTextColor(colorHintText)
-                    setPadding(dp(2), 0, dp(2), 0)
+                    setPadding(dp(4), 0, dp(2), 0)
                     setOnClickListener {
                         keyboardSearchQuery = ""
                         searchInputText?.text = "Search…"
@@ -387,51 +413,60 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             setOnClickListener {
-                searchActive = !searchActive
-                renderFullImeView()
+                isFilterMode = true
+                updateModeUI()
             }
         }
+        searchPillView = searchPill
         addView(searchPill, LinearLayout.LayoutParams(0, dp(26), 1f).apply { rightMargin = dp(4) })
 
-        // Switch IME (InputMethodPicker) Button
-        val switchIme = Button(this@ClipMaxImeService).apply {
-            text = "⌨"
-            textSize = 12f
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(4), 0, dp(4), 0)
-            setTextColor(colorModText)
-            background = roundedRipple(colorKeyBg, dp(4f), colorKeyBorder)
-            setOnClickListener { showSystemImePicker() }
-        }
-        addView(switchIme, LinearLayout.LayoutParams(dp(26), dp(26)).apply { rightMargin = dp(3) })
-
-        // Dismiss Keyboard Button
-        val hideBtn = Button(this@ClipMaxImeService).apply {
-            text = "⌄"
-            textSize = 13f
+        // 5. Typing: Host / Typing: Filter Mode Switch Button (Simplifying toolbar, replacing redundant system switch/dismiss)
+        val modeBtn = Button(this@ClipMaxImeService).apply {
+            text = if (isFilterMode) "Typing: Filter" else "Typing: Host"
+            textSize = 9.5f
             typeface = Typeface.DEFAULT_BOLD
             minHeight = 0
             minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(4), 0, dp(4), 0)
-            setTextColor(colorModText)
-            background = roundedRipple(colorKeyBg, dp(4f), colorKeyBorder)
-            setOnClickListener { requestHideSelf(0) }
+            setPadding(dp(6), dp(1), dp(6), dp(1))
+            setTextColor(if (isFilterMode) colorAccentText else colorModText)
+            background = roundedRipple(
+                if (isFilterMode) colorAccent else colorKeyBg,
+                dp(4f),
+                if (isFilterMode) colorAccent else colorKeyBorder
+            )
+            setOnClickListener {
+                isFilterMode = !isFilterMode
+                updateModeUI()
+            }
         }
-        addView(hideBtn, LinearLayout.LayoutParams(dp(26), dp(26)))
+        modeButton = modeBtn
+        addView(modeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+    }
+
+    private fun updateModeUI() {
+        val btn = modeButton ?: return
+        btn.text = if (isFilterMode) "Typing: Filter" else "Typing: Host"
+        btn.setTextColor(if (isFilterMode) colorAccentText else colorModText)
+        btn.background = roundedRipple(
+            if (isFilterMode) colorAccent else colorKeyBg,
+            dp(4f),
+            if (isFilterMode) colorAccent else colorKeyBorder
+        )
+
+        searchPillView?.background = roundedRipple(
+            colorKeyBg,
+            dp(4f),
+            if (isFilterMode) colorAccent else colorKeyBorder
+        )
     }
 
     // =========================================================================
-    // 1B. EXPANDED SAVED-CLIPBOARD PANEL
+    // 1B. COMPACT EXPANDABLE SAVED-CLIPBOARD PANEL
     // =========================================================================
     private fun buildClipboardPanel(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(colorBg)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(210))
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240))
 
         val visible = when {
             keyboardSearchQuery.isNotEmpty() -> keyboardSearchResults
@@ -443,9 +478,9 @@ class ClipMaxImeService : InputMethodService() {
         val subHeader = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(3), dp(8), dp(3))
+            setPadding(dp(8), dp(2), dp(8), dp(2))
             setBackgroundColor(if (isNightMode) 0xFF18231E.toInt() else 0xFFF0F4F2.toInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28))
 
             val countTv = TextView(this@ClipMaxImeService).apply {
                 text = if (keyboardSearchQuery.isNotEmpty()) {
@@ -453,9 +488,9 @@ class ClipMaxImeService : InputMethodService() {
                 } else if (pinnedOnly) {
                     "Pinned Clips (${visible.size})"
                 } else {
-                    "ClipMax Library (${visible.size} clips)"
+                    "Saved ClipMax Cards (${visible.size})"
                 }
-                textSize = 11f
+                textSize = 10.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorKeyText)
             }
@@ -463,7 +498,7 @@ class ClipMaxImeService : InputMethodService() {
 
             val backToKbBtn = Button(this@ClipMaxImeService).apply {
                 text = "⌨ ABC Keyboard"
-                textSize = 10f
+                textSize = 9.5f
                 typeface = Typeface.DEFAULT_BOLD
                 minHeight = 0
                 minimumHeight = 0
@@ -476,7 +511,7 @@ class ClipMaxImeService : InputMethodService() {
                     renderFullImeView()
                 }
             }
-            addView(backToKbBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
+            addView(backToKbBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22)))
         }
         addView(subHeader)
 
@@ -502,7 +537,7 @@ class ClipMaxImeService : InputMethodService() {
         } else if (visible.isEmpty()) {
             cardsList.addView(TextView(this@ClipMaxImeService).apply {
                 text = if (keyboardSearchQuery.isNotEmpty()) {
-                    "No clips match \"$keyboardSearchQuery\". Clear search in toolbar above."
+                    "No clips match \"$keyboardSearchQuery\""
                 } else {
                     "No saved clips yet. Copy text or use ClipMax to add snippets."
                 }
@@ -522,14 +557,15 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun buildExpandedCard(item: ClipItem): View = LinearLayout(this).apply {
+        val isExpanded = expandedCardId == item.id
         orientation = LinearLayout.VERTICAL
         setPadding(dp(8), dp(6), dp(8), dp(6))
-        background = roundedDrawable(colorKeyBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = dp(6)
+            bottomMargin = dp(4)
         }
 
-        // Header: Title, Pinned star, Size badge
+        // Header: Title, Pinned star, Chevron arrow
         val headerRow = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -545,7 +581,7 @@ class ClipMaxImeService : InputMethodService() {
 
             val titleTv = TextView(this@ClipMaxImeService).apply {
                 text = item.title
-                textSize = 12f
+                textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorKeyText)
                 setSingleLine(true)
@@ -553,160 +589,182 @@ class ClipMaxImeService : InputMethodService() {
             }
             addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-            val metaTv = TextView(this@ClipMaxImeService).apply {
-                text = "${item.characterCount.grouped()} chars · ${humanSize(item.sizeBytes)}"
-                textSize = 9.5f
-                typeface = Typeface.MONOSPACE
-                setTextColor(colorHintText)
+            val chevronTv = TextView(this@ClipMaxImeService).apply {
+                text = if (isExpanded) "⌃" else "⌄"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorModText)
+                setPadding(dp(6), 0, dp(4), 0)
             }
-            addView(metaTv)
+            addView(chevronTv)
         }
         addView(headerRow)
 
-        // Snippet preview
-        val snippet = getSnippet(item, 100)
+        // Snippet preview (1 line collapsed, 2 lines expanded)
+        val snippet = getSnippet(item, 80)
         if (snippet.isNotEmpty()) {
             val snipTv = TextView(this@ClipMaxImeService).apply {
                 text = snippet
-                textSize = 10.5f
+                textSize = 9.5f
                 typeface = Typeface.MONOSPACE
                 setTextColor(colorHintText)
-                maxLines = 2
+                maxLines = if (isExpanded) 2 else 1
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(3), 0, dp(4))
+                setPadding(0, dp(2), 0, dp(2))
             }
             addView(snipTv)
         }
 
-        // Actions Row (or Confirm Delete Row)
-        if (deletingItemId == item.id) {
-            val confirmRow = LinearLayout(this@ClipMaxImeService).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(4), 0, 0)
+        // Metadata: chars and size
+        val metaTv = TextView(this@ClipMaxImeService).apply {
+            text = "${item.characterCount.grouped()} chars · ${humanSize(item.sizeBytes)}"
+            textSize = 9f
+            typeface = Typeface.MONOSPACE
+            setTextColor(colorHintText)
+        }
+        addView(metaTv)
 
-                val prompt = TextView(this@ClipMaxImeService).apply {
-                    text = "Delete this clip? "
-                    textSize = 10.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(0xFFF87171.toInt())
-                }
-                addView(prompt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        setOnClickListener {
+            expandedCardId = if (isExpanded) null else item.id
+            deletingItemId = null
+            renderFullImeView()
+        }
 
-                val cancelBtn = Button(this@ClipMaxImeService).apply {
-                    text = "Cancel"
-                    textSize = 9.5f
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setTextColor(colorModText)
-                    background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
-                    setOnClickListener {
-                        deletingItemId = null
-                        renderFullImeView()
-                    }
+        // Expanded actions area
+        if (isExpanded) {
+            val divider = View(this@ClipMaxImeService).apply {
+                setBackgroundColor(colorKeyBorder)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                    topMargin = dp(4)
+                    bottomMargin = dp(4)
                 }
-                addView(cancelBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(4) })
-
-                val deleteBtn = Button(this@ClipMaxImeService).apply {
-                    text = "Delete"
-                    textSize = 9.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setTextColor(0xFFFFFFFF.toInt())
-                    background = roundedRipple(0xFFEF4444.toInt(), dp(4f), 0xFFEF4444.toInt())
-                    setOnClickListener {
-                        deletingItemId = null
-                        io.execute {
-                            store.delete(item.id)
-                            main.post { reloadItems() }
-                        }
-                    }
-                }
-                addView(deleteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
             }
-            addView(confirmRow)
-        } else {
-            val actionRow = LinearLayout(this@ClipMaxImeService).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(4), 0, 0)
+            addView(divider)
 
-                // 1. Insert Button (Primary mint action)
-                val insertBtn = Button(this@ClipMaxImeService).apply {
-                    text = "↵ Insert"
-                    textSize = 10f
-                    typeface = Typeface.DEFAULT_BOLD
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(10), dp(2), dp(10), dp(2))
-                    setTextColor(colorAccentText)
-                    background = roundedRipple(colorAccent, dp(4f), colorAccent)
-                    setOnClickListener {
-                        insertItem(item)
+            if (deletingItemId == item.id) {
+                val confirmRow = LinearLayout(this@ClipMaxImeService).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+
+                    val prompt = TextView(this@ClipMaxImeService).apply {
+                        text = "Delete clip? "
+                        textSize = 10f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(0xFFF87171.toInt())
                     }
-                }
-                addView(insertBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(6) })
+                    addView(prompt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-                // 2. Pin/Unpin Toggle
-                val pinBtn = Button(this@ClipMaxImeService).apply {
-                    text = if (item.pinned) "☆ Unpin" else "★ Pin"
-                    textSize = 9.5f
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setTextColor(if (item.pinned) colorAccent else colorModText)
-                    background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
-                    setOnClickListener {
-                        io.execute {
-                            store.setPinned(item.id, !item.pinned)
-                            main.post { reloadItems() }
+                    val cancelBtn = Button(this@ClipMaxImeService).apply {
+                        text = "Cancel"
+                        textSize = 9f
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(8), dp(2), dp(8), dp(2))
+                        setTextColor(colorModText)
+                        background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
+                        setOnClickListener {
+                            deletingItemId = null
+                            renderFullImeView()
                         }
                     }
-                }
-                addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(6) })
+                    addView(cancelBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(4) })
 
-                // 3. Edit in Main App
-                val editBtn = Button(this@ClipMaxImeService).apply {
-                    text = "✎ Edit"
-                    textSize = 9.5f
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setTextColor(colorModText)
-                    background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
-                    setOnClickListener {
-                        try {
-                            val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
-                                action = Intent.ACTION_VIEW
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
+                    val deleteBtn = Button(this@ClipMaxImeService).apply {
+                        text = "Delete"
+                        textSize = 9f
+                        typeface = Typeface.DEFAULT_BOLD
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(8), dp(2), dp(8), dp(2))
+                        setTextColor(0xFFFFFFFF.toInt())
+                        background = roundedRipple(0xFFEF4444.toInt(), dp(4f), 0xFFEF4444.toInt())
+                        setOnClickListener {
+                            deletingItemId = null
+                            expandedCardId = null
+                            io.execute {
+                                store.delete(item.id)
+                                main.post { reloadItems() }
                             }
-                            startActivity(intent)
-                        } catch (_: Throwable) {}
+                        }
                     }
+                    addView(deleteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
                 }
-                addView(editBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(6) })
+                addView(confirmRow)
+            } else {
+                val actionRow = LinearLayout(this@ClipMaxImeService).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
 
-                // 4. Delete with confirmation
-                val delBtn = Button(this@ClipMaxImeService).apply {
-                    text = "🗑 Delete"
-                    textSize = 9.5f
-                    minHeight = 0
-                    minimumHeight = 0
-                    setPadding(dp(8), dp(2), dp(8), dp(2))
-                    setTextColor(0xFFF87171.toInt())
-                    background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
-                    setOnClickListener {
-                        deletingItemId = item.id
-                        renderFullImeView()
+                    val insertBtn = Button(this@ClipMaxImeService).apply {
+                        text = "↵ Insert"
+                        textSize = 9.5f
+                        typeface = Typeface.DEFAULT_BOLD
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(10), dp(2), dp(10), dp(2))
+                        setTextColor(colorAccentText)
+                        background = roundedRipple(colorAccent, dp(4f), colorAccent)
+                        setOnClickListener {
+                            insertItem(item)
+                        }
                     }
+                    addView(insertBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(4) })
+
+                    val editBtn = Button(this@ClipMaxImeService).apply {
+                        text = "✎ Edit"
+                        textSize = 9f
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(7), dp(2), dp(7), dp(2))
+                        setTextColor(colorModText)
+                        background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
+                        setOnClickListener {
+                            try {
+                                val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
+                                    action = Intent.ACTION_VIEW
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                    putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
+                                }
+                                startActivity(intent)
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                    addView(editBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(4) })
+
+                    val pinBtn = Button(this@ClipMaxImeService).apply {
+                        text = if (item.pinned) "☆ Unpin" else "★ Pin"
+                        textSize = 9f
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(7), dp(2), dp(7), dp(2))
+                        setTextColor(if (item.pinned) colorAccent else colorModText)
+                        background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
+                        setOnClickListener {
+                            io.execute {
+                                store.setPinned(item.id, !item.pinned)
+                                main.post { reloadItems() }
+                            }
+                        }
+                    }
+                    addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply { rightMargin = dp(4) })
+
+                    val delBtn = Button(this@ClipMaxImeService).apply {
+                        text = "🗑 Delete"
+                        textSize = 9f
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(7), dp(2), dp(7), dp(2))
+                        setTextColor(0xFFF87171.toInt())
+                        background = roundedRipple(colorModBg, dp(4f), colorKeyBorder)
+                        setOnClickListener {
+                            deletingItemId = item.id
+                            renderFullImeView()
+                        }
+                    }
+                    addView(delBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
                 }
-                addView(delBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
+                addView(actionRow)
             }
-            addView(actionRow)
         }
     }
 
@@ -1071,18 +1129,18 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun showKeyPreview(keyView: View, char: String) {
-        val wrapper = keyboardWrapper ?: return
+        val root = imeRootFrame ?: return
         val popup = keyPopupView ?: return
         val tv = keyPopupText ?: return
 
         tv.text = char
         val keyLoc = IntArray(2)
-        val wrapLoc = IntArray(2)
+        val rootLoc = IntArray(2)
         keyView.getLocationOnScreen(keyLoc)
-        wrapper.getLocationOnScreen(wrapLoc)
+        root.getLocationOnScreen(rootLoc)
 
-        val relLeft = keyLoc[0] - wrapLoc[0]
-        val relTop = keyLoc[1] - wrapLoc[1]
+        val relLeft = keyLoc[0] - rootLoc[0]
+        val relTop = keyLoc[1] - rootLoc[1]
 
         val targetWidth = maxOf(keyView.width, dp(44))
         val targetHeight = dp(52)
@@ -1093,8 +1151,11 @@ class ClipMaxImeService : InputMethodService() {
         lp.leftMargin = 0
         lp.topMargin = 0
         popup.layoutParams = lp
-        popup.translationX = (relLeft + (keyView.width - targetWidth) / 2).toFloat()
-        popup.translationY = (relTop - targetHeight + dp(4)).toFloat()
+
+        val minX = dp(2).toFloat()
+        val maxX = (root.width - targetWidth - dp(2)).toFloat().coerceAtLeast(minX)
+        popup.translationX = (relLeft + (keyView.width - targetWidth) / 2).toFloat().coerceIn(minX, maxX)
+        popup.translationY = (relTop - targetHeight + dp(2)).toFloat().coerceAtLeast(0f)
         popup.visibility = View.VISIBLE
         popup.bringToFront()
     }
@@ -1292,7 +1353,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     private fun handleLetterPress(char: String) {
         val letter = if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT)
-        if (searchActive) {
+        if (isFilterMode) {
             keyboardSearchQuery += letter
             updateSearchUI()
             runKeyboardSearch()
@@ -1306,7 +1367,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleGenericCharPress(char: String) {
-        if (searchActive) {
+        if (isFilterMode) {
             keyboardSearchQuery += char
             updateSearchUI()
             runKeyboardSearch()
@@ -1316,7 +1377,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleSpacePress() {
-        if (searchActive) {
+        if (isFilterMode) {
             keyboardSearchQuery += " "
             updateSearchUI()
             runKeyboardSearch()
@@ -1326,7 +1387,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleBackspace() {
-        if (searchActive) {
+        if (isFilterMode) {
             if (keyboardSearchQuery.isNotEmpty()) {
                 keyboardSearchQuery = keyboardSearchQuery.dropLast(1)
                 updateSearchUI()
@@ -1344,9 +1405,9 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleEnterPress() {
-        if (searchActive) {
-            searchActive = false
-            renderFullImeView()
+        if (isFilterMode) {
+            isFilterMode = false
+            updateModeUI()
         } else {
             val conn = currentInputConnection ?: return
             val info = currentInputEditorInfo
@@ -1428,9 +1489,10 @@ class ClipMaxImeService : InputMethodService() {
             CapturePreferences.cleanupExpired(store, capturePreferences)
             val found = runCatching { store.listItems() }.getOrElse { emptyList() }
             main.post {
-                if (request != listRequest || rootView == null) return@post
+                if (request != listRequest || imeRootFrame == null) return@post
                 items = found.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt })
                 renderClipChips()
+                if (isClipboardPanelOpen) renderFullImeView()
                 if (keyboardSearchQuery.isNotEmpty()) runKeyboardSearch()
             }
         }
@@ -1446,9 +1508,10 @@ class ClipMaxImeService : InputMethodService() {
                 runCatching { store.search(query) }.getOrElse { emptyList() }
             }.sortedWith(compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.modifiedAt })
             main.post {
-                if (request != keyboardSearchRequest || rootView == null) return@post
+                if (request != keyboardSearchRequest || imeRootFrame == null) return@post
                 keyboardSearchResults = found
                 renderClipChips()
+                if (isClipboardPanelOpen) renderFullImeView()
             }
         }
     }

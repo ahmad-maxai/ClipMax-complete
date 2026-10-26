@@ -52,7 +52,7 @@ export function IconBtn({
   label,
   className,
   variant = "ghost",
-  size = "icon",
+  size = "iconSm",
   children,
   ...props
 }: BtnProps & { label: string }) {
@@ -62,7 +62,7 @@ export function IconBtn({
       title={label}
       variant={variant}
       size={size}
-      className={cn("tap-target", className)}
+      className={cn("tap-target", size === "iconSm" ? "h-8 w-8 min-w-[32px] p-0" : "", className)}
       {...props}
     >
       {children}
@@ -82,18 +82,18 @@ export function TopBar({
   subtitle?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm pt-[env(safe-area-inset-top,0px)]">
-      <div className="flex h-14 items-center gap-1.5 px-3">
+    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm">
+      <div className="flex h-11 items-center gap-1.5 px-3">
         {left}
         <div className="min-w-0 flex-1 px-1">
           {typeof title === "string" ? (
-            <h1 className="truncate text-[15px] font-semibold tracking-tight">{title}</h1>
+            <h1 className="truncate text-[14px] font-semibold tracking-tight leading-tight">{title}</h1>
           ) : (
             title
           )}
-          {subtitle && <div className="text-[11px] text-muted-foreground truncate">{subtitle}</div>}
+          {subtitle && <div className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{subtitle}</div>}
         </div>
-        <div className="flex items-center gap-1">{right}</div>
+        <div className="flex items-center gap-0.5">{right}</div>
       </div>
     </header>
   );
@@ -168,12 +168,12 @@ export function ClipMaxLogo({
 
 export function Wordmark() {
   return (
-    <div className="flex items-center gap-2 select-none">
-      <ClipMaxLogo size={28} />
-      <span className="text-[16px] font-bold tracking-tight text-foreground flex items-center">
+    <div className="flex items-center gap-1.5 select-none">
+      <ClipMaxLogo size={24} />
+      <span className="text-[15px] font-bold tracking-tight text-foreground flex items-center">
         Clip<span className="text-mint font-extrabold">Max</span>
       </span>
-      <span className="rounded-xs bg-mint-soft px-1.5 py-0.5 text-[9px] font-bold tracking-wider uppercase text-mint-foreground">
+      <span className="rounded-xs bg-mint-soft px-1.5 py-0.5 text-[8.5px] font-bold tracking-wider uppercase text-mint-foreground">
         v0.5.1
       </span>
     </div>

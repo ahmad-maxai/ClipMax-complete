@@ -424,7 +424,7 @@ export function KeyboardPanelScreen({
             )}
           </div>
 
-          {/* Right: Typing Target Switcher & Cards Sheet Button */}
+          {/* Right: Typing Target Switcher */}
           <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
@@ -440,16 +440,6 @@ export function KeyboardPanelScreen({
               title="Switch whether keyboard types into Host App or Filters clips"
             >
               <span>{typingTarget === "host" ? "Typing: Host" : "Typing: Filter"}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowAllCardsSheet(true)}
-              className="inline-flex h-5.5 items-center gap-0.5 rounded border border-[#D1D9D4] dark:border-[#2B3D35] bg-white dark:bg-[#202E28] px-1.5 text-[9.5px] font-semibold text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
-              title="Browse all saved cards"
-            >
-              <Layers className="h-2.5 w-2.5" />
-              <span className="hidden sm:inline">Cards ({items.length})</span>
             </button>
           </div>
         </div>
