@@ -1,0 +1,4 @@
+Version 1.0.1
+- Improve saved-clip organization and presentation.
+- Keep newest saved clips at the top.
+- Refine the keyboard and clipboard experience.
