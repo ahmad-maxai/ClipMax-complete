@@ -47,7 +47,7 @@ export function LibraryScreen({
   const { toast, success, error } = useToast();
   const [searchDraft, setSearchDraft] = useState("");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortKey>("modified");
+  const [sort, setSort] = useState<SortKey>("newest");
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

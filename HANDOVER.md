@@ -206,3 +206,46 @@ cp -r dist android/app/src/main/assets/web
 - **Source**: `android/app/src/main/java/com/clipmax/app/ClipMaxImeService.kt` (`buildExpandedCard`).
 - **Collapsed**: ~50dp height with Title, star icon, expand chevron (`⌄`), single-line monospace preview, and character count / size metadata. 3 to 4 cards visible at a glance in portrait mode.
 - **Expanded**: Smoothly reveals divider and action buttons (`↵ Insert`, `✎ Edit`, `★ Pin`, `🗑 Delete` with inline confirmation).
+
+---
+
+## 9. Saved Clips UI Professionalization Pass (Pass 3)
+
+### 9.1 Genuinely Compact Cards Layout & Measurements
+- **Target Portrait Screen Viewport**: 208dp available scroll height within the ~220–250dp IME panel.
+- **Subheader Bar**: Reduced to `24dp` height with `10sp` title and compact `20dp` "Keyboard" switch button.
+- **Collapsed Card Height**: `51dp` total (`4dp` vertical padding top/bottom, `18dp` header, `13dp` single-line monospace preview, `12dp` metadata row, `3dp` bottom margin).
+  - **Simultaneous Visibility**: 4 collapsed cards fit completely within the standard portrait scroll viewport.
+- **Expanded Card Height**: `94dp` total (`4dp` vertical padding top/bottom, `18dp` header, `24dp` 2-line monospace preview, `12dp` metadata row, `7dp` divider, `22dp` action buttons row, `3dp` bottom margin).
+  - **Simultaneous Visibility with Expansion**: 1 expanded card (`94dp`) + 2 collapsed cards (`51dp` each) = `196dp` <= `208dp`. At least **3 cards are visible simultaneously** (1 expanded + 2 collapsed) in normal portrait mode. Even on extreme low-height landscape windows, at least 2 cards are always guaranteed visible.
+- **Single Expansion Rule**: Only one card can expand at a time (`expandedCardId == item.id`). Expanding another card automatically collapses the previous one.
+- **Action Buttons Row**: 4 equal-width buttons (`weightSum = 4f`, `weight = 1f` each, height `22dp`): `Insert`, `Edit`, `Pin`/`Unpin`, `Delete`. Buttons never clip, wrap, or overflow on narrow screens.
+- **Inline Delete Confirmation**: Replaces the action row with a matching `22dp` row containing a prompt ("Delete clip?"), "Cancel", and solid red "Delete" button, avoiding layout jumps.
+
+### 9.2 Complete Unicode Emoji Elimination & Vector Iconography
+- **Programmatic Vector Engine**: Implemented `IconDrawable` extending `Drawable` using hardware-accelerated `Canvas` path drawing (`strokeWidth = 1.6f`, `strokeCap = Paint.Cap.ROUND`, `strokeJoin = Paint.Join.ROUND`).
+- **Icon Types**: `CLIPBOARD`, `PIN`, `PIN_FILLED`, `KEYBOARD`, `SEARCH`, `INSERT`, `EDIT`, `DELETE`, `CHEVRON_DOWN`, `CHEVRON_UP`, `CLOSE`, `LOCK`.
+- **Theme-Aware Tinting**: Icons dynamically adopt theme colors (`colorAccentText`, `colorModText`, `colorKeyText`, `colorHintText`, red `0xFFF87171`).
+- **Total Removal of Unicode Emojis**:
+  - Removed `📋` from Clips button and headers.
+  - Removed `★` and `☆` from Pinned buttons and card headers (replaced with clean pin vector).
+  - Removed `⌨` from ABC Keyboard button (replaced with keyboard vector).
+  - Removed `↵` from Insert button (replaced with return-arrow vector).
+  - Removed `✎` from Edit button (replaced with pencil vector).
+  - Removed `🗑` from Delete button (replaced with trash can vector).
+  - Removed `🔒` from privacy/password banners (replaced with lock vector).
+  - Removed `⌃` and `⌄` text chevrons (replaced with chevron vector).
+  - Removed `✕` character crosses (replaced with clean close vector and Lucide `<X />`).
+
+### 9.3 Newest-First Ordering & Chunk Sequence Preservation
+- **Sorting Algorithm**:
+  `compareByDescending<ClipItem> { it.pinned }.thenByDescending { it.createdAt }.thenBy { it.title }`
+- **Application Across Stack**:
+  1. `ClipStore.kt`: `listItems()` now returns stored clips sorted by `pinned` (descending) -> `createdAt` (descending) -> `title` (ascending). `search()` queries this sorted dataset.
+  2. `ClipMaxImeService.kt`: `reloadItems()` and `runKeyboardSearch()` strictly maintain `createdAt` descending, keeping newly captured clips at the top immediately.
+  3. `AndroidBridge.kt`: Native `getItems()` bridge provides already-sorted data directly to the web app.
+  4. `src/lib/storage.ts`: `sortClips()` defaults to `"newest"` (`b.createdAt - a.createdAt`), with `a.title.localeCompare(b.title)` tiebreaker. `getStoredItems()` sorts on read.
+  5. `LibraryScreen.tsx` & `KeyboardPanelScreen.tsx`: Default sort key set to `"newest"`.
+- **Chunk Order Invariance**: Chunks belonging to the same large clipboard capture share the same `createdAt` timestamp. The secondary tiebreaker `thenBy { it.title }` guarantees `Chunk 001/002` precedes `Chunk 002/002`, preserving sequential integrity.
+- **Unit Test**: Added `testNewestFirstOrderingAndChunkGrouping` in `ClipStoreTest.kt` verifying `[C, B, A]` ordering for sequential clips and `Chunk 001` before `Chunk 002` for multi-chunk captures.
+

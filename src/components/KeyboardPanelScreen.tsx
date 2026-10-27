@@ -62,7 +62,7 @@ export function KeyboardPanelScreen({
 
   // Filtered Clips
   const visible = useMemo(
-    () => sortClips(filterClips(items, searchQuery, pinnedOnly), "modified"),
+    () => sortClips(filterClips(items, searchQuery, pinnedOnly), "newest"),
     [items, searchQuery, pinnedOnly]
   );
 
@@ -375,7 +375,8 @@ export function KeyboardPanelScreen({
               )}
               title="Toggle Saved Clips Library Panel"
             >
-              <span>📋 Clips</span>
+              <ClipboardList className="h-3 w-3 shrink-0" />
+              <span>Clips</span>
             </button>
 
             <button
@@ -453,7 +454,7 @@ export function KeyboardPanelScreen({
           ) : visible.length === 0 ? (
             <span className="text-[10px] text-muted-foreground italic truncate">
               {searchQuery
-                ? `No clips matching "${searchQuery}". Tap '✕' to clear.`
+                ? `No clips matching "${searchQuery}". Tap 'Clear' to reset.`
                 : "No saved clips. Tap 'Simulate Copy' above to create cards."}
             </span>
           ) : (
@@ -521,7 +522,7 @@ export function KeyboardPanelScreen({
                   No saved clips available. Copy text to create serially numbered 50,000-character cards.
                 </div>
               ) : (
-                items.map((clip) => {
+                sortClips(items, "newest").map((clip) => {
                   const isExpanded = expandedCardId === clip.id;
                   const preview = clip.content.replace(/\s+/g, " ").trim();
 

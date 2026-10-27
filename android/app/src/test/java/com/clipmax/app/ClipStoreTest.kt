@@ -112,4 +112,35 @@ class ClipStoreTest {
         store.clearDraft()
         assertNull(store.loadDraft())
     }
+
+    @Test
+    fun testNewestFirstOrderingAndChunkGrouping() {
+        val t0 = 1_000_000L
+        // Save three distinct test clips in sequence: A, then B, then C
+        store.save(null, "Clip A", "Content A", pinned = false, savedAt = t0)
+        store.save(null, "Clip B", "Content B", pinned = false, savedAt = t0 + 1000L)
+        store.save(null, "Clip C", "Content C", pinned = false, savedAt = t0 + 2000L)
+
+        val items = store.listItems()
+        assertEquals(3, items.size)
+        // Verify displayed order is C, B, A (newest first)
+        assertEquals("Clip C", items[0].title)
+        assertEquals("Clip B", items[1].title)
+        assertEquals("Clip A", items[2].title)
+
+        // Verify chunk sequence for multi-chunk captures:
+        // Even when chunk 2 happens to be written before chunk 1, Chunk 001 must appear before Chunk 002
+        val tChunk = t0 + 3000L
+        store.save(null, "Capture · Chunk 002/002 · 12:00:00", "Chunk 2", pinned = false, savedAt = tChunk)
+        store.save(null, "Capture · Chunk 001/002 · 12:00:00", "Chunk 1", pinned = false, savedAt = tChunk)
+
+        val updatedItems = store.listItems()
+        assertEquals(5, updatedItems.size)
+        // Newest capture (at tChunk) is at top, and Chunk 001 comes BEFORE Chunk 002
+        assertEquals("Capture · Chunk 001/002 · 12:00:00", updatedItems[0].title)
+        assertEquals("Capture · Chunk 002/002 · 12:00:00", updatedItems[1].title)
+        assertEquals("Clip C", updatedItems[2].title)
+        assertEquals("Clip B", updatedItems[3].title)
+        assertEquals("Clip A", updatedItems[4].title)
+    }
 }

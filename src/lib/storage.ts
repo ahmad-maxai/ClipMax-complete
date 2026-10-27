@@ -22,7 +22,7 @@ export function getStoredItems(): ClipItem[] {
         try {
           localStorage.setItem(STORAGE_KEY_ITEMS, raw);
         } catch {}
-        return cleanExpiredItems(parsed);
+        return sortClips(cleanExpiredItems(parsed), "newest");
       }
     } catch (e) {
       console.warn("Failed to getItems from native ClipStore bridge, falling back to cache", e);
@@ -36,7 +36,7 @@ export function getStoredItems(): ClipItem[] {
       return [];
     }
     const parsed = JSON.parse(raw) as ClipItem[];
-    return cleanExpiredItems(parsed);
+    return sortClips(cleanExpiredItems(parsed), "newest");
   } catch {
     return [];
   }
@@ -219,18 +219,26 @@ export function createClipItem(
   };
 }
 
-export function sortClips(list: ClipItem[], sort: SortKey): ClipItem[] {
+export function sortClips(list: ClipItem[], sort: SortKey = "newest"): ClipItem[] {
   const copy = [...list];
   copy.sort((a, b) => {
     // Pinned items always float to the top
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    const aCreated = a.createdAt || 0;
+    const bCreated = b.createdAt || 0;
+    const aModified = a.modifiedAt || aCreated;
+    const bModified = b.modifiedAt || bCreated;
     switch (sort) {
-      case "modified":
-        return b.modifiedAt - a.modifiedAt;
       case "newest":
-        return b.createdAt - a.createdAt;
+        if (bCreated !== aCreated) return bCreated - aCreated;
+        return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      case "modified":
+        if (bModified !== aModified) return bModified - aModified;
+        if (bCreated !== aCreated) return bCreated - aCreated;
+        return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
       case "oldest":
-        return a.createdAt - b.createdAt;
+        if (aCreated !== bCreated) return aCreated - bCreated;
+        return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
       case "title":
         return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
     }

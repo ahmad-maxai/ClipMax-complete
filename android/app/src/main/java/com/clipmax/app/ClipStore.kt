@@ -74,6 +74,11 @@ class ClipStore(root: File) {
         .mapNotNull { runCatching { readMetadata(it) }.getOrNull() }
         .filter { safeContentName(it.contentFile) }
         .filter { File(contentDir, it.contentFile).isFile }
+        .sortedWith(
+            compareByDescending<ClipItem> { it.pinned }
+                .thenByDescending { it.createdAt }
+                .thenBy { it.title }
+        )
         .toList()
 
     @Synchronized

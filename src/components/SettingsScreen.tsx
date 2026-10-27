@@ -13,6 +13,7 @@ import {
   Smartphone,
   ExternalLink,
   Check,
+  X,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, Section, ConfirmModal, ClipMaxLogo } from "./primitives";
 import {
@@ -598,7 +599,7 @@ export function SettingsScreen({
                 onClick={() => setShowSystemSettingsModal(false)}
                 className="rounded-lg p-1 text-muted-foreground hover:bg-accent tap-target"
               >
-                ✕
+                <X className="h-4 w-4" />
               </button>
             </div>
 
