@@ -1,72 +1,56 @@
-# ClipMax F-Droid Readiness Checklist & Audit Review
+ClipMax F-Droid Readiness Checklist
 
-This document tracks compliance status, audit findings, and remaining actions for submitting **ClipMax** (`com.clipmax.app`) to F-Droid.
+This checklist tracks preparation tasks for "com.clipmax.app". A checked item means it was inspected in the repository, not that F-Droid has approved the app.
 
----
+1. App Identity and Metadata
 
-## 1. Metadata and App Identification
+- [x] Application ID is "com.clipmax.app" in the checked-in Gradle configuration.
+- [x] Version code and name are "11" / "1.0.1" in "android/app/build.gradle.kts".
+- [x] Minimum SDK is 26; target and compile SDK are 35 in the checked-in Gradle configuration.
+- [ ] Review Fastlane metadata wording and release changelog before submission.
+- [ ] Confirm all metadata meets current F-Droid requirements.
 
-- [x] **Package ID**: `com.clipmax.app` (consistent across `AndroidManifest.xml` and `build.gradle.kts`).
-- [x] **Version Code**: `11`
-- [x] **Version Name**: `1.0.1`
-- [x] **Target Android SDK**: API 35 (Android 15)
-- [x] **Minimum Android SDK**: API 26 (Android 8.0 Oreo)
-- [x] **Fastlane Metadata Structure**:
-  - `fastlane/metadata/android/en-US/short_description.txt`: 51 characters (below the 80-character maximum limit).
-  - `fastlane/metadata/android/en-US/full_description.txt`: 488 characters (accurate summary without marketing fluff).
-  - `fastlane/metadata/android/en-US/changelogs/11.txt`: Accompanying release changelog for version 11.
-- [x] **Documentation Accuracy**: `README.md` completely updated to accurately describe the dual-tier architecture (native Kotlin IME + offline WebView), actual build commands, and GitHub Actions CI workflow.
+2. Manifest and Privacy Review
 
----
+- [x] The checked-in "android/app/src/main/AndroidManifest.xml" does not declare "android.permission.INTERNET".
+- [x] The manifest declares "RECEIVE_BOOT_COMPLETED" and the "CaptureExpiryReceiver".
+- [x] The keyboard service is protected by Android's "BIND_INPUT_METHOD" permission.
+- [ ] Confirm the boot receiver's behavior matches the intended local expiry behavior.
+- [ ] Review the merged release manifest from an actual release build.
+- [ ] Inspect source code and packaged assets for network requests, telemetry, and tracking.
+- [ ] Test runtime behavior and privacy claims; do not infer all behavior solely from manifest permissions.
 
-## 2. Permissions & Anti-Features Audit
+3. Fonts and Bundled Assets
 
-- [x] **Zero Tracking / Analytics**: No Firebase Analytics, Google Play Services, Adjust, AppsFlyer, or telemetry SDKs.
-- [x] **Zero Advertisements**: No AdMob or external ad networks.
-- [x] **Zero Network Permission**: `android.permission.INTERNET` is completely absent from `AndroidManifest.xml`.
-- [x] **Declared Permissions**:
-  - `android.permission.RECEIVE_BOOT_COMPLETED`: Used solely by `CaptureExpiryReceiver` to re-register local `AlarmManager` timers for expiring temporary capture cards after a device reboot.
-  - `android.permission.BIND_INPUT_METHOD`: Standard system protection for `ClipMaxImeService`.
-- [x] **Data Isolation**: All clips and backups reside strictly in app-private sandbox storage or user-selected folders via Storage Access Framework (SAF).
+- [x] Source HTML and packaged HTML contain Google Fonts references.
+- [ ] Remove external Google Fonts links from both "index.html" files.
+- [ ] Switch CSS font declarations to system font stacks.
+- [ ] Build web assets from source and compare the output with checked-in Android assets.
+- [ ] Search packaged assets for remaining remote URLs, scripts, stylesheets, and font requests.
+- [ ] Verify the origin and license of app icons, logos, fonts, and other bundled assets.
 
----
+4. Third-Party Licensing
 
-## 3. License Compatibility
+- [x] A GPL version 3 license file is present in the repository.
+- [x] A preliminary third-party license inventory is present.
+- [ ] Verify exact versions and licenses for all runtime and build dependencies, including transitive dependencies.
+- [ ] Confirm license compatibility and include required notices for bundled code and assets.
+- [ ] Confirm copyright and licensing declarations accurately cover the submitted source.
 
-- [x] **Project License**: GNU General Public License v3.0 (`LICENSE` present in repository root).
-- [x] **Android Runtime Dependencies**:
-  - `androidx.webkit:webkit:1.12.1` — Apache 2.0 (FSDG compatible).
-- [x] **Bundled Web Assets**:
-  - `react`, `react-dom` — MIT (FSDG compatible).
-  - `lucide-react` — ISC (FSDG compatible).
-  - `jszip` — MIT / GPL-3.0 dual license (FSDG compatible).
-  - `motion`, `clsx`, `tailwind-merge` — MIT (FSDG compatible).
-- [x] **License Inventory**: Detailed inventory documented in `THIRD_PARTY_LICENSES.md`.
+5. Build and Release
 
----
+- [x] The Gradle wrapper is present under "android/".
+- [x] The checked-in GitHub Actions workflow runs on pushes to "main" and manual dispatch.
+- [x] The workflow uploads a debug APK artifact with 14-day retention.
+- [ ] Run a clean build of the current branch and retain the logs.
+- [ ] Test the resulting APK on a device, including the main app, keyboard, long-text insertion, backup/restore, and offline behavior.
+- [ ] Prepare and verify a release build; a debug APK is not a release artifact.
+- [ ] Determine the appropriate F-Droid build recipe and verify that the build can be reproduced from source.
+- [ ] Create a release tag only after the release commit is approved and tested.
+- [ ] Submit the app to F-Droid; acceptance is determined by F-Droid's review.
 
-## 4. External Fonts & Network References (Item Under Review)
+Current Status
 
-### Current Situation
-- `index.html` currently contains `<link>` tags pointing to Google Fonts:
-  ```html
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  ```
-- **Device Reality**: Because the Android app has no `INTERNET` permission, the Android WebView fails to load these fonts silently. The web UI on actual Android devices falls back immediately to the system fonts: `Roboto` for sans-serif and system `monospace`.
-- **F-Droid Policy**: F-Droid scanners flag external URLs (`fonts.googleapis.com`) as Anti-Features (NonFreeNet or external tracking), even if the app cannot reach them.
+Repository configuration has been inspected, but font cleanup, clean-build verification, device testing, complete license auditing, and F-Droid submission remain outstanding.
 
-### Recommended Path (Option A)
-- Remove the Google Fonts `<link>` tags from `index.html`.
-- Rely entirely on the clean system font stack already declared in `src/index.css` (`system-ui, -apple-system, Roboto, sans-serif` and `ui-monospace, monospace`).
-- **Impact**: Zero visual change on physical Android devices (as it was already using Roboto). Eliminates all remote network warnings and reduces HTML parsing overhead.
-
----
-
-## 5. Build Reproducibility & F-Droid Submission
-
-- [x] **Gradle Wrapper**: Standard `gradlew` (Gradle 8.9) checked into repository.
-- [x] **CI Validation**: GitHub Actions builds the installable debug APK on every commit to `main`.
-- [ ] **Release Tag**: An annotated git tag (e.g. `v1.0.1`) must be created on the release commit once ready.
-- [ ] **F-Droid Build Recipe Metadata**: The F-Droid build recipe will build the Gradle project from source using `assembleRelease`.
+This checklist is not a declaration of F-Droid compliance, reproducibility, or acceptance.
