@@ -12,8 +12,8 @@ android {
         applicationId = "com.clipmax.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.5.1"
+        versionCode = 11
+        versionName = "1.0.1"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
 
