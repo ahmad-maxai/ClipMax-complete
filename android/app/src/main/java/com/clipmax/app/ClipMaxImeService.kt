@@ -2066,20 +2066,20 @@ class ClipMaxImeService : InputMethodService() {
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
-        override fun getIntrinsicWidth(): Int = dp(sizeDp)
-        override fun getIntrinsicHeight(): Int = dp(sizeDp)
+        override fun getIntrinsicWidth(): Int = dp(sizeDp).toInt()
+        override fun getIntrinsicHeight(): Int = dp(sizeDp).toInt()
     }
 
     private fun Button.setIcon(icon: IconDrawable, paddingDp: Float = 3f) {
         icon.setBounds(0, 0, icon.intrinsicWidth, icon.intrinsicHeight)
         setCompoundDrawables(icon, null, null, null)
-        compoundDrawablePadding = dp(paddingDp)
+        compoundDrawablePadding = dp(paddingDp).toInt()
     }
 
     private fun TextView.setIcon(icon: IconDrawable, paddingDp: Float = 3f) {
         icon.setBounds(0, 0, icon.intrinsicWidth, icon.intrinsicHeight)
         setCompoundDrawables(icon, null, null, null)
-        compoundDrawablePadding = dp(paddingDp)
+        compoundDrawablePadding = dp(paddingDp).toInt()
     }
 
     private fun createIconView(icon: IconDrawable): ImageView = ImageView(this).apply {
