@@ -1,155 +1,68 @@
-# ClipMax
+ClipMax
 
-Official repository for **ClipMax** (v1.0.1) — a private, offline-first Android clipboard manager and system keyboard (Input Method Editor, or IME).
+ClipMax is an Android clipboard manager with a custom system keyboard (Input Method Editor, or IME). It combines a native Kotlin Android application and keyboard service with a React-based management interface bundled inside the app.
 
-ClipMax combines a high-performance native Kotlin Input Method service with an offline-bundled management interface. It is designed to keep saved text strictly on the device, handle large payloads safely, and make text reuse seamless across any Android application.
+Version: 1.0.1
+Version code: 11
+Application ID: "com.clipmax.app"
+Minimum Android version: Android 8.0 (API 26)
 
----
+Features
 
-## Project Specifications
+- Save, search, edit, pin, and reuse text clips.
+- Access saved clips from the ClipMax keyboard.
+- Insert long text using bounded chunks.
+- Import text files and export or restore ZIP backups.
+- Configure retention for automatically captured clips.
+- Use light and dark interface themes.
 
-- **Application ID / Package**: `com.clipmax.app`
-- **Current Version**: `1.0.1` (`versionCode 11`)
-- **Minimum Supported Android**: Android 8.0 (API level 26)
-- **Target Android Version**: Android 15 (API level 35)
-- **Compile SDK**: API 35 (Android 15)
-- **Build Tools**: 35.0.0
-- **Android Gradle Plugin**: 8.7.3
-- **Gradle Wrapper**: 8.9
-- **JDK Compatibility**: Java 17
-- **License**: GNU General Public License v3.0 ([`LICENSE`](LICENSE))
+Feature availability and behavior should be confirmed against the release being tested.
 
----
+Architecture
 
-## Architecture & Core Features
+- "ClipMaxImeService.kt" provides the native Android keyboard.
+- "MainActivity.kt" hosts the bundled management interface in an Android WebView.
+- "AndroidBridge.kt" connects the web interface to native app functionality.
+- "ClipStore.kt" and related Kotlin classes handle local clip storage and text processing.
+- "android/app/src/main/assets/web/" contains the web assets packaged into the Android application.
+- "src/" contains the React/TypeScript source used to build the web interface.
 
-ClipMax employs a dual-tier architecture that separates system-critical input operations from library management:
+External resource references should be removed from packaged HTML where possible so the app does not depend on remote resources.
 
-### 1. Native System Input Method (`ClipMaxImeService.kt`)
-- **Pure Native Kotlin Service**: Registered as an Android Input Method protected by `android.permission.BIND_INPUT_METHOD`.
-- **Gboard-Inspired Virtual Keyboard**: Complete QWERTY touch layout with responsive letter popups, symbol panels, and tactile haptic feedback. Popups render on the root overlay frame to prevent edge or toolbar clipping on row-1 keys (`Q`–`P`).
-- **50,000-Unit Chunked Text Insertion**: Large text snippets are inserted in bounded UTF-16 chunks (up to 50,000 code units per `commitText` call) to prevent Android IPC binder transaction overflows (`TransactionTooLargeException`). Includes live insertion progress and user cancellation.
-- **Compact Saved-Clips Panel**: A vertically scrollable clipboard browser designed for small viewports. Collapsed cards measure ~51dp and display single-line monospace previews with character and size metadata, ensuring at least **2 to 3 cards are simultaneously visible** at all times.
-- **Single-Card Expansion**: Tapping a card expands it to reveal equal-width, accessible action buttons: **Insert**, **Edit**, **Pin/Unpin**, and **Delete** (with inline confirmation). Only one card expands at a time to preserve vertical browsing space.
-- **Hardware-Accelerated Vector Icons**: Uses a custom `IconDrawable` engine for monochrome, theme-aware vector graphics. Zero decorative Unicode emojis.
-- **Dual Typing Modes**:
-  - `Typing: Host` (default): All keystrokes commit directly to the active destination text field.
-  - `Typing: Filter`: Keystrokes filter saved snippets in real-time without leaking text into the host application.
-- **Privacy & Automatic Capture**: Automatically captures copied text and selection updates during active non-password sessions. Automatic capture is completely suppressed in password fields (`TYPE_TEXT_VARIATION_PASSWORD`).
+Project and build requirements
 
-### 2. Management Application & Offline Web Interface (`MainActivity.kt` & Bundled Assets)
-- **Offline WebView Container**: `MainActivity.kt` hosts a local WebView (`androidx.webkit:webkit:1.12.1`) rendering bundled React and Tailwind assets from `android/app/src/main/assets/web/`.
-- **Zero Internet Permissions**: `AndroidManifest.xml` does **not** declare `android.permission.INTERNET`. The app cannot establish network connections, send analytics, or fetch remote resources at runtime.
-- **Bidirectional Native Bridge (`AndroidBridge.kt`)**: Connects the web UI to the native Kotlin storage engine via `@JavascriptInterface` for instant clip updates, pin toggling, and theme synchronization.
-- **Storage Access Framework (SAF)**: Native file picker integration for importing plain-text files (`.txt`).
-- **ZIP Backup & Restore**: Create full archive backups of saved clips or merge-restore previous archives with a 128 MiB boundary check.
+- JDK 17
+- Android SDK Platform 35 and Build Tools 35.0.0
+- Gradle Wrapper 8.9
+- Android Gradle Plugin 8.7.3
+- Node.js and npm are needed only when rebuilding the web interface from "src/".
 
-### 3. Storage & Persistence (`ClipStore.kt`)
-- **Atomic File Storage**: Metadata is atomically replaced, and content files are isolated to prevent partial-write corruption on sudden power loss.
-- **Newest-First Chronological Ordering**: Saved items are sorted with newest creations first (`createdAt` descending), with pinned items floating to the top. Chunks from the same capture share timestamps and preserve ascending serial order (`Chunk 001`, `Chunk 002`) via title tiebreakers.
-- **Retention & Cleanup (`CapturePreferences.kt`)**: User-selectable auto-expiry periods (Off, 1h, 6h, 24h, 72h, or Forever) managed via local preferences and inexact `AlarmManager` schedules.
+Build the debug APK
 
----
+From the repository root, run:
 
-## Project Structure
-
-```text
-ClipMax-complete/
-├── android/                             # Native Android Gradle Project
-│   ├── app/
-│   │   ├── src/main/java/com/clipmax/app/
-│   │   │   ├── ClipMaxImeService.kt    # Native IME service & keyboard
-│   │   │   ├── MainActivity.kt         # Android Activity host & WebView
-│   │   │   ├── AndroidBridge.kt        # JS-to-Kotlin interface bridge
-│   │   │   ├── ClipStore.kt            # Atomic local filesystem storage
-│   │   │   ├── TextChunker.kt          # Surrogate-safe 50k UTF-16 chunking
-│   │   │   └── CapturePreferences.kt   # Retention and clipboard settings
-│   │   ├── src/main/assets/web/        # Bundled offline web UI assets
-│   │   ├── src/main/AndroidManifest.xml# Android Manifest (zero network perms)
-│   │   └── build.gradle.kts            # App module Gradle configuration
-│   ├── build.gradle.kts                # Root Android build configuration
-│   └── gradlew                         # Gradle wrapper executable
-├── src/                                # Web UI React/TypeScript source
-│   ├── components/                     # Screens, primitives, and keyboard preview
-│   └── lib/                            # Storage, chunking, and bridge helpers
-├── fastlane/metadata/android/en-US/    # F-Droid Fastlane metadata
-├── .github/workflows/build-apk.yml     # GitHub Actions CI build workflow
-├── LICENSE                             # GNU General Public License v3.0
-└── README.md                           # Project documentation
-```
-
----
-
-## Building from Source
-
-### Prerequisites
-- **JDK 17** (Temurin or OpenJDK recommended)
-- **Android SDK Platform 35** and **Build Tools 35.0.0**
-- **Node.js 20+** (only required when modifying the web UI in `src/`)
-
-### Step 1: Build Web UI Assets (Optional)
-If you made changes to the React source in `src/`, compile the web assets and copy them to the Android assets directory:
-```bash
-npm install
-npm run build
-rm -rf android/app/src/main/assets/web
-cp -r dist android/app/src/main/assets/web
-```
-
-### Step 2: Build the Android Debug APK
-Run the Gradle wrapper from the repository root:
-```bash
-chmod +x gradlew
-./gradlew assembleDebug
-```
-Or run directly from the `android/` directory:
-```bash
 cd android
 chmod +x gradlew
-./gradlew assembleDebug
-```
+./gradlew --no-daemon assembleDebug
 
-### Expected Output Path
-```text
-android/app/build/outputs/apk/debug/app-debug.apk
-```
+Expected output:
 
----
+"android/app/build/outputs/apk/debug/app-debug.apk"
 
-## Automated CI/CD (GitHub Actions)
+This is a debug build for testing, not a signed production release. The first build requires internet access to download Gradle and dependencies.
 
-This repository includes a continuous integration workflow defined in [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml):
-- **Triggers**: On every push to `main`, pull request, or manual trigger (`workflow_dispatch`).
-- **Environment**: Ubuntu runner with OpenJDK 17.
-- **Task**: Executes `./gradlew --no-daemon assembleDebug` inside the `android/` directory.
-- **Artifact**: Uploads the resulting installable APK as a downloadable ZIP named **`ClipMax-debug-APK`** (retained for 14 days in the GitHub Actions run summary).
+GitHub Actions
 
----
+Check ".github/workflows/build-apk.yml" for the exact triggers and artifact retention settings. Open the repository's Actions tab to find completed builds.
 
-## Licensing & Third-Party Components
+Licensing and F-Droid
 
-ClipMax is free software licensed under the **GNU General Public License v3.0** ([`LICENSE`](LICENSE)).
+The repository contains a GPL version 3 license file and a preliminary third-party license inventory. The inventory is a review aid; dependency versions, bundled assets, and their notices still need to be verified before release.
 
-All third-party libraries and runtime components are compatible open-source projects:
-- **AndroidX WebKit** (`androidx.webkit:webkit`): Apache License 2.0
-- **React & React DOM**: MIT License
-- **Lucide Icons** (`lucide-react`): ISC License
-- **JSZip** (`jszip`): MIT / GPL-3.0 dual license
-- **Tailwind CSS**: MIT License
-- **JUnit 4** (`junit:junit`, test-only): Eclipse Public License 1.0
+F-Droid publication has not been completed or approved. Remaining work includes checking third-party licenses and asset provenance, removing external font references, validating the source build, and preparing appropriate release metadata.
 
-See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for full notices and license texts.
+- "F-Droid submission guide" (https://f-droid.org/docs/Submitting_to_F-Droid/)
+- "F-Droid build metadata reference" (https://f-droid.org/docs/Build_Metadata_Reference/)
+- "Reproducible builds" (https://f-droid.org/docs/Reproducible_Builds/)
 
----
-
-## F-Droid Readiness Status
-
-This repository is currently being prepared for submission to F-Droid:
-- [x] **Zero Tracking & Telemetry**: No analytics, trackers, or advertising SDKs.
-- [x] **Zero Network Access**: `android.permission.INTERNET` is completely omitted from `AndroidManifest.xml`.
-- [x] **Pure Open-Source Dependencies**: All build and runtime dependencies use approved FSDG-compatible licenses.
-- [x] **Fastlane Metadata**: Initial localized metadata files are populated in `fastlane/metadata/android/en-US/`.
-- [ ] **External Font Reference Cleanup**: Review and remove external Google Fonts links in `index.html` in favor of native system fonts to ensure 100% offline compliance.
-- [ ] **Release Tag & Tarball**: Create an annotated release tag matching `versionCode 11` / `versionName 1.0.1` prior to opening the F-Droid RFP / merge request.
-
-Track ongoing audit tasks in [`FDROID_READINESS_CHECKLIST.md`](FDROID_READINESS_CHECKLIST.md).
+See ""FDROID_READINESS_CHECKLIST.md"" (FDROID_READINESS_CHECKLIST.md) and ""THIRD_PARTY_LICENSES.md"" (THIRD_PARTY_LICENSES.md) for the current review notes.
