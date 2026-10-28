@@ -1,87 +1,68 @@
-# ClipMax-Android
+ClipMax
 
-Official native Android application and IME (Input Method Editor) service for **ClipMax** (v0.5.1).
+ClipMax is an Android clipboard manager with a custom system keyboard (Input Method Editor, or IME). It combines a native Kotlin Android application and keyboard service with a React-based management interface bundled inside the app.
 
-This repository contains the complete native Kotlin codebase, Android resources, Gradle build configuration, and adaptive launcher icons generated from the official ClipMax logo. It is structured for both local Android Studio development and cloud APK compilation through **Newly AI**, **GitHub Actions**, or other Android CI/CD pipelines.
+Version: 1.0.1
+Version code: 11
+Application ID: "com.clipmax.app"
+Minimum Android version: Android 8.0 (API 26)
 
----
+Features
 
-## Project Specifications
+- Save, search, edit, pin, and reuse text clips.
+- Access saved clips from the ClipMax keyboard.
+- Insert long text using bounded chunks.
+- Import text files and export or restore ZIP backups.
+- Configure retention for automatically captured clips.
+- Use light and dark interface themes.
 
-- **Package ID / Namespace**: `com.clipmax.app`
-- **Application Label**: ClipMax
-- **Target Android Version**: Android 15 (API level 35)
-- **Minimum Supported Android**: Android 8.0 (API level 26)
-- **Language**: Kotlin 2.0.21
-- **Android Gradle Plugin (AGP)**: 8.7.3
-- **Gradle Version**: 8.9 (via included Gradle Wrapper)
-- **JDK Compatibility**: Java 17
+Feature availability and behavior should be confirmed against the release being tested.
 
----
+Architecture
 
-## Native Architecture & Features
+- "ClipMaxImeService.kt" provides the native Android keyboard.
+- "MainActivity.kt" hosts the bundled management interface in an Android WebView.
+- "AndroidBridge.kt" connects the web interface to native app functionality.
+- "ClipStore.kt" and related Kotlin classes handle local clip storage and text processing.
+- "android/app/src/main/assets/web/" contains the web assets packaged into the Android application.
+- "src/" contains the React/TypeScript source used to build the web interface.
 
-ClipMax is a private, offline-first clipboard manager and system input method:
+External resource references should be removed from packaged HTML where possible so the app does not depend on remote resources.
 
-1. **`ClipMaxImeService.kt`** (`com.clipmax.app.ClipMaxImeService`):
-   - Registered as a system Input Method protected by `android.permission.BIND_INPUT_METHOD`.
-   - Inserts saved clips directly into any third-party app (WhatsApp, Chrome, Notes, SMS, etc.).
-   - Inserts text using surrogate-safe bounded chunks of up to 50,000 UTF-16 code units per `commitText` call to prevent binder transaction overflows (`TransactionTooLargeException`).
-   - Displays real-time progress and supports cancellation during chunk insertion.
-   - Built-in compact search keypad for filtering snippets on the fly.
-   - Automatic capture suppression when focused on secure password fields (`TYPE_TEXT_VARIATION_PASSWORD`).
+Project and build requirements
 
-2. **`MainActivity.kt`** (`com.clipmax.app.MainActivity`):
-   - Native Android Activity for library management, manual clip editing, and settings.
-   - Storage Access Framework (SAF) integration for importing `.txt` files.
-   - ZIP backup export and merge-restore with a 128 MiB boundary check.
+- JDK 17
+- Android SDK Platform 35 and Build Tools 35.0.0
+- Gradle Wrapper 8.9
+- Android Gradle Plugin 8.7.3
+- Node.js and npm are needed only when rebuilding the web interface from "src/".
 
-3. **`ClipStore.kt` & `TextChunker.kt`**:
-   - Device-only sandbox persistence without network permissions or external accounts.
-   - Surrogate-safe chunking that preserves high/low surrogate pairs (emoji and CJK characters).
+Build the debug APK
 
-4. **`CapturePreferences.kt` & `CaptureExpiryReceiver.kt`**:
-   - Retention configuration (Off, 1h, 6h, 24h, 72h, Forever).
-   - Inexact alarm scheduling for expiring temporary capture cards.
+From the repository root, run:
 
----
-
-## Building a Debug APK
-
-### Method 1: Cloud Build with Newly AI
-1. Create a new GitHub repository named `ClipMax-Android`.
-2. Push this repository to GitHub:
-   ```bash
-   git init -b main
-   git add .
-   git commit -m "Initial commit of native ClipMax Android project"
-   git remote add origin https://github.com/<your-username>/ClipMax-Android.git
-   git push -u origin main
-   ```
-3. In Newly AI, connect your GitHub repository `https://github.com/<your-username>/ClipMax-Android`.
-4. Newly AI will detect the Gradle project configuration and build the installable debug APK (`app-debug.apk`).
-
-### Method 2: Automatic GitHub Actions Build
-This repository includes `.github/workflows/build-apk.yml`. Every push or pull request to `main` triggers a GitHub Actions runner with JDK 17 to build the APK. The resulting `ClipMax-v0.5.1-debug-apk` will be available in the **Actions** tab as a downloadable artifact.
-
-### Method 3: Local Android Studio / Terminal Build
-Prerequisites: JDK 17 and Android SDK 35 installed.
-
-```bash
-# Build from repository root
+cd android
 chmod +x gradlew
-./gradlew assembleDebug
+./gradlew --no-daemon assembleDebug
 
-# Output APK path:
-# android/app/build/outputs/apk/debug/app-debug.apk
-```
+Expected output:
 
-Or open the `android/` directory directly in Android Studio.
+"android/app/build/outputs/apk/debug/app-debug.apk"
 
----
+This is a debug build for testing, not a signed production release. The first build requires internet access to download Gradle and dependencies.
 
-## Verification & Integrity Checks
+GitHub Actions
 
-- **Zero sample / dummy snippets**: Default storage initializes empty.
-- **No telemetry or tracking**: Zero analytics, advertising, or background network calls.
-- **Native Android implementation**: Pure Kotlin and Android platform APIs (`InputMethodService`, `Activity`, `BroadcastReceiver`). No webview wrappers.
+Check ".github/workflows/build-apk.yml" for the exact triggers and artifact retention settings. Open the repository's Actions tab to find completed builds.
+
+Licensing and F-Droid
+
+The repository contains a GPL version 3 license file and a preliminary third-party license inventory. The inventory is a review aid; dependency versions, bundled assets, and their notices still need to be verified before release.
+
+F-Droid publication has not been completed or approved. Remaining work includes checking third-party licenses and asset provenance, removing external font references, validating the source build, and preparing appropriate release metadata.
+
+- "F-Droid submission guide" (https://f-droid.org/docs/Submitting_to_F-Droid/)
+- "F-Droid build metadata reference" (https://f-droid.org/docs/Build_Metadata_Reference/)
+- "Reproducible builds" (https://f-droid.org/docs/Reproducible_Builds/)
+
+See ""FDROID_READINESS_CHECKLIST.md"" (FDROID_READINESS_CHECKLIST.md) and ""THIRD_PARTY_LICENSES.md"" (THIRD_PARTY_LICENSES.md) for the current review notes.
