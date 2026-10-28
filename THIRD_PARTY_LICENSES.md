@@ -67,8 +67,7 @@ The following libraries are compiled into the static, offline single-page applic
 - **Engine**: The native Android keyboard (`ClipMaxImeService.kt`) uses the device's native system typeface (`Typeface.SANS_SERIF` and `Typeface.MONOSPACE`) and custom programmatically drawn hardware vector drawables (`IconDrawable`). It embeds no external font files or decorative emojis.
 
 ### Web Interface Typography
-- **Configuration**: The web stylesheet (`src/index.css`) declares system font fallback stacks:
-  - Sans-Serif: `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
-  - Monospace: `"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace`
-- **Offline Behavior**: Because ClipMax lacks `android.permission.INTERNET`, the web container cannot connect to remote CDNs. On Android devices, the interface displays the system default fonts (Roboto and system monospace).
-- **F-Droid Compliance Recommendation**: Remove remote Google Fonts `<link>` references in `index.html` in favor of standard system font declarations (`system-ui`, `Roboto`, `monospace`) to guarantee 100% offline purity and eliminate remote resource alerts.
+- **Configuration**: The web stylesheet (`src/index.css`) declares pure local system font stacks:
+  - Sans-Serif: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`
+  - Monospace: `ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`
+- **F-Droid Compliance & Privacy**: All external Google Fonts `<link>` references have been completely removed from `index.html` and the bundled Android assets. Typography relies exclusively on local device system fonts (Roboto and Android system monospace), ensuring 100% offline purity and zero remote network requests.
