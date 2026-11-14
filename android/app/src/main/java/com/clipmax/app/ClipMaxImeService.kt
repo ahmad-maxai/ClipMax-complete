@@ -665,13 +665,154 @@ class ClipMaxImeService : InputMethodService() {
         addView(scrollView)
     }
 
+    private var contextMenuOverlay: View? = null
+    private var contextMenuPopup: View? = null
+
+    private fun dismissContextMenu() {
+        val overlay = contextMenuOverlay
+        val popup = contextMenuPopup
+        if (overlay != null) {
+            imeRootFrame?.removeView(overlay)
+            contextMenuOverlay = null
+        }
+        if (popup != null) {
+            imeRootFrame?.removeView(popup)
+            contextMenuPopup = null
+        }
+    }
+
+    private fun showContextMenu(targetCard: View, item: ClipItem) {
+        dismissContextMenu()
+        val root = imeRootFrame ?: return
+
+        // 1. Translucent dimming overlay
+        val overlay = View(this).apply {
+            setBackgroundColor(0x78000000.toInt())
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setOnClickListener { dismissContextMenu() }
+        }
+        contextMenuOverlay = overlay
+        root.addView(overlay)
+
+        // 2. Side-mounted contextual action panel container
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(colorKeyBg)
+            background = roundedDrawable(colorKeyBg, dp(12f), colorAccent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(16f)
+            }
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+
+            // Actions: Pin/Unpin, Edit, Delete
+            val actionHeight = dp(42)
+            val iconSize = 15f
+
+            // Pin / Unpin Action
+            val pinColor = if (item.pinned) colorActiveTabText else colorKeyText
+            val pinText = if (item.pinned) "Unpin" else "Pin"
+            val pinIconType = if (item.pinned) IconType.PIN_FILLED else IconType.PIN
+            val pinBtn = Button(this@ClipMaxImeService).apply {
+                text = pinText
+                isAllCaps = false
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(pinColor)
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                setPadding(dp(12), 0, dp(16), 0)
+                background = roundedRipple(colorKeyBg, dp(8f), 0)
+                setIcon(IconDrawable(pinIconType, pinColor, iconSize), 8f)
+                setOnClickListener {
+                    dismissContextMenu()
+                    io.execute {
+                        val nextPinned = !item.pinned
+                        store.setPinned(item.id, nextPinned)
+                        if (nextPinned) {
+                            CapturePreferences.removeExpiry(capturePreferences, item.id)
+                        }
+                        main.post { reloadItems() }
+                    }
+                }
+            }
+            addView(pinBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
+
+            // Edit Action
+            val editBtn = Button(this@ClipMaxImeService).apply {
+                text = "Edit"
+                isAllCaps = false
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                setPadding(dp(12), 0, dp(16), 0)
+                background = roundedRipple(colorKeyBg, dp(8f), 0)
+                setIcon(IconDrawable(IconType.EDIT, colorKeyText, iconSize), 8f)
+                setOnClickListener {
+                    dismissContextMenu()
+                    try {
+                        val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
+                            action = Intent.ACTION_VIEW
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
+                        }
+                        startActivity(intent)
+                    } catch (_: Throwable) {}
+                }
+            }
+            addView(editBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
+
+            // Delete Action
+            val delBtn = Button(this@ClipMaxImeService).apply {
+                text = "Delete"
+                isAllCaps = false
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorDangerText)
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                setPadding(dp(12), 0, dp(16), 0)
+                background = roundedRipple(colorKeyBg, dp(8f), 0)
+                setIcon(IconDrawable(IconType.DELETE, colorDangerText, iconSize), 8f)
+                setOnClickListener {
+                    dismissContextMenu()
+                    io.execute {
+                        if (store.delete(item.id)) {
+                            CapturePreferences.removeExpiry(capturePreferences, item.id)
+                            CapturePreferences.onItemsDeleted(capturePreferences, listOf(item.id))
+                        }
+                        main.post { reloadItems() }
+                    }
+                }
+            }
+            addView(delBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
+        }
+
+        // Compute positioning relative to root frame
+        val rootWidth = root.width.takeIf { it > 0 } ?: dp(360)
+        val panelWidth = dp(140)
+        val leftPos = (rootWidth - panelWidth - dp(12)).coerceAtLeast(dp(12))
+        val topPos = dp(36).coerceAtLeast(dp(4))
+
+        val params = FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = leftPos
+            topMargin = topPos
+        }
+        contextMenuPopup = panel
+        root.addView(panel, params)
+
+        // Smooth fade-in entrance animation
+        panel.alpha = 0f
+        panel.scaleX = 0.92f
+        panel.scaleY = 0.92f
+        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+    }
+
     private fun buildCompactCard(item: ClipItem): View = LinearLayout(this).apply {
-        val isExpanded = expandedCardId == item.id
         val (baseTitle, chunkLabel) = parseTitleAndChunk(item.title)
 
         orientation = LinearLayout.VERTICAL
         setPadding(dp(8), dp(6), dp(8), dp(6))
-        background = roundedRipple(colorKeyBg, dp(8f), if (isExpanded) colorAccent else colorKeyBorder)
+        background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
 
         // A. Header: Pin Icon, Title, Optional Chunk Badge
         val headerRow = LinearLayout(this@ClipMaxImeService).apply {
@@ -712,8 +853,8 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(headerRow)
 
-        // B. Content Preview (2 lines collapsed, up to 4 lines expanded)
-        val snippet = getSnippet(item, if (isExpanded) 160 else 70)
+        // B. Content Preview (2 lines collapsed)
+        val snippet = getSnippet(item, 70)
         if (snippet.isNotEmpty()) {
             val snippetBox = FrameLayout(this@ClipMaxImeService).apply {
                 setPadding(dp(6), dp(3), dp(6), dp(3))
@@ -729,7 +870,7 @@ class ClipMaxImeService : InputMethodService() {
                     typeface = Typeface.MONOSPACE
                     setTextColor(colorModText)
                     setLineSpacing(dp(1.5f), 1f)
-                    maxLines = if (isExpanded) 4 else 2
+                    maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
                 }
                 addView(snipTv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -737,7 +878,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(snippetBox)
         }
 
-        // C. Minimal Metadata (Size / character count only if large or helpful, without copy count or timestamps)
+        // C. Minimal Metadata (Size / character count only if large)
         if (item.sizeBytes > 1024L) {
             val metaTv = TextView(this@ClipMaxImeService).apply {
                 text = humanSize(item.sizeBytes)
@@ -749,185 +890,17 @@ class ClipMaxImeService : InputMethodService() {
             addView(metaTv)
         }
 
+        // Single tap -> Insert immediately without opening expansion
         setOnClickListener {
-            expandedCardId = if (isExpanded) null else item.id
-            deletingItemId = null
-            renderFullImeView()
+            dismissContextMenu()
+            insertItem(item)
         }
 
-        // D. Expanded Actions Row (Compact 28dp buttons for Insert, Edit, Pin, Delete)
-        if (isExpanded) {
-            val divider = View(this@ClipMaxImeService).apply {
-                setBackgroundColor(colorKeyBorder)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                    topMargin = dp(4)
-                    bottomMargin = dp(4)
-                }
-            }
-            addView(divider)
-
-            val actionBtnHeight = dp(26)
-
-            if (deletingItemId == item.id) {
-                val confirmRow = LinearLayout(this@ClipMaxImeService).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-
-                    val prompt = TextView(this@ClipMaxImeService).apply {
-                        text = "Delete?"
-                        textSize = 10f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(colorDangerText)
-                    }
-                    addView(prompt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-                    val cancelBtn = Button(this@ClipMaxImeService).apply {
-                        text = "No"
-                        isAllCaps = false
-                        textSize = 9.5f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(6), 0, dp(6), 0)
-                        setTextColor(colorModText)
-                        background = roundedRipple(colorModBg, dp(5f), colorKeyBorder)
-                        setOnClickListener {
-                            deletingItemId = null
-                            renderFullImeView()
-                        }
-                    }
-                    addView(cancelBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, actionBtnHeight).apply { rightMargin = dp(4) })
-
-                    val deleteBtn = Button(this@ClipMaxImeService).apply {
-                        text = "Yes"
-                        isAllCaps = false
-                        textSize = 9.5f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(6), 0, dp(6), 0)
-                        setTextColor(0xFFFFFFFF.toInt())
-                        background = roundedRipple(0xFFEF4444.toInt(), dp(5f), 0xFFEF4444.toInt())
-                        setOnClickListener {
-                            deletingItemId = null
-                            expandedCardId = null
-                            io.execute {
-                                if (store.delete(item.id)) {
-                                    CapturePreferences.removeExpiry(capturePreferences, item.id)
-                                    CapturePreferences.onItemsDeleted(capturePreferences, listOf(item.id))
-                                }
-                                main.post { reloadItems() }
-                            }
-                        }
-                    }
-                    addView(deleteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, actionBtnHeight))
-                }
-                addView(confirmRow)
-            } else {
-                val actionRow = LinearLayout(this@ClipMaxImeService).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    weightSum = 4f
-
-                    val insertBtn = Button(this@ClipMaxImeService).apply {
-                        text = "Ins"
-                        isAllCaps = false
-                        textSize = 9f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(2), 0, dp(2), 0)
-                        gravity = Gravity.CENTER
-                        setTextColor(colorAccentText)
-                        background = roundedRipple(colorAccent, dp(5f), colorAccent)
-                        setOnClickListener { insertItem(item) }
-                    }
-                    addView(insertBtn, LinearLayout.LayoutParams(0, actionBtnHeight, 1f).apply { rightMargin = dp(2) })
-
-                    val editBtn = Button(this@ClipMaxImeService).apply {
-                        text = "Edit"
-                        isAllCaps = false
-                        textSize = 9f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(2), 0, dp(2), 0)
-                        gravity = Gravity.CENTER
-                        setTextColor(colorModText)
-                        background = roundedRipple(colorModBg, dp(5f), colorKeyBorder)
-                        setOnClickListener {
-                            try {
-                                val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
-                                    action = Intent.ACTION_VIEW
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                    putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
-                                }
-                                startActivity(intent)
-                            } catch (_: Throwable) {}
-                        }
-                    }
-                    addView(editBtn, LinearLayout.LayoutParams(0, actionBtnHeight, 1f).apply { rightMargin = dp(2) })
-
-                    val pinColor = if (item.pinned) colorActiveTabText else colorModText
-                    val pinBg = if (item.pinned) colorActiveTabBg else colorModBg
-                    val pinStroke = if (item.pinned) colorAccent else colorKeyBorder
-                    val pinBtn = Button(this@ClipMaxImeService).apply {
-                        text = if (item.pinned) "Unpin" else "Pin"
-                        isAllCaps = false
-                        textSize = 9f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(2), 0, dp(2), 0)
-                        gravity = Gravity.CENTER
-                        setTextColor(pinColor)
-                        background = roundedRipple(pinBg, dp(5f), pinStroke)
-                        setOnClickListener {
-                            io.execute {
-                                val nextPinned = !item.pinned
-                                store.setPinned(item.id, nextPinned)
-                                if (nextPinned) {
-                                    CapturePreferences.removeExpiry(capturePreferences, item.id)
-                                }
-                                main.post { reloadItems() }
-                            }
-                        }
-                    }
-                    addView(pinBtn, LinearLayout.LayoutParams(0, actionBtnHeight, 1f).apply { rightMargin = dp(2) })
-
-                    val delColor = colorDangerText
-                    val delBtn = Button(this@ClipMaxImeService).apply {
-                        text = "Del"
-                        isAllCaps = false
-                        textSize = 9f
-                        typeface = Typeface.DEFAULT_BOLD
-                        minHeight = 0
-                        minimumHeight = 0
-                        minWidth = 0
-                        minimumWidth = 0
-                        setPadding(dp(2), 0, dp(2), 0)
-                        gravity = Gravity.CENTER
-                        setTextColor(delColor)
-                        background = roundedRipple(colorModBg, dp(5f), 0x45EF4444.toInt())
-                        setOnClickListener {
-                            deletingItemId = item.id
-                            renderFullImeView()
-                        }
-                    }
-                    addView(delBtn, LinearLayout.LayoutParams(0, actionBtnHeight, 1f))
-                }
-                addView(actionRow)
-            }
+        // Long press -> Reveal side-mounted contextual action panel (Pin, Edit, Delete)
+        setOnLongClickListener {
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            showContextMenu(this, item)
+            true
         }
     }
 
