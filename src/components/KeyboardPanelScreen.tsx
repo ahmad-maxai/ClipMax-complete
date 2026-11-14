@@ -23,6 +23,13 @@ import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
 import { QwertyKeyboard } from "./QwertyKeyboard";
 
+function parseTitleAndChunk(title: string): { baseTitle: string; chunk: string | null } {
+  const match = title.match(/^(.*?)\s*\((Chunk\s+\d+\/\d+)\)$/i);
+  return match
+    ? { baseTitle: match[1].trim(), chunk: match[2].trim() }
+    : { baseTitle: title.trim(), chunk: null };
+}
+
 interface KeyboardPanelScreenProps {
   items: ClipItem[];
   onUpdateItems: (items: ClipItem[]) => void;
@@ -302,30 +309,32 @@ export function KeyboardPanelScreen({
         </div>
 
         {/* Host Controls */}
-        <div className="flex items-center justify-between shrink-0 pt-1">
+        <div className="flex items-center justify-between shrink-0 pt-1 gap-2">
           <Btn
             size="sm"
             variant="ghost"
             onClick={() => setHostText("")}
-            className="h-6.5 px-2 text-[11px] text-muted-foreground font-semibold"
+            className="h-6.5 px-2 text-[11px] text-muted-foreground font-semibold shrink-0 whitespace-nowrap"
           >
-            <RotateCcw className="h-3 w-3" />
-            Clear Host Text
+            <RotateCcw className="h-3 w-3 shrink-0" />
+            <span className="hidden xs:inline">Clear Host Text</span>
+            <span className="xs:hidden">Clear</span>
           </Btn>
 
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-muted-foreground font-mono">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap shrink-0">
               {hostText.length.toLocaleString()} chars
             </span>
             <Btn
               size="sm"
               variant="outline"
               onClick={handleSimulateCopyCapture}
-              className="h-6.5 px-2 text-[11px] font-semibold"
+              className="h-6.5 px-2 text-[11px] font-semibold shrink-0 whitespace-nowrap"
               title="Simulates clipboard copy to test automatic 50k card chunking"
             >
-              <Copy className="h-3 w-3 text-mint" />
-              Simulate 70k Copy
+              <Copy className="h-3 w-3 text-mint shrink-0" />
+              <span className="hidden xs:inline">Simulate 70k Copy</span>
+              <span className="xs:hidden">Copy 70k</span>
             </Btn>
           </div>
         </div>
@@ -460,6 +469,7 @@ export function KeyboardPanelScreen({
           ) : (
             visible.map((clip) => {
               const preview = clip.content.replace(/\s+/g, " ").trim();
+              const { baseTitle, chunk } = parseTitleAndChunk(clip.title);
               return (
                 <button
                   key={clip.id}
@@ -469,8 +479,13 @@ export function KeyboardPanelScreen({
                   title={`Insert "${clip.title}": ${preview.slice(0, 80)}...`}
                 >
                   {clip.pinned && <Pin className="h-2 w-2 text-[#0D9488] dark:text-mint" />}
-                  <span className="truncate max-w-[110px] font-semibold">{clip.title}</span>
-                  <span className="text-muted-foreground truncate max-w-[90px] font-mono text-[9px] hidden xs:inline">
+                  <span className="truncate max-w-[100px] font-semibold">{baseTitle}</span>
+                  {chunk && (
+                    <span className="text-[8px] font-bold text-[#0D9488] dark:text-mint bg-mint/15 dark:bg-mint/20 px-1 py-0.2 rounded shrink-0">
+                      {chunk}
+                    </span>
+                  )}
+                  <span className="text-muted-foreground truncate max-w-[80px] font-mono text-[9px] hidden xs:inline">
                     · {preview || "Empty"}
                   </span>
                   <span className="font-mono text-[8px] text-muted-foreground bg-muted/40 dark:bg-[#16211C] px-1 py-0.2 rounded shrink-0">
@@ -525,11 +540,21 @@ export function KeyboardPanelScreen({
                 sortClips(items, "newest").map((clip) => {
                   const isExpanded = expandedCardId === clip.id;
                   const preview = clip.content.replace(/\s+/g, " ").trim();
+                  const { baseTitle, chunk } = parseTitleAndChunk(clip.title);
+                  const timeFormatted = new Date(clip.modifiedAt).toLocaleTimeString([], {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
 
                   return (
                     <div
                       key={clip.id}
-                      className="rounded-xl border border-border bg-surface p-2.5 transition-colors shadow-2xs"
+                      className={cn(
+                        "rounded-xl border p-2.5 transition-all shadow-2xs",
+                        isExpanded
+                          ? "border-[#0D9488] dark:border-mint/60 bg-surface ring-1 ring-mint/20"
+                          : "border-border bg-surface hover:border-border/80"
+                      )}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <button
@@ -540,19 +565,31 @@ export function KeyboardPanelScreen({
                           }}
                           className="flex-1 min-w-0 text-left select-none cursor-pointer"
                         >
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-foreground truncate">
-                              {clip.title}
-                            </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             {clip.pinned && (
-                              <Pin className="h-2.5 w-2.5 text-[#0D9488] dark:text-mint shrink-0" />
+                              <Pin className="h-3 w-3 text-[#0D9488] dark:text-mint shrink-0" />
+                            )}
+                            <span className="font-bold text-xs text-foreground truncate max-w-[200px]">
+                              {baseTitle}
+                            </span>
+                            {chunk && (
+                              <span className="text-[8.5px] font-bold text-[#0D9488] dark:text-mint bg-mint/15 dark:bg-mint/20 px-1.5 py-0.5 rounded shrink-0">
+                                {chunk}
+                              </span>
                             )}
                           </div>
-                          <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground font-mono">
-                            {preview || "Empty"}
-                          </p>
+
+                          <div className="mt-1 rounded-md bg-muted/40 dark:bg-[#141C18] p-1.5 border border-border/40">
+                            <p className={cn(
+                              "text-[10.5px] text-muted-foreground font-mono leading-relaxed",
+                              isExpanded ? "line-clamp-3" : "line-clamp-1"
+                            )}>
+                              {preview || "Empty"}
+                            </p>
+                          </div>
+
                           <div className="mt-1 text-[10px] text-muted-foreground font-mono">
-                            {clip.characterCount.toLocaleString()} chars · {formatBytes(clip.sizeBytes)}
+                            {clip.characterCount.toLocaleString()} chars · {formatBytes(clip.sizeBytes)} · {timeFormatted}
                           </div>
                         </button>
 
@@ -562,13 +599,14 @@ export function KeyboardPanelScreen({
                             setExpandedCardId(isExpanded ? null : clip.id)
                           }
                           className={cn(
-                            "rounded-md p-1 text-muted-foreground hover:bg-accent cursor-pointer shrink-0",
+                            "rounded-md p-1.5 text-muted-foreground hover:bg-accent cursor-pointer shrink-0 transition-colors",
                             isExpanded && "bg-accent text-foreground"
                           )}
+                          title={isExpanded ? "Collapse actions" : "Expand actions"}
                         >
                           <ChevronDown
                             className={cn(
-                              "h-4 w-4 transition-transform",
+                              "h-4 w-4 transition-transform duration-200",
                               isExpanded && "rotate-180"
                             )}
                           />
@@ -576,7 +614,7 @@ export function KeyboardPanelScreen({
                       </div>
 
                       {isExpanded && (
-                        <div className="mt-2 flex items-center gap-2 border-t border-border pt-2 animate-in fade-in">
+                        <div className="mt-2.5 grid grid-cols-4 gap-1.5 border-t border-border pt-2.5 animate-in fade-in">
                           <Btn
                             size="sm"
                             variant="primary"
@@ -584,7 +622,7 @@ export function KeyboardPanelScreen({
                               handleInsertClip(clip);
                               setShowAllCardsSheet(false);
                             }}
-                            className="h-6.5 px-3 text-[11px] font-bold bg-[#0D9488] dark:bg-mint text-white dark:text-[#0A1F18]"
+                            className="h-7 px-2 text-[10.5px] font-bold bg-[#0D9488] dark:bg-mint text-white dark:text-[#0A1F18] w-full justify-center"
                           >
                             Insert ↵
                           </Btn>
@@ -592,7 +630,7 @@ export function KeyboardPanelScreen({
                             size="sm"
                             variant="ghost"
                             onClick={() => nav({ name: "editor", id: clip.id })}
-                            className="h-6.5 px-2 text-[11px] font-semibold"
+                            className="h-7 px-2 text-[10.5px] font-semibold border border-border w-full justify-center"
                           >
                             <Pencil className="h-3 w-3" />
                             Edit
@@ -601,10 +639,10 @@ export function KeyboardPanelScreen({
                             size="sm"
                             variant="ghost"
                             onClick={() => handleTogglePin(clip)}
-                            className="h-6.5 px-2 text-[11px] font-semibold"
+                            className="h-7 px-2 text-[10.5px] font-semibold border border-border w-full justify-center"
                           >
                             {clip.pinned ? (
-                              <PinOff className="h-3 w-3" />
+                              <PinOff className="h-3 w-3 text-[#0D9488] dark:text-mint" />
                             ) : (
                               <Pin className="h-3 w-3" />
                             )}
@@ -614,7 +652,7 @@ export function KeyboardPanelScreen({
                             size="sm"
                             variant="dangerOutline"
                             onClick={() => setCardToDelete(clip)}
-                            className="h-6.5 px-2 text-[11px] font-semibold ml-auto"
+                            className="h-7 px-2 text-[10.5px] font-semibold w-full justify-center border border-destructive/30 text-destructive hover:bg-destructive/10"
                           >
                             <Trash2 className="h-3 w-3" />
                             Delete
