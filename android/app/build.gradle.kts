@@ -26,10 +26,19 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.testLogging {
+                events("passed", "skipped", "failed")
+            }
+        }
     }
 }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     testImplementation("junit:junit:4.13.2")
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy("testDebugUnitTest")
 }
