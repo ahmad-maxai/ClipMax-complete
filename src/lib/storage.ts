@@ -17,12 +17,14 @@ export function getStoredItems(): ClipItem[] {
   if (isNativeAndroid() && window.ClipMaxNative?.getItems) {
     try {
       const raw = window.ClipMaxNative.getItems();
-      if (raw && raw !== "[]") {
+      if (raw) {
         const parsed = JSON.parse(raw) as ClipItem[];
-        try {
-          localStorage.setItem(STORAGE_KEY_ITEMS, raw);
-        } catch {}
-        return sortClips(cleanExpiredItems(parsed), "newest");
+        if (Array.isArray(parsed)) {
+          try {
+            localStorage.setItem(STORAGE_KEY_ITEMS, raw);
+          } catch {}
+          return sortClips(cleanExpiredItems(parsed), "newest");
+        }
       }
     } catch (e) {
       console.warn("Failed to getItems from native ClipStore bridge, falling back to cache", e);

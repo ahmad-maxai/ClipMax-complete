@@ -21,6 +21,9 @@ class AndroidBridge(
     private val store: ClipStore
 ) {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val webSyncLock = Any()
+    private val lastWebSyncedIds = mutableSetOf<String>()
+
     @JavascriptInterface
     fun isNative(): Boolean = true
 
@@ -28,6 +31,7 @@ class AndroidBridge(
     fun getItems(): String {
         return try {
             val items = store.listItems()
+            val readIds = ArrayList<String>(items.size)
             val jsonArray = JSONArray()
             for (item in items) {
                 val obj = JSONObject()
@@ -40,6 +44,11 @@ class AndroidBridge(
                 obj.put("sizeBytes", item.sizeBytes)
                 obj.put("pinned", item.pinned)
                 jsonArray.put(obj)
+                readIds.add(item.id)
+            }
+            synchronized(webSyncLock) {
+                lastWebSyncedIds.clear()
+                lastWebSyncedIds.addAll(readIds)
             }
             jsonArray.toString()
         } catch (e: Throwable) {
@@ -71,6 +80,7 @@ class AndroidBridge(
     fun saveItem(title: String, content: String, pinned: Boolean): String {
         return try {
             val saved = store.save(id = null, title = title, content = content, pinned = pinned)
+            synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
             val obj = JSONObject()
             obj.put("id", saved.id)
             obj.put("title", saved.title)
@@ -90,6 +100,10 @@ class AndroidBridge(
     fun updateItem(id: String, title: String, content: String, pinned: Boolean): String {
         return try {
             val saved = store.save(id = id, title = title, content = content, pinned = pinned)
+            if (pinned) {
+                CapturePreferences.removeExpiry(CapturePreferences.preferences(context), saved.id)
+            }
+            synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
             val obj = JSONObject()
             obj.put("id", saved.id)
             obj.put("title", saved.title)
@@ -108,7 +122,14 @@ class AndroidBridge(
     @JavascriptInterface
     fun deleteItem(id: String): Boolean {
         return try {
-            store.delete(id)
+            val removed = store.delete(id)
+            if (removed) {
+                val prefs = CapturePreferences.preferences(context)
+                CapturePreferences.removeExpiry(prefs, id)
+                CapturePreferences.onItemsDeleted(prefs, listOf(id))
+                synchronized(webSyncLock) { lastWebSyncedIds.remove(id) }
+            }
+            removed
         } catch (e: Throwable) {
             false
         }
@@ -118,6 +139,9 @@ class AndroidBridge(
     fun setPinned(id: String, pinned: Boolean): String {
         return try {
             val updated = store.setPinned(id, pinned)
+            if (pinned) {
+                CapturePreferences.removeExpiry(CapturePreferences.preferences(context), updated.id)
+            }
             val content = store.readContent(updated)
             val obj = JSONObject()
             obj.put("id", updated.id)
@@ -138,25 +162,62 @@ class AndroidBridge(
     fun syncItems(jsonArrayString: String): Boolean {
         return try {
             val jsonArray = JSONArray(jsonArrayString)
-            val existingIds = store.listItems().map { it.id }.toSet()
+            val existingItems = store.listItems().associateBy { it.id }
+            val knownIdsSnapshot = synchronized(webSyncLock) { lastWebSyncedIds.toSet() }
+            val prefs = CapturePreferences.preferences(context)
             val newIds = mutableSetOf<String>()
 
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val id = if (obj.has("id")) obj.getString("id") else null
+                val id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null
                 val title = if (obj.has("title")) obj.getString("title") else "Untitled"
                 val content = if (obj.has("content")) obj.getString("content") else ""
                 val pinned = if (obj.has("pinned")) obj.getBoolean("pinned") else false
-                val savedAt = if (obj.has("modifiedAt")) obj.getLong("modifiedAt") else null
+                val modifiedAt = if (obj.has("modifiedAt")) obj.getLong("modifiedAt") else null
+                val createdAt = if (obj.has("createdAt")) obj.getLong("createdAt") else null
 
-                val saved = store.save(id = id, title = title, content = content, pinned = pinned, savedAt = savedAt)
+                val existing = id?.let { existingItems[it] }
+                val saved = if (existing != null &&
+                    existing.characterCount == content.codePointCount(0, content.length) &&
+                    runCatching { store.readContent(existing) == content }.getOrDefault(false)
+                ) {
+                    store.updateMetadataOnly(existing.id, title, pinned, modifiedAt) ?: existing
+                } else {
+                    store.save(
+                        id = id,
+                        title = title,
+                        content = content,
+                        pinned = pinned,
+                        savedAt = modifiedAt ?: createdAt
+                    )
+                }
+                if (pinned) {
+                    CapturePreferences.removeExpiry(prefs, saved.id)
+                }
                 newIds.add(saved.id)
             }
 
-            for (oldId in existingIds) {
-                if (oldId !in newIds) {
-                    store.delete(oldId)
+            val deletedIds = mutableListOf<String>()
+            val clearAllRequested = jsonArray.length() == 0
+            for (oldId in existingItems.keys) {
+                if (oldId !in newIds && (clearAllRequested || oldId in knownIdsSnapshot)) {
+                    if (store.delete(oldId)) {
+                        CapturePreferences.removeExpiry(prefs, oldId)
+                        deletedIds.add(oldId)
+                    }
                 }
+            }
+            if (deletedIds.isNotEmpty()) {
+                if (clearAllRequested) {
+                    CapturePreferences.onAllItemsCleared(prefs)
+                } else {
+                    CapturePreferences.onItemsDeleted(prefs, deletedIds)
+                }
+            }
+
+            synchronized(webSyncLock) {
+                lastWebSyncedIds.clear()
+                lastWebSyncedIds.addAll(newIds)
             }
             true
         } catch (e: Throwable) {
@@ -168,6 +229,10 @@ class AndroidBridge(
     fun clearAllItems(): Boolean {
         return try {
             store.deleteAll()
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.clearExpiryLedger(prefs)
+            CapturePreferences.onAllItemsCleared(prefs)
+            synchronized(webSyncLock) { lastWebSyncedIds.clear() }
             true
         } catch (e: Throwable) {
             false
@@ -177,6 +242,7 @@ class AndroidBridge(
     @JavascriptInterface
     fun copyToClipboard(text: String): Boolean {
         return try {
+            ClipboardCaptureCoordinator.markSelfCopy(text)
             mainHandler.post {
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clip = ClipData.newPlainText("ClipMax", text)

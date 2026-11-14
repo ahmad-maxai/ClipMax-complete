@@ -32,12 +32,23 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private var pendingNavId: String? = null
     private var isPageLoaded = false
+    private var activityDestroyed = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val storeChangeListener: () -> Unit = {
+        mainHandler.post {
+            if (!activityDestroyed && isPageLoaded && ::webView.isInitialized) {
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activityDestroyed = false
 
         store = ClipStore(filesDir)
+        ClipStore.addChangeListener(storeChangeListener)
 
         // Set status and navigation bar background styling to match dark charcoal theme (#111916)
         window.statusBarColor = 0xFF111916.toInt()
@@ -116,6 +127,7 @@ class MainActivity : Activity() {
                     dispatchNavEvent(id)
                     pendingNavId = null
                 }
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
             }
         }
 
@@ -189,6 +201,20 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            ClipboardCaptureCoordinator.captureCurrentClipboard(
+                context = this,
+                source = CaptureSource.CLIPBOARD_POLL
+            ) { outcome ->
+                if (!activityDestroyed && outcome != null && outcome.savedCount > 0 && isPageLoaded && ::webView.isInitialized) {
+                    webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
+                }
+            }
+        }
+    }
+
     private fun handleEditIntent(intent: Intent?) {
         val id = intent?.getStringExtra(EXTRA_EDIT_ITEM_ID) ?: return
         if (isPageLoaded) {
@@ -219,6 +245,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        activityDestroyed = true
+        ClipStore.removeChangeListener(storeChangeListener)
         if (::webView.isInitialized) {
             webView.destroy()
         }

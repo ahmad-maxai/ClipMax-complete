@@ -131,8 +131,12 @@ class ClipMaxImeService : InputMethodService() {
 
     private var pendingSelectionCapture: Runnable? = null
     private var expiryCleanupRunnable: Runnable? = null
-    private var lastCaptureFingerprint: Int? = null
-    private var lastCaptureAtElapsed = 0L
+    private var serviceDestroyed = false
+    private val storeChangeListener: () -> Unit = {
+        main.post {
+            if (!serviceDestroyed) reloadItems()
+        }
+    }
 
     // Theme Color Tokens (Evaluated dynamically, reads app preference before system night mode)
     private val isNightMode: Boolean
@@ -189,7 +193,9 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        serviceDestroyed = false
         store = ClipStore(filesDir)
+        ClipStore.addChangeListener(storeChangeListener)
         capturePreferences = CapturePreferences.preferences(this)
         captureMode = CapturePreferences.mode(capturePreferences)
         capturePreferences.registerOnSharedPreferenceChangeListener(capturePreferenceListener)
@@ -204,7 +210,11 @@ class ClipMaxImeService : InputMethodService() {
 
         clipboardManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
-            main.post { capturePrimaryClip(initialCheck = false) }
+            capturePrimaryClip(CaptureSource.CLIPBOARD_LISTENER)
+        }
+        updateCaptureMonitoring()
+        if (CapturePreferences.isEnabled(captureMode)) {
+            capturePrimaryClip(CaptureSource.CLIPBOARD_POLL)
         }
     }
 
@@ -794,7 +804,10 @@ class ClipMaxImeService : InputMethodService() {
                             deletingItemId = null
                             expandedCardId = null
                             io.execute {
-                                store.delete(item.id)
+                                if (store.delete(item.id)) {
+                                    CapturePreferences.removeExpiry(capturePreferences, item.id)
+                                    CapturePreferences.onItemsDeleted(capturePreferences, listOf(item.id))
+                                }
                                 main.post { reloadItems() }
                             }
                         }
@@ -878,7 +891,11 @@ class ClipMaxImeService : InputMethodService() {
                         setIcon(IconDrawable(if (item.pinned) IconType.PIN_FILLED else IconType.PIN, pinColor, 10.5f), 3f)
                         setOnClickListener {
                             io.execute {
-                                store.setPinned(item.id, !item.pinned)
+                                val nextPinned = !item.pinned
+                                store.setPinned(item.id, nextPinned)
+                                if (nextPinned) {
+                                    CapturePreferences.removeExpiry(capturePreferences, item.id)
+                                }
                                 main.post { reloadItems() }
                             }
                         }
@@ -1768,8 +1785,12 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             updateCaptureStatus()
         }
+        pendingSelectionCapture?.let(main::removeCallbacks)
+        pendingSelectionCapture = null
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
-            main.postDelayed({ captureCurrentSelection() }, 250)
+            val task = Runnable { captureCurrentSelection() }
+            pendingSelectionCapture = task
+            main.postDelayed(task, 250)
         }
         renderClipChips()
     }
@@ -1778,7 +1799,9 @@ class ClipMaxImeService : InputMethodService() {
         super.onStartInputView(info, restarting)
         inputViewActive = true
         updateCaptureMonitoring()
-        if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) capturePrimaryClip(initialCheck = true)
+        if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
+            capturePrimaryClip(CaptureSource.CLIPBOARD_POLL)
+        }
         reloadItems()
         scheduleExpiryCleanup()
     }
@@ -1793,6 +1816,7 @@ class ClipMaxImeService : InputMethodService() {
         generation++
         inputSessionActive = false
         inputViewActive = false
+        isPasswordTarget = false
         updateCaptureMonitoring()
         pendingSelectionCapture?.let(main::removeCallbacks)
         pendingSelectionCapture = null
@@ -1805,11 +1829,15 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        serviceDestroyed = true
         generation++
         inputSessionActive = false
         inputViewActive = false
+        isPasswordTarget = false
         updateCaptureMonitoring()
+        ClipStore.removeChangeListener(storeChangeListener)
         capturePreferences.unregisterOnSharedPreferenceChangeListener(capturePreferenceListener)
+        themePreferenceListener?.let { themePreferences.unregisterOnSharedPreferenceChangeListener(it) }
         pendingSelectionCapture?.let(main::removeCallbacks)
         expiryCleanupRunnable?.let(main::removeCallbacks)
         insertTask?.cancel(true)
@@ -1829,15 +1857,28 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun captureCurrentSelection() {
-        if (!inputSessionActive || !inputViewActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
+        if (!inputSessionActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
         val selected = runCatching { currentInputConnection?.getSelectedText(0) }.getOrNull()
-        if (selected != null && selected.isNotEmpty()) queueAutomaticCapture(selected, "selection")
+        if (selected != null && selected.isNotEmpty()) {
+            val mode = captureMode
+            ClipboardCaptureCoordinator.captureSelection(
+                context = this,
+                selectedText = selected,
+                isSensitiveField = isPasswordTarget
+            ) { outcome ->
+                if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
+                    setStatus("Captured ${outcome.savedCount} ${if (outcome.savedCount == 1) "card" else "cards"} • ${CapturePreferences.modeLabel(mode)}")
+                    reloadItems()
+                    scheduleExpiryCleanup()
+                }
+            }
+        }
     }
 
     private fun updateCaptureMonitoring() {
         val manager = clipboardManager ?: return
         val listener = clipboardListener ?: return
-        val shouldListen = inputSessionActive && inputViewActive && !isPasswordTarget && CapturePreferences.isEnabled(captureMode)
+        val shouldListen = !serviceDestroyed && CapturePreferences.isEnabled(captureMode)
         if (shouldListen && !clipboardRegistered) {
             runCatching { manager.addPrimaryClipChangedListener(listener); clipboardRegistered = true }
         } else if (!shouldListen && clipboardRegistered) {
@@ -1850,68 +1891,20 @@ class ClipMaxImeService : InputMethodService() {
         setStatus(if (CapturePreferences.isEnabled(captureMode)) "Auto-capture active • ${CapturePreferences.modeLabel(captureMode)}" else "Auto-capture off")
     }
 
-    private fun capturePrimaryClip(initialCheck: Boolean) {
-        if (!inputSessionActive || !inputViewActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
-        if (!initialCheck && !clipboardRegistered) return
-        val clipResult = runCatching { clipboardManager?.primaryClip }
-        val clip = clipResult.getOrNull() ?: return
-        for (index in 0 until clip.itemCount) {
-            val item = clip.getItemAt(index)
-            val text = item.text ?: item.htmlText?.let { runCatching { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }.getOrNull() }
-            if (!text.isNullOrEmpty()) {
-                val signature = contentSignature(text)
-                if (initialCheck && CapturePreferences.lastClipboardSignature(capturePreferences) == signature) continue
-                queueAutomaticCapture(text, "copy", signature)
-            }
-        }
-    }
-
-    private fun queueAutomaticCapture(text: CharSequence, source: String, clipboardSignature: String? = null) {
-        if (!inputSessionActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode) || text.isEmpty()) return
+    private fun capturePrimaryClip(source: CaptureSource) {
+        if (isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
         val mode = captureMode
-        io.execute {
-            val fingerprint = contentFingerprint(text)
-            val nowElapsed = SystemClock.elapsedRealtime()
-            if (fingerprint == lastCaptureFingerprint && nowElapsed - lastCaptureAtElapsed < 2_000L) {
-                clipboardSignature?.let { CapturePreferences.markClipboardSignature(capturePreferences, it) }
-                return@execute
-            }
-            lastCaptureFingerprint = fingerprint
-            lastCaptureAtElapsed = nowElapsed
-            val startedAt = System.currentTimeMillis()
-            val stamp = SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(Date(startedAt))
-            var chunkIndex = 0
-            val result = runCatching {
-                ClipCaptureWriter.saveToCards(store, text, if (source == "selection") "Select" else "Copy", stamp, startedAt) { saved ->
-                    chunkIndex++
-                    CapturePreferences.markCaptured(capturePreferences, saved.id, mode, startedAt)
-                }
-                clipboardSignature?.let { CapturePreferences.markClipboardSignature(capturePreferences, it) }
-            }
-            main.post {
-                if (result.isSuccess && chunkIndex > 0) {
-                    CaptureExpiryReceiver.schedule(this@ClipMaxImeService)
-                    setStatus("Captured $chunkIndex ${if (chunkIndex == 1) "card" else "cards"} • ${CapturePreferences.modeLabel(mode)}")
-                    reloadItems()
-                    scheduleExpiryCleanup()
-                }
+        ClipboardCaptureCoordinator.captureCurrentClipboard(
+            context = this,
+            source = source,
+            isSensitiveField = isPasswordTarget
+        ) { outcome ->
+            if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
+                setStatus("Captured ${outcome.savedCount} ${if (outcome.savedCount == 1) "card" else "cards"} • ${CapturePreferences.modeLabel(mode)}")
+                reloadItems()
+                scheduleExpiryCleanup()
             }
         }
-    }
-
-    private fun contentFingerprint(text: CharSequence): Int {
-        var hash = 1
-        for (index in 0 until text.length) hash = 31 * hash + text[index].code
-        return 31 * hash + text.length
-    }
-
-    private fun contentSignature(text: CharSequence): String {
-        var hash = -0x340d631b7bdddcdbL
-        for (index in 0 until text.length) {
-            hash = hash xor text[index].code.toLong()
-            hash *= 0x100000001b3L
-        }
-        return "${text.length}:$hash"
     }
 
     private fun scheduleExpiryCleanup() {

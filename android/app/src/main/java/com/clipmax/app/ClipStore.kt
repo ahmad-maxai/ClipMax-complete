@@ -53,93 +53,115 @@ class ClipStore(root: File) {
         private const val META_MAGIC = 0x434D4158 // "CMAX"
         private const val META_VERSION = 1
         private const val DRAFT_MAGIC = 0x434D4452 // "CMDR"
+
+        private val storeLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+        private val changeListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+        private fun lockFor(base: File): Any {
+            val key = runCatching { base.canonicalPath }.getOrElse { base.absolutePath }
+            return storeLocks.computeIfAbsent(key) { Any() }
+        }
+
+        fun addChangeListener(listener: () -> Unit) {
+            changeListeners.add(listener)
+        }
+
+        fun removeChangeListener(listener: () -> Unit) {
+            changeListeners.remove(listener)
+        }
+
+        private fun notifyChanged() {
+            changeListeners.forEach { listener ->
+                runCatching { listener() }
+            }
+        }
     }
 
     private val base = File(root, "clipmax_store")
+    private val storeLock = lockFor(base)
     private val metadataDir = File(base, "metadata")
     private val contentDir = File(base, "content")
     private val draftDir = File(base, "draft")
 
     init {
-        check(metadataDir.mkdirs() || metadataDir.isDirectory) { "Cannot create ClipMax metadata storage" }
-        check(contentDir.mkdirs() || contentDir.isDirectory) { "Cannot create ClipMax content storage" }
-        check(draftDir.mkdirs() || draftDir.isDirectory) { "Cannot create ClipMax draft storage" }
+        synchronized(storeLock) {
+            check(metadataDir.mkdirs() || metadataDir.isDirectory) { "Cannot create ClipMax metadata storage" }
+            check(contentDir.mkdirs() || contentDir.isDirectory) { "Cannot create ClipMax content storage" }
+            check(draftDir.mkdirs() || draftDir.isDirectory) { "Cannot create ClipMax draft storage" }
+        }
     }
 
-    @Synchronized
-    fun listItems(): List<ClipItem> = metadataDir.listFiles()
-        .orEmpty()
-        .asSequence()
-        .filter { it.isFile && it.name.endsWith(".bin") }
-        .mapNotNull { runCatching { readMetadata(it) }.getOrNull() }
-        .filter { safeContentName(it.contentFile) }
-        .filter { File(contentDir, it.contentFile).isFile }
-        .sortedWith(
-            compareByDescending<ClipItem> { it.pinned }
-                .thenByDescending { it.createdAt }
-                .thenBy { it.title }
-        )
-        .toList()
+    fun listItems(): List<ClipItem> = synchronized(storeLock) {
+        metadataDir.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.name.endsWith(".bin") }
+            .mapNotNull { runCatching { readMetadata(it) }.getOrNull() }
+            .filter { safeContentName(it.contentFile) }
+            .filter { File(contentDir, it.contentFile).isFile }
+            .sortedWith(
+                compareByDescending<ClipItem> { it.pinned }
+                    .thenByDescending { it.createdAt }
+                    .thenBy { it.title }
+            )
+            .toList()
+    }
 
-    @Synchronized
-    fun getItem(id: String): ClipItem? {
+    fun getItem(id: String): ClipItem? = synchronized(storeLock) {
         if (!safeId(id)) return null
         val file = File(metadataDir, "$id.bin")
-        return runCatching { readMetadata(file) }.getOrNull()
+        runCatching { readMetadata(file) }.getOrNull()
             ?.takeIf { safeContentName(it.contentFile) && File(contentDir, it.contentFile).isFile }
     }
 
-    @Synchronized
     fun save(id: String?, title: String, content: String, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
         return saveFromReader(id, title, StringReader(content), pinned, savedAt)
     }
 
     /** Saves a selected text Reader incrementally, without assembling a second full String in ClipMax. */
-    @Synchronized
     fun saveFromReader(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
-        val cleanTitle = title.trim().ifEmpty { "Untitled" }
-        require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
-        val prior = id?.let { getItem(it) }
-        val stableId = prior?.id ?: (if (id != null && safeId(id)) id else UUID.randomUUID().toString())
-        val now = savedAt ?: System.currentTimeMillis()
-        val contentName = "$stableId-$now-${UUID.randomUUID().toString().take(8)}.txt"
-        val finalContent = File(contentDir, contentName)
-        val tempContent = File(contentDir, ".$contentName.tmp")
-        var characterCount = 0
-        var byteCount = 0L
-        try {
-            FileOutputStream(tempContent).use { raw ->
-                val limited = LimitedOutputStream(raw, MAX_ITEM_BYTES)
-                BufferedWriter(OutputStreamWriter(limited, StandardCharsets.UTF_8), 32 * 1024).use { writer ->
-                    characterCount = reader.use { source -> writeReaderContent(source, writer) }
-                    writer.flush()
-                    byteCount = limited.bytesWritten
-                    raw.fd.sync()
+        val saved = synchronized(storeLock) {
+            val cleanTitle = title.trim().ifEmpty { "Untitled" }
+            require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
+            val prior = id?.let { getItem(it) }
+            val stableId = prior?.id ?: (if (id != null && safeId(id)) id else UUID.randomUUID().toString())
+            val now = savedAt ?: System.currentTimeMillis()
+            val contentName = "$stableId-$now-${UUID.randomUUID().toString().take(8)}.txt"
+            val finalContent = File(contentDir, contentName)
+            val tempContent = File(contentDir, ".$contentName.tmp")
+            var characterCount = 0
+            var byteCount = 0L
+            try {
+                FileOutputStream(tempContent).use { raw ->
+                    val limited = LimitedOutputStream(raw, MAX_ITEM_BYTES)
+                    BufferedWriter(OutputStreamWriter(limited, StandardCharsets.UTF_8), 32 * 1024).use { writer ->
+                        characterCount = reader.use { source -> writeReaderContent(source, writer) }
+                        writer.flush()
+                        byteCount = limited.bytesWritten
+                        raw.fd.sync()
+                    }
                 }
+                moveReplace(tempContent, finalContent)
+            } catch (e: Exception) {
+                tempContent.delete()
+                throw e
             }
-            moveReplace(tempContent, finalContent)
-        } catch (e: Exception) {
-            tempContent.delete()
-            throw e
-        }
-        val item = ClipItem(
-            id = stableId,
-            title = cleanTitle,
-            createdAt = prior?.createdAt ?: now,
-            modifiedAt = now,
-            characterCount = characterCount,
-            sizeBytes = byteCount,
-            pinned = pinned ?: prior?.pinned ?: false,
-            contentFile = contentName
-        )
-        try {
+            val item = ClipItem(
+                id = stableId,
+                title = cleanTitle,
+                createdAt = prior?.createdAt ?: now,
+                modifiedAt = now,
+                characterCount = characterCount,
+                sizeBytes = byteCount,
+                pinned = pinned ?: prior?.pinned ?: false,
+                contentFile = contentName
+            )
             writeMetadataAtomic(item)
-        } catch (e: Exception) {
-            // Keep the old metadata/content valid; the newly written version is an orphan.
-            throw e
+            prior?.let { old -> if (old.contentFile != contentName) File(contentDir, old.contentFile).delete() }
+            item
         }
-        prior?.let { old -> if (old.contentFile != contentName) File(contentDir, old.contentFile).delete() }
-        return item
+        notifyChanged()
+        return saved
     }
 
     private fun writeReaderContent(reader: Reader, writer: BufferedWriter): Int {
@@ -188,41 +210,71 @@ class ClipStore(root: File) {
         override fun close() = destination.close()
     }
 
-    @Synchronized
     fun rename(id: String, title: String): ClipItem {
-        val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
-        val cleanTitle = title.trim().ifEmpty { "Untitled" }
-        require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
-        return old.copy(title = cleanTitle, modifiedAt = System.currentTimeMillis()).also(::writeMetadataAtomic)
+        val updated = synchronized(storeLock) {
+            val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
+            val cleanTitle = title.trim().ifEmpty { "Untitled" }
+            require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
+            old.copy(title = cleanTitle, modifiedAt = System.currentTimeMillis()).also(::writeMetadataAtomic)
+        }
+        notifyChanged()
+        return updated
     }
 
-    @Synchronized
     fun setPinned(id: String, pinned: Boolean): ClipItem {
-        val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
-        return old.copy(pinned = pinned, modifiedAt = System.currentTimeMillis()).also(::writeMetadataAtomic)
+        val updated = synchronized(storeLock) {
+            val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
+            old.copy(pinned = pinned, modifiedAt = System.currentTimeMillis()).also(::writeMetadataAtomic)
+        }
+        notifyChanged()
+        return updated
     }
 
-    @Synchronized
+    fun updateMetadataOnly(id: String, title: String, pinned: Boolean, modifiedAt: Long? = null): ClipItem? {
+        val updated = synchronized(storeLock) {
+            val old = getItem(id) ?: return@synchronized null
+            val cleanTitle = title.trim().ifEmpty { "Untitled" }
+            require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
+            if (old.title == cleanTitle && old.pinned == pinned && (modifiedAt == null || old.modifiedAt == modifiedAt)) {
+                return@synchronized old
+            }
+            old.copy(
+                title = cleanTitle,
+                pinned = pinned,
+                modifiedAt = modifiedAt ?: System.currentTimeMillis()
+            ).also(::writeMetadataAtomic)
+        }
+        if (updated != null) notifyChanged()
+        return updated
+    }
+
     fun duplicate(id: String): ClipItem {
-        val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
-        val text = readContent(old)
-        return save(null, "${old.title} (copy)".take(200), text, false)
+        val (title, text) = synchronized(storeLock) {
+            val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
+            old.title to readContent(old)
+        }
+        return save(null, "$title (copy)".take(200), text, false)
     }
 
-    @Synchronized
     fun delete(id: String): Boolean {
-        val item = getItem(id) ?: return false
-        val metaFile = File(metadataDir, "$id.bin")
-        if (!metaFile.delete()) throw IllegalStateException("Could not delete item metadata.")
-        File(contentDir, item.contentFile).delete()
-        return true
+        val removed = synchronized(storeLock) {
+            val item = getItem(id) ?: return@synchronized false
+            val metaFile = File(metadataDir, "$id.bin")
+            if (!metaFile.delete()) throw IllegalStateException("Could not delete item metadata.")
+            File(contentDir, item.contentFile).delete()
+            true
+        }
+        if (removed) notifyChanged()
+        return removed
     }
 
-    @Synchronized
     fun deleteAll() {
-        metadataDir.listFiles().orEmpty().forEach { if (!it.delete()) throw IllegalStateException("Could not clear saved-item metadata.") }
-        contentDir.listFiles().orEmpty().forEach { it.delete() }
-        clearDraft()
+        synchronized(storeLock) {
+            metadataDir.listFiles().orEmpty().forEach { if (!it.delete()) throw IllegalStateException("Could not clear saved-item metadata.") }
+            contentDir.listFiles().orEmpty().forEach { it.delete() }
+            clearDraft()
+        }
+        notifyChanged()
     }
 
     fun readContent(item: ClipItem): String {
@@ -242,12 +294,13 @@ class ClipStore(root: File) {
         }
     }
 
-    @Synchronized
     fun search(query: String): List<ClipItem> {
         val q = query.trim()
         if (q.isEmpty()) return listItems()
-        return listItems().filter { item ->
-            item.title.contains(q, ignoreCase = true) || containsText(File(contentDir, item.contentFile), q)
+        return synchronized(storeLock) {
+            listItems().filter { item ->
+                item.title.contains(q, ignoreCase = true) || containsText(File(contentDir, item.contentFile), q)
+            }
         }
     }
 
@@ -267,22 +320,21 @@ class ClipStore(root: File) {
         }
     }
 
-    @Synchronized
     fun totalBytes(): Long = listItems().sumOf { it.sizeBytes }
 
     /** Opens a saved item's UTF-8 text for bounded-memory consumers such as the insert keyboard. */
-    @Synchronized
-    fun openTextReader(id: String): BufferedReader {
+    fun openTextReader(id: String): BufferedReader = synchronized(storeLock) {
         val item = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
         val file = File(contentDir, item.contentFile)
         require(file.length() <= MAX_ITEM_BYTES) { "The saved text exceeds ClipMax's supported size." }
-        return BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8), 16 * 1024)
+        BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8), 16 * 1024)
     }
 
-    @Synchronized
     fun writeTextTo(id: String, output: OutputStream) {
-        val item = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
-        FileInputStream(File(contentDir, item.contentFile)).use { input -> input.copyTo(output, 32 * 1024) }
+        synchronized(storeLock) {
+            val item = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
+            FileInputStream(File(contentDir, item.contentFile)).use { input -> input.copyTo(output, 32 * 1024) }
+        }
     }
 
     fun importText(input: InputStream, title: String): ClipItem {
@@ -290,118 +342,125 @@ class ClipStore(root: File) {
         return save(null, title, String(data, StandardCharsets.UTF_8))
     }
 
-    @Synchronized
     fun backup(output: OutputStream) {
-        ZipOutputStream(BufferedOutputStream(output, 32 * 1024)).use { zip ->
-            listItems().forEach { item ->
-                val metaBytes = ByteArrayOutputStream().also { writeMetadata(item, it) }.toByteArray()
-                zip.putNextEntry(ZipEntry("metadata/${item.id}.bin"))
-                zip.write(metaBytes)
-                zip.closeEntry()
-                zip.putNextEntry(ZipEntry("content/${item.contentFile}"))
-                BufferedInputStream(FileInputStream(File(contentDir, item.contentFile))).use { it.copyTo(zip, 32 * 1024) }
-                zip.closeEntry()
+        synchronized(storeLock) {
+            ZipOutputStream(BufferedOutputStream(output, 32 * 1024)).use { zip ->
+                listItems().forEach { item ->
+                    val metaBytes = ByteArrayOutputStream().also { writeMetadata(item, it) }.toByteArray()
+                    zip.putNextEntry(ZipEntry("metadata/${item.id}.bin"))
+                    zip.write(metaBytes)
+                    zip.closeEntry()
+                    zip.putNextEntry(ZipEntry("content/${item.contentFile}"))
+                    BufferedInputStream(FileInputStream(File(contentDir, item.contentFile))).use { it.copyTo(zip, 32 * 1024) }
+                    zip.closeEntry()
+                }
+                zip.finish()
             }
-            zip.finish()
         }
     }
 
     /** Merge a ClipMax ZIP backup, assigning a new stable ID if one already exists. */
-    @Synchronized
     fun restore(input: InputStream): Int {
-        val staging = File(base, "restore-${UUID.randomUUID()}")
-        check(staging.mkdirs()) { "Cannot create temporary restore storage." }
-        var unpacked = 0L
-        try {
-            ZipInputStream(BufferedInputStream(input, 32 * 1024)).use { zip ->
-                while (true) {
-                    val entry = zip.nextEntry ?: break
-                    if (entry.isDirectory) { zip.closeEntry(); continue }
-                    val safePath = entry.name
-                    val valid = safePath.matches(Regex("metadata/[A-Za-z0-9._-]{1,64}\\.(bin|json)")) ||
-                        safePath.matches(Regex("content/[A-Za-z0-9._-]{1,180}\\.txt"))
-                    if (!valid) throw IllegalArgumentException("This backup contains an unsupported file path.")
-                    val target = File(staging, safePath)
-                    target.parentFile?.mkdirs()
-                    val limit = if (safePath.startsWith("metadata/")) 4096L else MAX_ITEM_BYTES
-                    val copied = FileOutputStream(target).use { output -> copyBounded(zip, output, limit) }
-                    unpacked += copied
-                    if (unpacked > MAX_BACKUP_BYTES) throw IllegalArgumentException("The backup exceeds ClipMax's 128 MiB restore limit.")
-                    zip.closeEntry()
+        val restored = synchronized(storeLock) {
+            val staging = File(base, "restore-${UUID.randomUUID()}")
+            check(staging.mkdirs()) { "Cannot create temporary restore storage." }
+            var unpacked = 0L
+            try {
+                ZipInputStream(BufferedInputStream(input, 32 * 1024)).use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        if (entry.isDirectory) { zip.closeEntry(); continue }
+                        val safePath = entry.name
+                        val valid = safePath.matches(Regex("metadata/[A-Za-z0-9._-]{1,64}\\.(bin|json)")) ||
+                            safePath.matches(Regex("content/[A-Za-z0-9._-]{1,180}\\.txt"))
+                        if (!valid) throw IllegalArgumentException("This backup contains an unsupported file path.")
+                        val target = File(staging, safePath)
+                        target.parentFile?.mkdirs()
+                        val limit = if (safePath.startsWith("metadata/")) 4096L else MAX_ITEM_BYTES
+                        val copied = FileOutputStream(target).use { output -> copyBounded(zip, output, limit) }
+                        unpacked += copied
+                        if (unpacked > MAX_BACKUP_BYTES) throw IllegalArgumentException("The backup exceeds ClipMax's 128 MiB restore limit.")
+                        zip.closeEntry()
+                    }
                 }
-            }
-            val stagedMeta = File(staging, "metadata")
-            var restored = 0
-            stagedMeta.listFiles().orEmpty().forEach { metaFile ->
-                val archived = runCatching { readMetadata(metaFile) }.getOrNull() ?: return@forEach
-                if (!safeContentName(archived.contentFile)) return@forEach
-                val archivedContent = File(staging, "content/${archived.contentFile}")
-                if (!archivedContent.isFile || archivedContent.length() > MAX_ITEM_BYTES) return@forEach
-                val existing = getItem(archived.id)
-                val id = if (existing == null) archived.id else UUID.randomUUID().toString()
-                val newContentName = "$id-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.txt"
-                val newContent = File(contentDir, newContentName)
-                val tempContent = File(contentDir, ".$newContentName.tmp")
-                FileInputStream(archivedContent).use { src ->
-                    FileOutputStream(tempContent).use { dst -> src.copyTo(dst, 32 * 1024); dst.fd.sync() }
+                val stagedMeta = File(staging, "metadata")
+                var count = 0
+                stagedMeta.listFiles().orEmpty().forEach { metaFile ->
+                    val archived = runCatching { readMetadata(metaFile) }.getOrNull() ?: return@forEach
+                    if (!safeContentName(archived.contentFile)) return@forEach
+                    val archivedContent = File(staging, "content/${archived.contentFile}")
+                    if (!archivedContent.isFile || archivedContent.length() > MAX_ITEM_BYTES) return@forEach
+                    val existing = getItem(archived.id)
+                    val id = if (existing == null) archived.id else UUID.randomUUID().toString()
+                    val newContentName = "$id-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.txt"
+                    val newContent = File(contentDir, newContentName)
+                    val tempContent = File(contentDir, ".$newContentName.tmp")
+                    FileInputStream(archivedContent).use { src ->
+                        FileOutputStream(tempContent).use { dst -> src.copyTo(dst, 32 * 1024); dst.fd.sync() }
+                    }
+                    moveReplace(tempContent, newContent)
+                    val restoredItem = archived.copy(
+                        id = id,
+                        title = if (existing == null) archived.title else "${archived.title} (restored)".take(200),
+                        contentFile = newContentName
+                    )
+                    writeMetadataAtomic(restoredItem)
+                    count++
                 }
-                moveReplace(tempContent, newContent)
-                val restoredItem = archived.copy(
-                    id = id,
-                    title = if (existing == null) archived.title else "${archived.title} (restored)".take(200),
-                    contentFile = newContentName
-                )
-                writeMetadataAtomic(restoredItem)
-                restored++
+                count
+            } finally {
+                staging.deleteRecursively()
             }
-            return restored
-        } finally {
-            staging.deleteRecursively()
         }
+        if (restored > 0) notifyChanged()
+        return restored
     }
 
-    @Synchronized
     fun saveDraft(itemId: String?, title: String, content: String) {
-        val bytes = utf8Length(content)
-        if (bytes > MAX_ITEM_BYTES) return
-        val textTmp = File(draftDir, "content.tmp")
-        val textFinal = File(draftDir, "content.txt")
-        FileOutputStream(textTmp).use { raw ->
-            BufferedWriter(OutputStreamWriter(raw, StandardCharsets.UTF_8), 16 * 1024).use { w ->
-                w.write(content); w.flush(); raw.fd.sync()
+        synchronized(storeLock) {
+            val bytes = utf8Length(content)
+            if (bytes > MAX_ITEM_BYTES) return
+            val textTmp = File(draftDir, "content.tmp")
+            val textFinal = File(draftDir, "content.txt")
+            FileOutputStream(textTmp).use { raw ->
+                BufferedWriter(OutputStreamWriter(raw, StandardCharsets.UTF_8), 16 * 1024).use { w ->
+                    w.write(content); w.flush(); raw.fd.sync()
+                }
             }
+            moveReplace(textTmp, textFinal)
+            val metaTmp = File(draftDir, "draft.tmp")
+            DataOutputStream(FileOutputStream(metaTmp)).use { out ->
+                out.writeInt(DRAFT_MAGIC)
+                out.writeUTF(itemId.orEmpty())
+                out.writeUTF(title.take(200))
+                out.writeLong(bytes)
+                out.flush()
+            }
+            moveReplace(metaTmp, File(draftDir, "draft.bin"))
         }
-        moveReplace(textTmp, textFinal)
-        val metaTmp = File(draftDir, "draft.tmp")
-        DataOutputStream(FileOutputStream(metaTmp)).use { out ->
-            out.writeInt(DRAFT_MAGIC)
-            out.writeUTF(itemId.orEmpty())
-            out.writeUTF(title.take(200))
-            out.writeLong(bytes)
-            out.flush()
-        }
-        moveReplace(metaTmp, File(draftDir, "draft.bin"))
     }
 
-    @Synchronized
-    fun loadDraft(): ClipDraft? = runCatching {
-        val meta = File(draftDir, "draft.bin")
-        val contentFile = File(draftDir, "content.txt")
-        if (!meta.isFile || !contentFile.isFile || contentFile.length() > MAX_ITEM_BYTES) return null
-        val (id, title) = DataInputStream(FileInputStream(meta)).use { input ->
-            require(input.readInt() == DRAFT_MAGIC)
-            input.readUTF() to input.readUTF()
-        }
-        val content = InputStreamReader(FileInputStream(contentFile), StandardCharsets.UTF_8).use { it.readText() }
-        ClipDraft(id.ifEmpty { null }, title, content)
-    }.getOrNull()
+    fun loadDraft(): ClipDraft? = synchronized(storeLock) {
+        runCatching {
+            val meta = File(draftDir, "draft.bin")
+            val contentFile = File(draftDir, "content.txt")
+            if (!meta.isFile || !contentFile.isFile || contentFile.length() > MAX_ITEM_BYTES) return@synchronized null
+            val (id, title) = DataInputStream(FileInputStream(meta)).use { input ->
+                require(input.readInt() == DRAFT_MAGIC)
+                input.readUTF() to input.readUTF()
+            }
+            val content = InputStreamReader(FileInputStream(contentFile), StandardCharsets.UTF_8).use { it.readText() }
+            ClipDraft(id.ifEmpty { null }, title, content)
+        }.getOrNull()
+    }
 
-    @Synchronized
     fun clearDraft() {
-        File(draftDir, "draft.bin").delete()
-        File(draftDir, "draft.tmp").delete()
-        File(draftDir, "content.txt").delete()
-        File(draftDir, "content.tmp").delete()
+        synchronized(storeLock) {
+            File(draftDir, "draft.bin").delete()
+            File(draftDir, "draft.tmp").delete()
+            File(draftDir, "content.txt").delete()
+            File(draftDir, "content.tmp").delete()
+        }
     }
 
     private fun writeMetadataAtomic(item: ClipItem) {
