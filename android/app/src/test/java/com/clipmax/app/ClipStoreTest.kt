@@ -47,7 +47,7 @@ class ClipStoreTest {
 
         assertNotNull(saved.id)
         assertEquals("Extremely Long Note", saved.title)
-        assertEquals(longText.length, saved.characterCount)
+        assertEquals(longText.codePointCount(0, longText.length), saved.characterCount)
 
         val retrieved = store.getItem(saved.id)
         assertNotNull(retrieved)
