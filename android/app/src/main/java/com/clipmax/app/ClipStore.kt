@@ -41,6 +41,23 @@ data class ClipItem(
 
 data class ClipDraft(val itemId: String?, val title: String, val content: String)
 
+data class MergeResult(
+    val mergedItem: ClipItem,
+    val sourceItem: ClipItem,
+    val sourceText: String,
+    val targetItem: ClipItem,
+    val targetText: String
+)
+
+data class SplitResult(
+    val originalItem: ClipItem,
+    val originalText: String,
+    val part1Item: ClipItem,
+    val part1Text: String,
+    val part2Item: ClipItem,
+    val part2Text: String
+)
+
 /**
  * Local-only storage. Content versions are written first, then a small metadata record is
  * atomically replaced. A crash before metadata commit leaves an unreferenced file, not a
@@ -292,6 +309,93 @@ class ClipStore(root: File) {
             }
             out.toString()
         }
+    }
+
+    fun merge(sourceId: String, targetId: String): MergeResult = synchronized(storeLock) {
+        require(sourceId != targetId) { "Cannot merge a card with itself." }
+        val source = getItem(sourceId) ?: throw IllegalArgumentException("Source item not found: $sourceId")
+        val target = getItem(targetId) ?: throw IllegalArgumentException("Target item not found: $targetId")
+        val sourceText = readContent(source)
+        val targetText = readContent(target)
+        val mergedText = "$sourceText\n$targetText"
+        val mergedTitle = source.title.take(180)
+        val mergedItem = save(
+            id = null,
+            title = mergedTitle,
+            content = mergedText,
+            pinned = source.pinned || target.pinned
+        )
+        delete(sourceId)
+        delete(targetId)
+        MergeResult(mergedItem, source, sourceText, target, targetText)
+    }
+
+    fun findSafeMidpoint(text: String): Int {
+        if (text.length < 2) return -1
+        val targetMid = text.length / 2
+
+        val window = minOf(40, (text.length * 0.15f).toInt()).coerceAtLeast(3)
+        val searchStart = (targetMid - window).coerceAtLeast(1)
+        val searchEnd = (targetMid + window).coerceAtMost(text.length - 1)
+
+        var bestBoundary = -1
+        var bestDistance = Int.MAX_VALUE
+
+        // 1. Prefer newline
+        for (i in searchStart..searchEnd) {
+            if (text[i] == '\n') {
+                val dist = kotlin.math.abs(i - targetMid)
+                if (dist < bestDistance) {
+                    bestDistance = dist
+                    bestBoundary = i + 1
+                }
+            }
+        }
+
+        // 2. If no newline nearby, prefer whitespace
+        if (bestBoundary == -1) {
+            for (i in searchStart..searchEnd) {
+                if (Character.isWhitespace(text[i])) {
+                    val dist = kotlin.math.abs(i - targetMid)
+                    if (dist < bestDistance) {
+                        bestDistance = dist
+                        bestBoundary = i + 1
+                    }
+                }
+            }
+        }
+
+        var chosen = if (bestBoundary in 1 until text.length) bestBoundary else targetMid
+
+        // Guarantee no surrogate pair is split
+        if (chosen in 1 until text.length) {
+            if (Character.isHighSurrogate(text[chosen - 1]) && Character.isLowSurrogate(text[chosen])) {
+                chosen++
+            }
+        }
+
+        return chosen.coerceIn(1, text.length - 1)
+    }
+
+    fun split(id: String): SplitResult? = synchronized(storeLock) {
+        val original = getItem(id) ?: return@synchronized null
+        val fullText = readContent(original)
+        if (fullText.length < 2) return@synchronized null
+        val splitIndex = findSafeMidpoint(fullText)
+        if (splitIndex <= 0 || splitIndex >= fullText.length) return@synchronized null
+
+        val part1Text = fullText.substring(0, splitIndex)
+        val part2Text = fullText.substring(splitIndex)
+        if (part1Text.isEmpty() || part2Text.isEmpty()) return@synchronized null
+
+        val baseTitle = original.title.replace(Regex("\\s*\\(Part \\d+\\)$"), "")
+        val title1 = "$baseTitle (Part 1)".take(180)
+        val title2 = "$baseTitle (Part 2)".take(180)
+
+        val item1 = save(null, title1, part1Text, pinned = original.pinned, savedAt = original.createdAt)
+        val item2 = save(null, title2, part2Text, pinned = original.pinned, savedAt = original.createdAt + 1L)
+        delete(id)
+        SplitResult(original, fullText, item1, part1Text, item2, part2Text)
     }
 
     fun search(query: String): List<ClipItem> {

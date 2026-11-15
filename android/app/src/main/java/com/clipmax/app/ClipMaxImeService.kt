@@ -128,6 +128,18 @@ class ClipMaxImeService : InputMethodService() {
     // Clipboard & Touch Feedback States
     private var isClipboardPanelOpen = false
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
+    private var isMergeMode = false
+    private var mergeSourceId: String? = null
+    private data class OperationSnapshot(
+        val description: String,
+        val removedItems: List<ClipItem>,
+        val removedContents: Map<String, String>,
+        val addedItems: List<ClipItem>,
+        val addedContents: Map<String, String>
+    )
+    private val undoStack = java.util.Stack<OperationSnapshot>()
+    private val redoStack = java.util.Stack<OperationSnapshot>()
+    private var undoRedoHost: View? = null
     private var contextMenuHost: FrameLayout? = null
     private var contextMenuItemId: String? = null
     private var pendingRenderAfterContextMenu = false
@@ -276,7 +288,21 @@ class ClipMaxImeService : InputMethodService() {
         }
         imeRootFrame = root
 
-        val surface = FrameLayout(this).apply {
+        val surface = object : FrameLayout(this) {
+            override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                if (ev.action == MotionEvent.ACTION_DOWN && undoRedoHost != null) {
+                    val host = undoRedoHost
+                    if (host != null && host.visibility == View.VISIBLE) {
+                        val rect = android.graphics.Rect()
+                        host.getGlobalVisibleRect(rect)
+                        if (!rect.contains(ev.rawX.toInt(), ev.rawY.toInt())) {
+                            dismissUndoRedoControl()
+                        }
+                    }
+                }
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
             clipChildren = false
             clipToPadding = false
             layoutParams = FrameLayout.LayoutParams(
@@ -330,6 +356,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun renderFullImeView() {
         val content = contentContainer ?: return
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
         pendingRenderAfterContextMenu = false
         clipboardScrollView = null
         imeRootFrame?.setBackgroundColor(colorBg)
@@ -613,6 +640,24 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(headerDivider)
 
+        if (isMergeMode) {
+            val mergeBanner = TextView(this@ClipMaxImeService).apply {
+                text = "Merge Mode: Tap another card to merge. Tap source card to cancel."
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorAccentText)
+                setBackgroundColor(colorAccent)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                setOnClickListener {
+                    isMergeMode = false
+                    mergeSourceId = null
+                    setStatus("Merge cancelled.")
+                    reloadItems()
+                }
+            }
+            addView(mergeBanner)
+        }
+
         // Scrollable cards list
         val scrollView = android.widget.ScrollView(this@ClipMaxImeService).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -687,6 +732,278 @@ class ClipMaxImeService : InputMethodService() {
 
         scrollView.addView(cardsList)
         addView(scrollView)
+    }
+
+    private var undoBtnRef: Button? = null
+    private var redoBtnRef: Button? = null
+
+    private fun dismissUndoRedoControl() {
+        val host = undoRedoHost ?: return
+        undoRedoHost = null
+        undoBtnRef = null
+        redoBtnRef = null
+        host.animate()
+            .alpha(0f)
+            .scaleX(0.9f)
+            .scaleY(0.9f)
+            .setDuration(120)
+            .withEndAction {
+                imeSurfaceFrame?.removeView(host)
+            }
+            .start()
+    }
+
+    private fun updateUndoRedoControl() {
+        val undoBtn = undoBtnRef ?: return
+        val redoBtn = redoBtnRef ?: return
+        val hasUndo = undoStack.isNotEmpty()
+        val hasRedo = redoStack.isNotEmpty()
+
+        if (!hasUndo && !hasRedo) {
+            dismissUndoRedoControl()
+            return
+        }
+
+        undoBtn.isEnabled = hasUndo
+        undoBtn.setTextColor(if (hasUndo) colorKeyText else colorHintText)
+        undoBtn.setIcon(IconDrawable(IconType.UNDO, if (hasUndo) colorKeyText else colorHintText, 12f), 4f)
+
+        redoBtn.isEnabled = hasRedo
+        redoBtn.setTextColor(if (hasRedo) colorKeyText else colorHintText)
+        redoBtn.setIcon(IconDrawable(IconType.REDO, if (hasRedo) colorKeyText else colorHintText, 12f), 4f)
+    }
+
+    private fun showUndoRedoControl() {
+        dismissUndoRedoControl()
+        val surface = imeSurfaceFrame ?: return
+        val hasUndo = undoStack.isNotEmpty()
+        val hasRedo = redoStack.isNotEmpty()
+        if (!hasUndo && !hasRedo) return
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = roundedDrawable(colorKeyBg, dp(16f), colorAccent)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(10f)
+            }
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+        }
+
+        val undoBtn = Button(this).apply {
+            text = "Undo"
+            isAllCaps = false
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(8), 0, dp(8), 0)
+            isEnabled = hasUndo
+            setTextColor(if (hasUndo) colorKeyText else colorHintText)
+            background = roundedRipple(colorKeyBg, dp(12f), 0)
+            setIcon(IconDrawable(IconType.UNDO, if (hasUndo) colorKeyText else colorHintText, 12f), 4f)
+            setOnClickListener {
+                performUndo()
+            }
+        }
+        undoBtnRef = undoBtn
+        container.addView(undoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)))
+
+        val div = View(this).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(16)).apply {
+                leftMargin = dp(2)
+                rightMargin = dp(2)
+            }
+        }
+        container.addView(div)
+
+        val redoBtn = Button(this).apply {
+            text = "Redo"
+            isAllCaps = false
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(8), 0, dp(8), 0)
+            isEnabled = hasRedo
+            setTextColor(if (hasRedo) colorKeyText else colorHintText)
+            background = roundedRipple(colorKeyBg, dp(12f), 0)
+            setIcon(IconDrawable(IconType.REDO, if (hasRedo) colorKeyText else colorHintText, 12f), 4f)
+            setOnClickListener {
+                performRedo()
+            }
+        }
+        redoBtnRef = redoBtn
+        container.addView(redoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)))
+
+        val closeBtn = ImageView(this).apply {
+            setImageDrawable(IconDrawable(IconType.CLOSE, colorHintText, 10f))
+            setPadding(dp(6), dp(6), dp(4), dp(6))
+            setOnClickListener {
+                dismissUndoRedoControl()
+            }
+        }
+        container.addView(closeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(8)
+        }
+        undoRedoHost = container
+        surface.addView(container, lp)
+
+        container.alpha = 0f
+        container.scaleX = 0.85f
+        container.scaleY = 0.85f
+        container.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+    }
+
+    private fun exitMergeMode() {
+        if (isMergeMode) {
+            isMergeMode = false
+            mergeSourceId = null
+            reloadItems()
+        }
+    }
+
+    private fun performMerge(sourceId: String, targetId: String) {
+        if (sourceId == targetId) {
+            setStatus("Cannot merge a card with itself.")
+            return
+        }
+        exitMergeMode()
+        io.execute {
+            try {
+                val mergeRes = store.merge(sourceId, targetId)
+                val snapshot = OperationSnapshot(
+                    description = "Merge",
+                    removedItems = listOf(mergeRes.sourceItem, mergeRes.targetItem),
+                    removedContents = mapOf(
+                        mergeRes.sourceItem.id to mergeRes.sourceText,
+                        mergeRes.targetItem.id to mergeRes.targetText
+                    ),
+                    addedItems = listOf(mergeRes.mergedItem),
+                    addedContents = mapOf(
+                        mergeRes.mergedItem.id to "${mergeRes.sourceText}\n${mergeRes.targetText}"
+                    )
+                )
+                undoStack.push(snapshot)
+                redoStack.clear()
+
+                main.post {
+                    setStatus("Merged 2 clips into 1.")
+                    reloadItems()
+                    showUndoRedoControl()
+                }
+            } catch (e: Exception) {
+                main.post {
+                    setStatus("Merge failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun splitItem(targetId: String) {
+        io.execute {
+            try {
+                val splitRes = store.split(targetId)
+                if (splitRes == null) {
+                    main.post { setStatus("Clip text is too short to split.") }
+                    return@execute
+                }
+                val snapshot = OperationSnapshot(
+                    description = "Split",
+                    removedItems = listOf(splitRes.originalItem),
+                    removedContents = mapOf(splitRes.originalItem.id to splitRes.originalText),
+                    addedItems = listOf(splitRes.part1Item, splitRes.part2Item),
+                    addedContents = mapOf(
+                        splitRes.part1Item.id to splitRes.part1Text,
+                        splitRes.part2Item.id to splitRes.part2Text
+                    )
+                )
+                undoStack.push(snapshot)
+                redoStack.clear()
+
+                main.post {
+                    setStatus("Split clip into 2 cards.")
+                    reloadItems()
+                    showUndoRedoControl()
+                }
+            } catch (e: Exception) {
+                main.post {
+                    setStatus("Split failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun performUndo() {
+        if (undoStack.isEmpty()) return
+        val snapshot = undoStack.pop()
+        io.execute {
+            try {
+                for (added in snapshot.addedItems) {
+                    store.delete(added.id)
+                }
+                for (orig in snapshot.removedItems) {
+                    val origContent = snapshot.removedContents[orig.id] ?: ""
+                    store.save(
+                        id = orig.id,
+                        title = orig.title,
+                        content = origContent,
+                        pinned = orig.pinned,
+                        savedAt = orig.createdAt
+                    )
+                }
+                redoStack.push(snapshot)
+                main.post {
+                    setStatus("Undid ${snapshot.description}.")
+                    reloadItems()
+                    updateUndoRedoControl()
+                }
+            } catch (e: Exception) {
+                main.post {
+                    setStatus("Undo failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun performRedo() {
+        if (redoStack.isEmpty()) return
+        val snapshot = redoStack.pop()
+        io.execute {
+            try {
+                for (orig in snapshot.removedItems) {
+                    store.delete(orig.id)
+                }
+                for (added in snapshot.addedItems) {
+                    val addedContent = snapshot.addedContents[added.id] ?: ""
+                    store.save(
+                        id = added.id,
+                        title = added.title,
+                        content = addedContent,
+                        pinned = added.pinned,
+                        savedAt = added.createdAt
+                    )
+                }
+                undoStack.push(snapshot)
+                main.post {
+                    setStatus("Redid ${snapshot.description}.")
+                    reloadItems()
+                    updateUndoRedoControl()
+                }
+            } catch (e: Exception) {
+                main.post {
+                    setStatus("Redo failed: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun dismissContextMenu(animate: Boolean = false) {
@@ -817,10 +1134,18 @@ class ClipMaxImeService : InputMethodService() {
         )
         host.addView(spotlightViewport)
 
-        // Layer 3: Compact side-mounted contextual action panel (Pin/Unpin, Edit, Delete)
+        // Layer 3: Compact side-mounted contextual action panel (Pin/Unpin, Edit, Delete, Merge, Split)
         val panelWidth = minOf(dp(142), (surfaceW * 0.44f).toInt()).coerceAtLeast(dp(112))
-        val rowHeight = if (surfaceH < dp(235)) dp(33) else dp(38)
-        val iconSize = if (surfaceH < dp(235)) 13.5f else 15f
+        val rowHeight = when {
+            surfaceH < dp(220) -> dp(26)
+            surfaceH < dp(260) -> dp(29)
+            else -> dp(32)
+        }
+        val iconSize = when {
+            surfaceH < dp(220) -> 11f
+            surfaceH < dp(260) -> 12.5f
+            else -> 14f
+        }
         val panelBg = roundedDrawable(colorKeyBg, dp(10f), colorKeyBorder)
 
         val panel = LinearLayout(this).apply {
@@ -907,13 +1232,36 @@ class ClipMaxImeService : InputMethodService() {
                     main.post { reloadItems() }
                 }
             }
+
+            addActionRow(
+                label = "Merge",
+                iconType = IconType.MERGE,
+                tint = colorKeyText
+            ) {
+                dismissContextMenu(animate = true)
+                isMergeMode = true
+                mergeSourceId = targetId
+                setStatus("Merge Mode: Tap another card to merge with \"${item.title}\"")
+                reloadItems()
+            }
+
+            addActionRow(
+                label = "Split",
+                iconType = IconType.SPLIT,
+                tint = colorKeyText
+            ) {
+                dismissContextMenu(animate = true)
+                io.execute {
+                    splitItem(targetId)
+                }
+            }
         }
 
         panel.measure(
             View.MeasureSpec.makeMeasureSpec(panelWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(surfaceH, View.MeasureSpec.AT_MOST)
         )
-        val panelHeight = panel.measuredHeight.coerceAtLeast(rowHeight * 3 + dp(8))
+        val panelHeight = panel.measuredHeight.coerceAtLeast(rowHeight * 5 + dp(8))
 
         // Mount on right side beside left-column cards, or left side beside right-column cards
         val cardOnLeft = (cardLeftClamped + cardW / 2) < (surfaceW / 2)
@@ -978,10 +1326,14 @@ class ClipMaxImeService : InputMethodService() {
         isFocusable = true
         contentDescription = "$resolvedTitle. Tap to insert. Long press for options."
         setPadding(dp(8), dp(6), dp(8), dp(6))
-        background = if (isSpotlight) {
-            roundedDrawable(colorKeyBg, dp(8f), colorAccent)
-        } else {
-            roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+        val isSource = isMergeMode && item.id == mergeSourceId
+        val isTargetCandidate = isMergeMode && item.id != mergeSourceId
+
+        background = when {
+            isSpotlight -> roundedDrawable(colorKeyBg, dp(8f), colorAccent)
+            isSource -> roundedDrawable(if (isNightMode) 0x332DD4BF else 0x330D9488, dp(8f), colorAccent)
+            isTargetCandidate -> roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+            else -> roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
         }
 
         // A. Header: Pin Icon, Title, Optional Multi-Chunk Badge
@@ -1019,6 +1371,21 @@ class ClipMaxImeService : InputMethodService() {
                     setSingleLine(true)
                 }
                 addView(chunkBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+
+            if (isSource) {
+                val srcBadge = TextView(this@ClipMaxImeService).apply {
+                    text = "Source"
+                    textSize = 8f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorAccentText)
+                    setPadding(dp(4), dp(1), dp(4), dp(1))
+                    background = roundedDrawable(colorAccent, dp(3f))
+                    setSingleLine(true)
+                }
+                addView(srcBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    leftMargin = dp(4)
+                })
             }
         }
         addView(headerRow)
@@ -1060,20 +1427,84 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         if (!isSpotlight) {
-            // Single tap -> Insert immediately; ignore if contextual panel is currently open
+            if (isSource) {
+                // Long press to drag source card
+                setOnLongClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    val clipData = android.content.ClipData.newPlainText("merge_source_id", item.id)
+                    val shadow = View.DragShadowBuilder(this)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                        startDragAndDrop(clipData, shadow, item.id, 0)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        startDrag(clipData, shadow, item.id, 0)
+                    }
+                    true
+                }
+            } else if (isTargetCandidate) {
+                // Drop target listener
+                setOnDragListener { v, event ->
+                    when (event.action) {
+                        android.view.DragEvent.ACTION_DRAG_STARTED -> true
+                        android.view.DragEvent.ACTION_DRAG_ENTERED -> {
+                            v.background = roundedDrawable(if (isNightMode) 0x552DD4BF else 0x550D9488, dp(8f), colorAccent)
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                v.elevation = dp(6f)
+                            }
+                            true
+                        }
+                        android.view.DragEvent.ACTION_DRAG_EXITED -> {
+                            v.background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                v.elevation = 0f
+                            }
+                            true
+                        }
+                        android.view.DragEvent.ACTION_DROP -> {
+                            val srcId = event.localState as? String ?: mergeSourceId
+                            if (srcId != null && srcId != item.id) {
+                                performMerge(srcId, item.id)
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        android.view.DragEvent.ACTION_DRAG_ENDED -> {
+                            v.background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                                v.elevation = 0f
+                            }
+                            true
+                        }
+                        else -> true
+                    }
+                }
+            }
+
+            // Click handling: tap-to-merge when in merge mode, or insert
             setOnClickListener {
                 if (contextMenuHost != null) {
                     dismissContextMenu(animate = true)
+                } else if (isMergeMode) {
+                    val src = mergeSourceId
+                    if (src == null || src == item.id) {
+                        exitMergeMode()
+                        setStatus("Merge cancelled.")
+                    } else {
+                        performMerge(src, item.id)
+                    }
                 } else {
                     insertItem(item)
                 }
             }
 
-            // Long press -> Spotlight selected card + fade background + show side action panel
-            setOnLongClickListener {
-                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                showContextMenu(this, item)
-                true
+            // Normal long press to show contextual actions (disabled during merge mode)
+            if (!isMergeMode) {
+                setOnLongClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    showContextMenu(this, item)
+                    true
+                }
             }
         }
     }
@@ -1967,37 +2398,60 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && contextMenuHost != null) {
-            if (event.repeatCount == 0) {
-                event.startTracking()
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (contextMenuHost != null || isMergeMode || undoRedoHost != null) {
+                if (event.repeatCount == 0) {
+                    event.startTracking()
+                }
+                return true
             }
-            return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && contextMenuHost != null) {
-            if (!event.isCanceled) {
-                dismissContextMenu(animate = true)
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (contextMenuHost != null) {
+                if (!event.isCanceled) {
+                    dismissContextMenu(animate = true)
+                }
+                return true
             }
-            return true
+            if (isMergeMode) {
+                if (!event.isCanceled) {
+                    exitMergeMode()
+                    setStatus("Merge cancelled.")
+                }
+                return true
+            }
+            if (undoRedoHost != null) {
+                if (!event.isCanceled) {
+                    dismissUndoRedoControl()
+                }
+                return true
+            }
         }
         return super.onKeyUp(keyCode, event)
     }
 
     override fun onWindowHidden() {
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
+        exitMergeMode()
         super.onWindowHidden()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
+        exitMergeMode()
         super.onConfigurationChanged(newConfig)
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
+        exitMergeMode()
         inputViewActive = false
         updateCaptureMonitoring()
         super.onFinishInputView(finishingInput)
@@ -2005,6 +2459,8 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onFinishInput() {
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
+        exitMergeMode()
         generation++
         inputSessionActive = false
         inputViewActive = false
@@ -2022,6 +2478,8 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onDestroy() {
         dismissContextMenu(animate = false)
+        dismissUndoRedoControl()
+        exitMergeMode()
         serviceDestroyed = true
         generation++
         inputSessionActive = false
@@ -2155,7 +2613,8 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
-        CHEVRON_DOWN, CHEVRON_UP, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER
+        CHEVRON_DOWN, CHEVRON_UP, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
+        MERGE, SPLIT, UNDO, REDO
     }
 
     inner class IconDrawable(
@@ -2369,6 +2828,55 @@ class ClipMaxImeService : InputMethodService() {
                         moveTo(6.4f, 6.4f)
                         lineTo(3.6f, 9.2f)
                         lineTo(6.4f, 12f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.MERGE -> {
+                    val p = Path().apply {
+                        moveTo(3.5f, 3.5f)
+                        lineTo(8f, 7.5f)
+                        lineTo(8f, 13f)
+                        moveTo(12.5f, 3.5f)
+                        lineTo(8f, 7.5f)
+                        moveTo(6f, 11f)
+                        lineTo(8f, 13f)
+                        lineTo(10f, 11f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.SPLIT -> {
+                    canvas.drawRoundRect(RectF(2.5f, 3.5f, 13.5f, 12.5f), 1.5f, 1.5f, strokePaint)
+                    canvas.drawLine(8f, 3.5f, 8f, 12.5f, strokePaint)
+                    val leftArrow = Path().apply {
+                        moveTo(5.5f, 6.5f)
+                        lineTo(4f, 8f)
+                        lineTo(5.5f, 9.5f)
+                    }
+                    canvas.drawPath(leftArrow, strokePaint)
+                    val rightArrow = Path().apply {
+                        moveTo(10.5f, 6.5f)
+                        lineTo(12f, 8f)
+                        lineTo(10.5f, 9.5f)
+                    }
+                    canvas.drawPath(rightArrow, strokePaint)
+                }
+                IconType.UNDO -> {
+                    val p = Path().apply {
+                        moveTo(12.5f, 12f)
+                        quadTo(12.5f, 4.5f, 5.5f, 4.5f)
+                        lineTo(7.5f, 2.5f)
+                        moveTo(5.5f, 4.5f)
+                        lineTo(7.5f, 6.5f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.REDO -> {
+                    val p = Path().apply {
+                        moveTo(3.5f, 12f)
+                        quadTo(3.5f, 4.5f, 10.5f, 4.5f)
+                        lineTo(8.5f, 2.5f)
+                        moveTo(10.5f, 4.5f)
+                        lineTo(8.5f, 6.5f)
                     }
                     canvas.drawPath(p, strokePaint)
                 }

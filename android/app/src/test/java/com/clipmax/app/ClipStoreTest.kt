@@ -134,6 +134,69 @@ class ClipStoreTest {
     }
 
     @Test
+    fun testMergeAndSplitOperations() {
+        // 1. Merge short items
+        val item1 = store.save(null, "Card A", "Hello, how are you?", false)
+        val item2 = store.save(null, "Card B", "I am doing well.", true)
+
+        val mergeRes = store.merge(item1.id, item2.id)
+        val merged = mergeRes.mergedItem
+        assertEquals("Hello, how are you?\nI am doing well.", store.readContent(merged))
+        assertTrue(merged.pinned) // Source or Target pinned state preserved
+        assertNull(store.getItem(item1.id))
+        assertNull(store.getItem(item2.id))
+
+        // 2. Reject self-merge
+        try {
+            store.merge(merged.id, merged.id)
+            org.junit.Assert.fail("Self-merge should throw IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {}
+
+        // 3. Merge with multiline & Unicode emojis
+        val unicodeItem1 = store.save(null, "Emoji 1", "🚀 First line\nSecond line with 🌍", false)
+        val unicodeItem2 = store.save(null, "Emoji 2", "日本語 漢字 third line\nFourth line 🎉", false)
+        val mergedUnicode = store.merge(unicodeItem1.id, unicodeItem2.id).mergedItem
+        val expectedUnicode = "🚀 First line\nSecond line with 🌍\n日本語 漢字 third line\nFourth line 🎉"
+        assertEquals(expectedUnicode, store.readContent(mergedUnicode))
+
+        // 4. Split even-length string "ABCDEFGHIJ"
+        val evenItem = store.save(null, "Even Letters", "ABCDEFGHIJ", false)
+        val splitResult = store.split(evenItem.id)
+        assertNotNull(splitResult)
+        val part1 = splitResult!!.part1Item
+        val part2 = splitResult.part2Item
+        assertEquals("ABCDE", store.readContent(part1))
+        assertEquals("FGHIJ", store.readContent(part2))
+        assertEquals("ABCDEFGHIJ", store.readContent(part1) + store.readContent(part2))
+
+        // 5. Split odd-length string
+        val oddItem = store.save(null, "Odd Letters", "ABCDEFG", false)
+        val oddSplit = store.split(oddItem.id)
+        assertNotNull(oddSplit)
+        val oddP1 = oddSplit!!.part1Item
+        val oddP2 = oddSplit.part2Item
+        assertEquals("ABCDEFG", store.readContent(oddP1) + store.readContent(oddP2))
+        assertTrue(kotlin.math.abs(store.readContent(oddP1).length - store.readContent(oddP2).length) <= 1)
+
+        // 6. Split multiline with Unicode emojis ensuring surrogate pairs stay intact
+        val multiItem = store.save(null, "Multi Unicode", "Line 1 🚀 Alpha\nLine 2 🌍 Beta\nLine 3 🎉 Gamma", false)
+        val multiSplit = store.split(multiItem.id)
+        assertNotNull(multiSplit)
+        val mP1 = multiSplit!!.part1Item
+        val mP2 = multiSplit.part2Item
+        assertEquals("Line 1 🚀 Alpha\nLine 2 🌍 Beta\nLine 3 🎉 Gamma", store.readContent(mP1) + store.readContent(mP2))
+
+        // 7. Undo and Redo simulation
+        // Undo split: delete mP1 and mP2, re-save original with same ID and createdAt
+        val origContent = store.readContent(mP1) + store.readContent(mP2)
+        store.delete(mP1.id)
+        store.delete(mP2.id)
+        val restored = store.save(multiItem.id, multiItem.title, origContent, multiItem.pinned, multiItem.createdAt)
+        assertEquals(multiItem.id, restored.id)
+        assertEquals(origContent, store.readContent(restored))
+    }
+
+    @Test
     fun testNewestFirstOrderingAndChunkGrouping() {
         val t0 = 1_000_000L
         // Save three distinct test clips in sequence: A, then B, then C
