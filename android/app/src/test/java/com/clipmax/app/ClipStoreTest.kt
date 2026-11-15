@@ -59,6 +59,26 @@ class ClipStoreTest {
     }
 
     @Test
+    fun testSaveAndRetrieveVaryingLargeSizes20kTo1Million() {
+        val sizes = listOf(20_000, 70_001, 100_000, 500_000, 1_000_000)
+        for (targetSize in sizes) {
+            val unit = "A🚀日本語é\n"
+            val text = unit.repeat((targetSize / unit.length) + 1).take(targetSize)
+            val saved = store.save(null, "Size $targetSize", text, false)
+            assertEquals(targetSize, text.length)
+            assertEquals(text.codePointCount(0, text.length), saved.characterCount)
+
+            // Verify store & restart survival by opening with a new ClipStore instance
+            val storeRestart = ClipStore(tempDir)
+            val retrievedItem = storeRestart.getItem(saved.id)
+            assertNotNull(retrievedItem)
+            val retrievedContent = storeRestart.readContent(retrievedItem!!)
+            assertEquals(text.length, retrievedContent.length)
+            assertEquals(text, retrievedContent)
+        }
+    }
+
+    @Test
     fun testFullCrudOperations() {
         // 1. Create
         val item1 = store.save(null, "First Clip", "Content of first clip", pinned = false)
