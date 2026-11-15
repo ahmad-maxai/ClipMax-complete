@@ -20,11 +20,11 @@ import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.text.Html
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -39,8 +39,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.IOException
 import java.io.Reader
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -89,7 +87,9 @@ class ClipMaxImeService : InputMethodService() {
 
     // UI View References
     private var imeRootFrame: FrameLayout? = null
+    private var imeSurfaceFrame: FrameLayout? = null
     private var contentContainer: LinearLayout? = null
+    private var clipboardScrollView: android.widget.ScrollView? = null
     private var chipsContainer: LinearLayout? = null
     private var keyboardRowsContainer: LinearLayout? = null
     private var statusBannerView: LinearLayout? = null
@@ -103,23 +103,34 @@ class ClipMaxImeService : InputMethodService() {
     private var shiftImageView: ImageView? = null
     private val letterKeyViews = mutableListOf<Pair<TextView, String>>()
 
-    private val timeFormat = SimpleDateFormat("h:mm a", Locale.ROOT)
-    private val chunkRegex = Regex("^(.*?)\\s*\\((Chunk\\s+\\d+/\\d+)\\)$", RegexOption.IGNORE_CASE)
+    private val parenChunkRegex = Regex("^(.*?)\\s*\\((Chunk\\s+(\\d+)/(\\d+))\\)$", RegexOption.IGNORE_CASE)
+    private val dotChunkTimeRegex = Regex("^(.*?)\\s*[·•]\\s*(Chunk\\s+(\\d+)/(\\d+))(?:\\s*[·•]\\s*\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[AP]M)?)?$", RegexOption.IGNORE_CASE)
 
     private fun parseTitleAndChunk(rawTitle: String): Pair<String, String?> {
-        val match = chunkRegex.find(rawTitle.trim())
-        return if (match != null) {
-            match.groupValues[1].trim() to match.groupValues[2].trim()
-        } else {
-            rawTitle.trim() to null
+        val trimmed = rawTitle.trim()
+        dotChunkTimeRegex.find(trimmed)?.let { match ->
+            val base = match.groupValues[1].trim()
+            val idx = match.groupValues[3].toIntOrNull() ?: 1
+            val total = match.groupValues[4].toIntOrNull() ?: 1
+            val badge = if (total > 1) "Chunk $idx/$total" else null
+            return base to badge
         }
+        parenChunkRegex.find(trimmed)?.let { match ->
+            val base = match.groupValues[1].trim()
+            val idx = match.groupValues[3].toIntOrNull() ?: 1
+            val total = match.groupValues[4].toIntOrNull() ?: 1
+            val badge = if (total > 1) "Chunk $idx/$total" else null
+            return base to badge
+        }
+        return trimmed to null
     }
 
     // Clipboard & Touch Feedback States
     private var isClipboardPanelOpen = false
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
-    private var expandedCardId: String? = null
-    private var deletingItemId: String? = null
+    private var contextMenuHost: FrameLayout? = null
+    private var contextMenuItemId: String? = null
+    private var pendingRenderAfterContextMenu = false
     private var keyboardWrapper: FrameLayout? = null
     private var keyPopupView: FrameLayout? = null
     private var keyPopupText: TextView? = null
@@ -265,6 +276,17 @@ class ClipMaxImeService : InputMethodService() {
         }
         imeRootFrame = root
 
+        val surface = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        imeSurfaceFrame = surface
+        root.addView(surface)
+
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             clipChildren = false
@@ -275,7 +297,7 @@ class ClipMaxImeService : InputMethodService() {
             )
         }
         contentContainer = content
-        root.addView(content)
+        surface.addView(content)
 
         // Floating letter preview popup directly on top-level root FrameLayout
         val popup = FrameLayout(this).apply {
@@ -307,6 +329,9 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun renderFullImeView() {
         val content = contentContainer ?: return
+        dismissContextMenu(animate = false)
+        pendingRenderAfterContextMenu = false
+        clipboardScrollView = null
         imeRootFrame?.setBackgroundColor(colorBg)
         content.removeAllViews()
         content.setBackgroundColor(colorBg)
@@ -391,7 +416,6 @@ class ClipMaxImeService : InputMethodService() {
             setIcon(IconDrawable(IconType.CLIPBOARD, clipFg, 11.5f), 3.5f)
             setOnClickListener {
                 isClipboardPanelOpen = !isClipboardPanelOpen
-                deletingItemId = null
                 renderFullImeView()
             }
         }
@@ -576,7 +600,6 @@ class ClipMaxImeService : InputMethodService() {
                 setIcon(IconDrawable(IconType.KEYBOARD, colorActiveTabText, 11f), 4f)
                 setOnClickListener {
                     isClipboardPanelOpen = false
-                    deletingItemId = null
                     renderFullImeView()
                 }
             }
@@ -595,6 +618,7 @@ class ClipMaxImeService : InputMethodService() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             isVerticalScrollBarEnabled = true
         }
+        clipboardScrollView = scrollView
 
         val cardsList = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.VERTICAL
@@ -665,156 +689,302 @@ class ClipMaxImeService : InputMethodService() {
         addView(scrollView)
     }
 
-    private var contextMenuOverlay: View? = null
-    private var contextMenuPopup: View? = null
+    private fun dismissContextMenu(animate: Boolean = false) {
+        val host = contextMenuHost ?: run {
+            contextMenuItemId = null
+            return
+        }
+        contextMenuHost = null
+        contextMenuItemId = null
+        host.isClickable = false
+        host.isFocusable = false
+        val surface = imeSurfaceFrame
 
-    private fun dismissContextMenu() {
-        val overlay = contextMenuOverlay
-        val popup = contextMenuPopup
-        if (overlay != null) {
-            imeRootFrame?.removeView(overlay)
-            contextMenuOverlay = null
+        if (!animate || surface == null) {
+            host.animate().cancel()
+            surface?.removeView(host)
+            if (pendingRenderAfterContextMenu && imeRootFrame != null) {
+                pendingRenderAfterContextMenu = false
+                renderFullImeView()
+            }
+            return
         }
-        if (popup != null) {
-            imeRootFrame?.removeView(popup)
-            contextMenuPopup = null
+
+        host.animate()
+            .alpha(0f)
+            .setDuration(110)
+            .withEndAction {
+                surface.removeView(host)
+                if (pendingRenderAfterContextMenu && contextMenuHost == null && imeRootFrame != null) {
+                    pendingRenderAfterContextMenu = false
+                    renderFullImeView()
+                }
+            }
+            .start()
+    }
+
+    private fun offsetRelativeTo(child: View, ancestor: View): Pair<Int, Int> {
+        var left = 0
+        var top = 0
+        var current: View? = child
+        while (current != null && current != ancestor) {
+            left += current.left - current.scrollX
+            top += current.top - current.scrollY
+            val parent = current.parent
+            current = if (parent is View) parent else null
         }
+        return left to top
     }
 
     private fun showContextMenu(targetCard: View, item: ClipItem) {
-        dismissContextMenu()
-        val root = imeRootFrame ?: return
+        dismissContextMenu(animate = false)
+        val surface = imeSurfaceFrame ?: return
+        val content = contentContainer ?: return
+        val surfaceW = content.width.takeIf { it > 0 } ?: surface.width
+        val surfaceH = content.height.takeIf { it > 0 } ?: surface.height
+        if (surfaceW <= 0 || surfaceH <= 0) return
 
-        // 1. Translucent dimming overlay
-        val overlay = View(this).apply {
-            setBackgroundColor(0x78000000.toInt())
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            setOnClickListener { dismissContextMenu() }
+        val targetId = item.id
+        val scroll = clipboardScrollView
+        if (scroll != null && scroll.height > 0) {
+            val (_, cardTopRelScroll) = offsetRelativeTo(targetCard, scroll)
+            val cardTopInViewport = cardTopRelScroll - scroll.scrollY
+            val cardBottomInViewport = cardTopInViewport + targetCard.height
+            val pad = dp(4)
+            if (cardTopInViewport < pad) {
+                scroll.scrollBy(0, cardTopInViewport - pad)
+            } else if (cardBottomInViewport > scroll.height - pad) {
+                scroll.scrollBy(0, cardBottomInViewport - (scroll.height - pad))
+            }
         }
-        contextMenuOverlay = overlay
-        root.addView(overlay)
 
-        // 2. Side-mounted contextual action panel container
+        val (cardLeftRaw, cardTopRaw) = offsetRelativeTo(targetCard, content)
+        val cardW = targetCard.width.coerceAtLeast(dp(100))
+        val cardH = targetCard.height.coerceAtLeast(dp(44))
+
+        // Lock overlay host strictly to measured contentContainer pixel dimensions so
+        // FrameLayout NEVER measures a MATCH_PARENT child against full-screen AT_MOST bounds.
+        val host = FrameLayout(this).apply {
+            clipChildren = true
+            clipToPadding = true
+            layoutParams = FrameLayout.LayoutParams(surfaceW, surfaceH)
+        }
+
+        // Layer 1: Background ~50% dimming scrim blocking background interaction
+        val scrim = View(this).apply {
+            setBackgroundColor(0x80000000.toInt())
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Dismiss clip options"
+            layoutParams = FrameLayout.LayoutParams(surfaceW, surfaceH)
+            setOnClickListener { dismissContextMenu(animate = true) }
+        }
+        host.addView(scrim)
+
+        // Layer 2: Un-dimmed spotlight copy of the selected card at exact viewport bounds
+        val scrollBoundsTop = if (scroll != null) offsetRelativeTo(scroll, content).second.coerceIn(0, surfaceH) else 0
+        val scrollBoundsH = if (scroll != null && scroll.height > 0) {
+            minOf(scroll.height, surfaceH - scrollBoundsTop)
+        } else {
+            surfaceH - scrollBoundsTop
+        }
+        val spotlightViewport = FrameLayout(this).apply {
+            clipChildren = true
+            clipToPadding = true
+            layoutParams = FrameLayout.LayoutParams(surfaceW, scrollBoundsH.coerceAtLeast(cardH)).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = scrollBoundsTop
+            }
+        }
+        val spotlightCard = buildCompactCard(item, isSpotlight = true).apply {
+            isClickable = true
+            isLongClickable = false
+            setOnClickListener { dismissContextMenu(animate = true) }
+            setOnLongClickListener(null)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(8f)
+            }
+        }
+        val cardLeftClamped = cardLeftRaw.coerceIn(0, (surfaceW - cardW).coerceAtLeast(0))
+        val cardTopInSpotlight = cardTopRaw - scrollBoundsTop
+        spotlightViewport.addView(
+            spotlightCard,
+            FrameLayout.LayoutParams(cardW, cardH).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = cardLeftClamped
+                topMargin = cardTopInSpotlight
+            }
+        )
+        host.addView(spotlightViewport)
+
+        // Layer 3: Compact side-mounted contextual action panel (Pin/Unpin, Edit, Delete)
+        val panelWidth = minOf(dp(142), (surfaceW * 0.44f).toInt()).coerceAtLeast(dp(112))
+        val rowHeight = if (surfaceH < dp(235)) dp(33) else dp(38)
+        val iconSize = if (surfaceH < dp(235)) 13.5f else 15f
+        val panelBg = roundedDrawable(colorKeyBg, dp(10f), colorKeyBorder)
+
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(colorKeyBg)
-            background = roundedDrawable(colorKeyBg, dp(12f), colorAccent)
+            background = panelBg
+            isClickable = true
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                elevation = dp(16f)
+                elevation = dp(12f)
             }
-            setPadding(dp(4), dp(6), dp(4), dp(6))
+            setPadding(dp(4), dp(4), dp(4), dp(4))
 
-            // Actions: Pin/Unpin, Edit, Delete
-            val actionHeight = dp(42)
-            val iconSize = 15f
+            fun addActionRow(
+                label: String,
+                iconType: IconType,
+                tint: Int,
+                onClick: () -> Unit
+            ) {
+                val btn = Button(this@ClipMaxImeService).apply {
+                    text = label
+                    contentDescription = label
+                    isAllCaps = false
+                    textSize = if (surfaceH < dp(235)) 11.5f else 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    minHeight = 0
+                    minimumHeight = 0
+                    minWidth = 0
+                    minimumWidth = 0
+                    setTextColor(tint)
+                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                    setPadding(dp(10), 0, dp(12), 0)
+                    background = roundedRipple(colorKeyBg, dp(7f), 0)
+                    setIcon(IconDrawable(iconType, tint, iconSize), 8f)
+                    setOnClickListener { onClick() }
+                }
+                addView(btn, LinearLayout.LayoutParams(panelWidth - dp(8), rowHeight))
+            }
 
-            // Pin / Unpin Action
-            val pinColor = if (item.pinned) colorActiveTabText else colorKeyText
-            val pinText = if (item.pinned) "Unpin" else "Pin"
-            val pinIconType = if (item.pinned) IconType.PIN_FILLED else IconType.PIN
-            val pinBtn = Button(this@ClipMaxImeService).apply {
-                text = pinText
-                isAllCaps = false
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(pinColor)
-                gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                setPadding(dp(12), 0, dp(16), 0)
-                background = roundedRipple(colorKeyBg, dp(8f), 0)
-                setIcon(IconDrawable(pinIconType, pinColor, iconSize), 8f)
-                setOnClickListener {
-                    dismissContextMenu()
-                    io.execute {
-                        val nextPinned = !item.pinned
-                        store.setPinned(item.id, nextPinned)
-                        if (nextPinned) {
-                            CapturePreferences.removeExpiry(capturePreferences, item.id)
-                        }
-                        main.post { reloadItems() }
+            val latestItem = store.getItem(targetId) ?: item
+            val pinColor = if (latestItem.pinned) colorActiveTabText else colorKeyText
+            addActionRow(
+                label = if (latestItem.pinned) "Unpin" else "Pin",
+                iconType = if (latestItem.pinned) IconType.PIN_FILLED else IconType.PIN,
+                tint = pinColor
+            ) {
+                dismissContextMenu(animate = true)
+                io.execute {
+                    val fresh = store.getItem(targetId) ?: return@execute
+                    val nextPinned = !fresh.pinned
+                    store.setPinned(targetId, nextPinned)
+                    if (nextPinned) {
+                        CapturePreferences.removeExpiry(capturePreferences, targetId)
                     }
+                    main.post { reloadItems() }
                 }
             }
-            addView(pinBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
 
-            // Edit Action
-            val editBtn = Button(this@ClipMaxImeService).apply {
-                text = "Edit"
-                isAllCaps = false
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorKeyText)
-                gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                setPadding(dp(12), 0, dp(16), 0)
-                background = roundedRipple(colorKeyBg, dp(8f), 0)
-                setIcon(IconDrawable(IconType.EDIT, colorKeyText, iconSize), 8f)
-                setOnClickListener {
-                    dismissContextMenu()
-                    try {
-                        val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
-                            action = Intent.ACTION_VIEW
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, item.id)
-                        }
-                        startActivity(intent)
-                    } catch (_: Throwable) {}
-                }
-            }
-            addView(editBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
-
-            // Delete Action
-            val delBtn = Button(this@ClipMaxImeService).apply {
-                text = "Delete"
-                isAllCaps = false
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorDangerText)
-                gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                setPadding(dp(12), 0, dp(16), 0)
-                background = roundedRipple(colorKeyBg, dp(8f), 0)
-                setIcon(IconDrawable(IconType.DELETE, colorDangerText, iconSize), 8f)
-                setOnClickListener {
-                    dismissContextMenu()
-                    io.execute {
-                        if (store.delete(item.id)) {
-                            CapturePreferences.removeExpiry(capturePreferences, item.id)
-                            CapturePreferences.onItemsDeleted(capturePreferences, listOf(item.id))
-                        }
-                        main.post { reloadItems() }
+            addActionRow(
+                label = "Edit",
+                iconType = IconType.EDIT,
+                tint = colorKeyText
+            ) {
+                dismissContextMenu(animate = false)
+                try {
+                    val intent = Intent(this@ClipMaxImeService, MainActivity::class.java).apply {
+                        action = Intent.ACTION_VIEW
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        putExtra(MainActivity.EXTRA_EDIT_ITEM_ID, targetId)
                     }
+                    startActivity(intent)
+                } catch (_: Throwable) {}
+            }
+
+            addActionRow(
+                label = "Delete",
+                iconType = IconType.DELETE,
+                tint = colorDangerText
+            ) {
+                dismissContextMenu(animate = true)
+                io.execute {
+                    if (store.delete(targetId)) {
+                        CapturePreferences.removeExpiry(capturePreferences, targetId)
+                        CapturePreferences.onItemsDeleted(capturePreferences, listOf(targetId))
+                    }
+                    main.post { reloadItems() }
                 }
             }
-            addView(delBtn, LinearLayout.LayoutParams(dp(140), actionHeight))
         }
 
-        // Compute positioning relative to root frame
-        val rootWidth = root.width.takeIf { it > 0 } ?: dp(360)
-        val panelWidth = dp(140)
-        val leftPos = (rootWidth - panelWidth - dp(12)).coerceAtLeast(dp(12))
-        val topPos = dp(36).coerceAtLeast(dp(4))
+        panel.measure(
+            View.MeasureSpec.makeMeasureSpec(panelWidth, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(surfaceH, View.MeasureSpec.AT_MOST)
+        )
+        val panelHeight = panel.measuredHeight.coerceAtLeast(rowHeight * 3 + dp(8))
 
-        val params = FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.TOP or Gravity.START
-            leftMargin = leftPos
-            topMargin = topPos
+        // Mount on right side beside left-column cards, or left side beside right-column cards
+        val cardOnLeft = (cardLeftClamped + cardW / 2) < (surfaceW / 2)
+        val gap = dp(8)
+        val edgePad = dp(8)
+        val leftPos = if (cardOnLeft) {
+            (cardLeftClamped + cardW + gap).coerceIn(edgePad, (surfaceW - panelWidth - edgePad).coerceAtLeast(edgePad))
+        } else {
+            (cardLeftClamped - panelWidth - gap).coerceIn(edgePad, (surfaceW - panelWidth - edgePad).coerceAtLeast(edgePad))
         }
-        contextMenuPopup = panel
-        root.addView(panel, params)
+        val maxTop = (surfaceH - panelHeight - dp(6)).coerceAtLeast(dp(4))
+        val topPos = cardTopRaw.coerceIn(dp(4), maxTop)
 
-        // Smooth fade-in entrance animation
+        host.addView(
+            panel,
+            FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = leftPos
+                topMargin = topPos
+            }
+        )
+
+        contextMenuHost = host
+        contextMenuItemId = targetId
+        surface.addView(host)
+
+        // Smooth restrained animations
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(140).start()
+
+        spotlightCard.scaleX = 0.97f
+        spotlightCard.scaleY = 0.97f
+        spotlightCard.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+
         panel.alpha = 0f
         panel.scaleX = 0.92f
         panel.scaleY = 0.92f
+        panel.pivotX = if (cardOnLeft) 0f else panelWidth.toFloat()
+        panel.pivotY = 0f
         panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
     }
 
-    private fun buildCompactCard(item: ClipItem): View = LinearLayout(this).apply {
+    private fun displayTitleForCard(baseTitle: String, snippet: String): String {
+        val cleaned = baseTitle.trim()
+        val isGeneric = cleaned.isEmpty() ||
+            cleaned.equals("Copy", ignoreCase = true) ||
+            cleaned.equals("Select", ignoreCase = true) ||
+            cleaned.equals("Selection", ignoreCase = true)
+        if (!isGeneric) return cleaned
+        if (snippet.isNotEmpty()) {
+            return if (snippet.length > 32) "${snippet.take(32).trimEnd()}…" else snippet
+        }
+        return "Saved Clip"
+    }
+
+    private fun buildCompactCard(item: ClipItem, isSpotlight: Boolean = false): View = LinearLayout(this).apply {
         val (baseTitle, chunkLabel) = parseTitleAndChunk(item.title)
+        val snippet = getSnippet(item, 72)
+        val resolvedTitle = displayTitleForCard(baseTitle, snippet)
 
         orientation = LinearLayout.VERTICAL
+        isFocusable = true
+        contentDescription = "$resolvedTitle. Tap to insert. Long press for options."
         setPadding(dp(8), dp(6), dp(8), dp(6))
-        background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+        background = if (isSpotlight) {
+            roundedDrawable(colorKeyBg, dp(8f), colorAccent)
+        } else {
+            roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+        }
 
-        // A. Header: Pin Icon, Title, Optional Chunk Badge
+        // A. Header: Pin Icon, Title, Optional Multi-Chunk Badge
         val headerRow = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -827,7 +997,7 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             val titleTv = TextView(this@ClipMaxImeService).apply {
-                text = baseTitle.ifEmpty { "Untitled Clip" }
+                text = resolvedTitle
                 textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorKeyText)
@@ -853,15 +1023,14 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(headerRow)
 
-        // B. Content Preview (2 lines collapsed)
-        val snippet = getSnippet(item, 70)
+        // B. Content Preview (2 lines max, crisp wrapping without excess expansion)
         if (snippet.isNotEmpty()) {
             val snippetBox = FrameLayout(this@ClipMaxImeService).apply {
                 setPadding(dp(6), dp(3), dp(6), dp(3))
                 background = roundedDrawable(colorSnippetBg, dp(5f), colorSnippetBorder)
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = dp(3)
-                    bottomMargin = dp(3)
+                    bottomMargin = if (item.sizeBytes > 1024L) dp(3) else 0
                 }
 
                 val snipTv = TextView(this@ClipMaxImeService).apply {
@@ -878,7 +1047,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(snippetBox)
         }
 
-        // C. Minimal Metadata (Size / character count only if large)
+        // C. Minimal Metadata (Size only if > 1 KiB, no copy count or timestamps)
         if (item.sizeBytes > 1024L) {
             val metaTv = TextView(this@ClipMaxImeService).apply {
                 text = humanSize(item.sizeBytes)
@@ -890,17 +1059,22 @@ class ClipMaxImeService : InputMethodService() {
             addView(metaTv)
         }
 
-        // Single tap -> Insert immediately without opening expansion
-        setOnClickListener {
-            dismissContextMenu()
-            insertItem(item)
-        }
+        if (!isSpotlight) {
+            // Single tap -> Insert immediately; ignore if contextual panel is currently open
+            setOnClickListener {
+                if (contextMenuHost != null) {
+                    dismissContextMenu(animate = true)
+                } else {
+                    insertItem(item)
+                }
+            }
 
-        // Long press -> Reveal side-mounted contextual action panel (Pin, Edit, Delete)
-        setOnLongClickListener {
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            showContextMenu(this, item)
-            true
+            // Long press -> Spotlight selected card + fade background + show side action panel
+            setOnLongClickListener {
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                showContextMenu(this, item)
+                true
+            }
         }
     }
 
@@ -1588,7 +1762,13 @@ class ClipMaxImeService : InputMethodService() {
                         .thenBy { it.title }
                 )
                 renderClipChips()
-                if (isClipboardPanelOpen) renderFullImeView()
+                if (isClipboardPanelOpen) {
+                    if (contextMenuHost != null) {
+                        pendingRenderAfterContextMenu = true
+                    } else {
+                        renderFullImeView()
+                    }
+                }
                 if (keyboardSearchQuery.isNotEmpty()) runKeyboardSearch()
             }
         }
@@ -1611,7 +1791,13 @@ class ClipMaxImeService : InputMethodService() {
                 if (request != keyboardSearchRequest || imeRootFrame == null) return@post
                 keyboardSearchResults = found
                 renderClipChips()
-                if (isClipboardPanelOpen) renderFullImeView()
+                if (isClipboardPanelOpen) {
+                    if (contextMenuHost != null) {
+                        pendingRenderAfterContextMenu = true
+                    } else {
+                        renderFullImeView()
+                    }
+                }
             }
         }
     }
@@ -1745,6 +1931,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        dismissContextMenu(animate = false)
         generation++
         insertTask?.cancel(true)
         insertTask = null
@@ -1779,13 +1966,45 @@ class ClipMaxImeService : InputMethodService() {
         scheduleExpiryCleanup()
     }
 
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && contextMenuHost != null) {
+            if (event.repeatCount == 0) {
+                event.startTracking()
+            }
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && contextMenuHost != null) {
+            if (!event.isCanceled) {
+                dismissContextMenu(animate = true)
+            }
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onWindowHidden() {
+        dismissContextMenu(animate = false)
+        super.onWindowHidden()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        dismissContextMenu(animate = false)
+        super.onConfigurationChanged(newConfig)
+    }
+
     override fun onFinishInputView(finishingInput: Boolean) {
+        dismissContextMenu(animate = false)
         inputViewActive = false
         updateCaptureMonitoring()
         super.onFinishInputView(finishingInput)
     }
 
     override fun onFinishInput() {
+        dismissContextMenu(animate = false)
         generation++
         inputSessionActive = false
         inputViewActive = false
@@ -1802,6 +2021,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        dismissContextMenu(animate = false)
         serviceDestroyed = true
         generation++
         inputSessionActive = false
