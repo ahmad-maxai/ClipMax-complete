@@ -48,8 +48,9 @@ class TypingIntelligenceEngineTest {
         val sentenceThe = engine.analyzeWord("Teh", "Teh", isSentenceStart = true, autocompleteEnabled = true, autoCorrectEnabled = true)
         assertEquals("The", sentenceThe.autoCorrection)
 
-        val allCaps = engine.analyzeWord("TEH", "TEH", isSentenceStart = false, autocompleteEnabled = true, autoCorrectEnabled = true)
-        assertEquals("THE", allCaps.autoCorrection)
+        // All-caps preservation helper check (while live autocorrect safely protects ALL-CAPS tokens/acronyms)
+        assertEquals("THE", TypingIntelligenceEngine.applyWordCasing("TEH", "the"))
+        assertNull(engine.analyzeWord("TEH", "TEH", isSentenceStart = false, autocompleteEnabled = true, autoCorrectEnabled = true).autoCorrection)
     }
 
     @Test
