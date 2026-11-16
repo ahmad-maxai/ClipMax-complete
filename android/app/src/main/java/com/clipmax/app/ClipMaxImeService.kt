@@ -127,7 +127,8 @@ class ClipMaxImeService : InputMethodService() {
 
     // Clipboard & Touch Feedback States
     private var isClipboardPanelOpen = false
-    private var toolbarState = 0 // 0 = State A (Snippets + Right Arrow), 1 = State B (Back + Clips + Pinned + Search)
+    private var isSettingsOpen = false
+    private var toolbarState = 0 // 0 = State A (Snippets + Right Arrow), 1 = State B (Back + Pinned + Search + Settings)
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
     private var isMergeMode = false
     private var mergeSourceId: String? = null
@@ -162,34 +163,95 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
+    private val appTheme: String
+        get() = themePreferences.getString("app_theme", "graphite") ?: "graphite"
+
+    private val isClassicTheme: Boolean
+        get() = appTheme == "classic"
+
     // Theme Color Tokens (Evaluated dynamically, reads app preference before system night mode)
     private val isNightMode: Boolean
         get() {
             val saved = runCatching { themePreferences.getString("app_theme", null) }.getOrNull()
             return when (saved) {
-                "dark" -> true
-                "light" -> false
-                else -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                "dark", "graphite" -> true
+                "light", "classic_light" -> false
+                "classic" -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                else -> true
             }
         }
 
-    private val colorBg: Int get() = if (isNightMode) 0xFF151C18.toInt() else 0xFFECEFF1.toInt()
-    private val colorKeyBg: Int get() = if (isNightMode) 0xFF223029.toInt() else 0xFFFFFFFF.toInt()
-    private val colorKeyBorder: Int get() = if (isNightMode) 0xFF2C3D35.toInt() else 0xFFD1D9D4.toInt()
-    private val colorKeyText: Int get() = if (isNightMode) 0xFFEAF1ED.toInt() else 0xFF111827.toInt()
-    private val colorModBg: Int get() = if (isNightMode) 0xFF1A2520.toInt() else 0xFFDFE5E1.toInt()
-    private val colorModText: Int get() = if (isNightMode) 0xFF9CB3A9.toInt() else 0xFF374151.toInt()
-    private val colorAccent: Int get() = if (isNightMode) 0xFF2DD4BF.toInt() else 0xFF0D9488.toInt()
-    private val colorAccentText: Int get() = if (isNightMode) 0xFF0A1F18.toInt() else 0xFFFFFFFF.toInt()
-    private val colorHintText: Int get() = if (isNightMode) 0xFF7A8E85.toInt() else 0xFF8A9992.toInt()
-    private val colorToolbarBg: Int get() = if (isNightMode) 0xFF18231E.toInt() else 0xFFF4F7F5.toInt()
-    private val colorChipBg: Int get() = if (isNightMode) 0xFF1E2C26.toInt() else 0xFFFFFFFF.toInt()
-    private val colorChipBorder: Int get() = if (isNightMode) 0xFF2C3D35.toInt() else 0xFFD1D9D4.toInt()
-    private val colorSnippetBg: Int get() = if (isNightMode) 0xFF141C18.toInt() else 0xFFF3F6F4.toInt()
-    private val colorSnippetBorder: Int get() = if (isNightMode) 0xFF23322B.toInt() else 0xFFE2E8E4.toInt()
-    private val colorActiveTabBg: Int get() = if (isNightMode) 0xFF1A3A32.toInt() else 0xFFCCFBF1.toInt()
-    private val colorActiveTabText: Int get() = if (isNightMode) 0xFF2DD4BF.toInt() else 0xFF0F766E.toInt()
-    private val colorDangerText: Int get() = if (isNightMode) 0xFFF87171.toInt() else 0xFFDC2626.toInt()
+    private val colorBg: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFFECEFF1.toInt()
+                else if (isClassicTheme) 0xFF151C18.toInt()
+                else 0xFF0E0E10.toInt()
+
+    private val colorToolbarBg: Int get() = colorBg
+
+    private val colorKeyBg: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFFFFFFFF.toInt()
+                else if (isClassicTheme) 0xFF223029.toInt()
+                else 0xFF252528.toInt()
+
+    private val colorKeyBorder: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFFD1D9D4.toInt()
+                else if (isClassicTheme) 0xFF2C3D35.toInt()
+                else 0xFF333338.toInt()
+
+    private val colorKeyText: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFF111827.toInt()
+                else if (isClassicTheme) 0xFFEAF1ED.toInt()
+                else 0xFFFFFFFF.toInt()
+
+    private val colorModBg: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFFDFE5E1.toInt()
+                else if (isClassicTheme) 0xFF1A2520.toInt()
+                else 0xFF1C1C1F.toInt()
+
+    private val colorModText: Int
+        get() = if (isClassicTheme && !isNightMode) 0xFF374151.toInt()
+                else if (isClassicTheme) 0xFF9CB3A9.toInt()
+                else 0xFFA0A0A8.toInt()
+
+    private val colorAccent: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF2DD4BF.toInt() else 0xFF0D9488.toInt())
+                else 0xFFFFFFFF.toInt()
+
+    private val colorAccentText: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF0A1F18.toInt() else 0xFFFFFFFF.toInt())
+                else 0xFF111111.toInt()
+
+    private val colorHintText: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF7A8E85.toInt() else 0xFF8A9992.toInt())
+                else 0xFF8E8E93.toInt()
+
+    private val colorChipBg: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF1E2C26.toInt() else 0xFFFFFFFF.toInt())
+                else 0xFF242428.toInt()
+
+    private val colorChipBorder: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF2C3D35.toInt() else 0xFFD1D9D4.toInt())
+                else 0xFF36363C.toInt()
+
+    private val colorSnippetBg: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFF3F6F4.toInt())
+                else 0xFF1A1A1E.toInt()
+
+    private val colorSnippetBorder: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF23322B.toInt() else 0xFFE2E8E4.toInt())
+                else 0xFF2C2C32.toInt()
+
+    private val colorActiveTabBg: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF1A3A32.toInt() else 0xFFCCFBF1.toInt())
+                else 0xFF32333A.toInt()
+
+    private val colorActiveTabText: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFF2DD4BF.toInt() else 0xFF0F766E.toInt())
+                else 0xFFFFFFFF.toInt()
+
+    private val colorDangerText: Int
+        get() = if (isClassicTheme) (if (isNightMode) 0xFFF87171.toInt() else 0xFFDC2626.toInt())
+                else 0xFFF87171.toInt()
 
     // QWERTY Letter Rows (All 26 letters: 10 + 9 + 7)
     private val alphaRow1 = listOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P")
@@ -368,14 +430,26 @@ class ClipMaxImeService : InputMethodService() {
         shiftImageView = null
         searchClearBtn = null
 
+        // Apply One-Handed Mode padding
+        val oneHanded = themePreferences.getString("one_handed_mode", "off") ?: "off"
+        val (padLeft, padRight) = when (oneHanded) {
+            "left" -> 0 to dp(54)
+            "right" -> dp(54) to 0
+            else -> 0 to 0
+        }
+        content.setPadding(padLeft, 0, padRight, 0)
+
         // 1. ClipMax Compact Toolbar
         content.addView(buildToolbar())
 
         // 2. Status / In-Flight Banner (Hidden unless inserting or in password field)
         content.addView(buildStatusBanner())
 
-        if (isClipboardPanelOpen) {
-            // 3. Compact Expandable Saved-Clipboard Panel
+        if (isSettingsOpen) {
+            // 3. Settings Interface Panel
+            content.addView(buildSettingsPanel())
+        } else if (isClipboardPanelOpen) {
+            // 3B. Compact Expandable Saved-Clipboard Panel
             content.addView(buildClipboardPanel())
         } else {
             // 4. Approved QWERTY / Numeric Keyboard Container
@@ -394,7 +468,7 @@ class ClipMaxImeService : InputMethodService() {
                 clipChildren = false
                 clipToPadding = false
                 setBackgroundColor(colorBg)
-                setPadding(dp(3), dp(3), dp(3), dp(4))
+                setPadding(dp(3), dp(2), dp(3), dp(3))
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -414,7 +488,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     private fun buildToolbar(): View {
         val rootFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38))
             setBackgroundColor(colorToolbarBg)
             clipChildren = true
         }
@@ -450,17 +524,33 @@ class ClipMaxImeService : InputMethodService() {
     private fun buildToolbarStateA(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(4), dp(3), dp(4), dp(3))
+        setPadding(dp(6), dp(3), dp(6), dp(3))
         setBackgroundColor(colorToolbarBg)
 
-        // Horizontal scrollable snippet area
+        // 1. Far-left Clipboard icon button (matching reference image)
+        val clipIconBtn = FrameLayout(this@ClipMaxImeService).apply {
+            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
+            contentDescription = "Clipboard history"
+            val iv = createIconView(IconDrawable(IconType.CLIPBOARD, colorKeyText, 14f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                isClipboardPanelOpen = !isClipboardPanelOpen
+                isSettingsOpen = false
+                renderFullImeView()
+            }
+        }
+        addView(clipIconBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            rightMargin = dp(6)
+        })
+
+        // 2. Horizontal scrollable snippet area (first snippet readable, second snippet partially visible with trailing fade effect)
         val scrollView = HorizontalScrollView(this@ClipMaxImeService).apply {
             isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
             val container = LinearLayout(this@ClipMaxImeService).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(2), 0, dp(2), 0)
+                setPadding(dp(2), 0, dp(16), 0)
             }
             chipsContainer = container
             addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -468,19 +558,19 @@ class ClipMaxImeService : InputMethodService() {
         addView(scrollView)
         renderClipChips()
 
-        // Circular navigation arrow button at far right
+        // 3. Circular navigation arrow button at far right (White circle with dark right chevron, matching reference image)
         val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
+            background = roundedRipple(0xFFFFFFFF.toInt(), dp(16f), 0)
             contentDescription = "More actions"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, colorModText, 13f))
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, 0xFF111111.toInt(), 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 toolbarState = 1
                 renderFullImeView()
             }
         }
-        addView(rightArrowBtn, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
-            leftMargin = dp(4)
+        addView(rightArrowBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            leftMargin = dp(6)
             rightMargin = dp(2)
         })
     }
@@ -491,114 +581,128 @@ class ClipMaxImeService : InputMethodService() {
         setPadding(dp(6), dp(3), dp(6), dp(3))
         setBackgroundColor(colorToolbarBg)
 
-        val controlHeight = dp(28)
-        val gap = dp(4)
-
-        // 1. Left-side Back arrow button to return to State A
+        // 1. Navigation Back Button (Left side, matching reference image)
         val backBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
-            contentDescription = "Back to clips"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, colorModText, 13f))
+            background = roundedRipple(0xFFFFFFFF.toInt(), dp(16f), 0)
+            contentDescription = "Back to clipboard snippets"
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 toolbarState = 0
+                isSettingsOpen = false
                 renderFullImeView()
             }
         }
-        addView(backBtn, LinearLayout.LayoutParams(controlHeight, controlHeight).apply { rightMargin = gap })
+        addView(backBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+            rightMargin = dp(8)
+        })
 
-        // 2. Clipboard / Clips Tab Button
-        val clipFg = if (isClipboardPanelOpen) colorActiveTabText else colorModText
-        val clipBg = if (isClipboardPanelOpen) colorActiveTabBg else colorKeyBg
-        val clipStroke = if (isClipboardPanelOpen) colorAccent else colorKeyBorder
-        val clipBtn = Button(this@ClipMaxImeService).apply {
-            text = "Clips"
-            isAllCaps = false
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(7), 0, dp(7), 0)
-            setTextColor(clipFg)
-            background = roundedRipple(clipBg, dp(6f), clipStroke)
-            setIcon(IconDrawable(IconType.CLIPBOARD, clipFg, 11.5f), 3.5f)
-            setOnClickListener {
-                isClipboardPanelOpen = !isClipboardPanelOpen
-                renderFullImeView()
+        // 2. Pinned (Icon stacked vertically above text, matching reference)
+        val pinBtn = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+            val fg = if (pinnedOnly) colorActiveTabText else colorModText
+            val iv = createIconView(IconDrawable(if (pinnedOnly) IconType.PIN_FILLED else IconType.PIN, fg, 14f))
+            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val tv = TextView(this@ClipMaxImeService).apply {
+                text = "Pinned"
+                textSize = 9.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(fg)
+                gravity = Gravity.CENTER
             }
-        }
-        addView(clipBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, controlHeight).apply { rightMargin = gap })
+            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // 3. Pinned Tab Button
-        val pinFg = if (pinnedOnly) colorActiveTabText else colorModText
-        val pinBg = if (pinnedOnly) colorActiveTabBg else colorKeyBg
-        val pinStroke = if (pinnedOnly) colorAccent else colorKeyBorder
-        val pinBtn = Button(this@ClipMaxImeService).apply {
-            text = "Pinned"
-            isAllCaps = false
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(7), 0, dp(7), 0)
-            setTextColor(pinFg)
-            background = roundedRipple(pinBg, dp(6f), pinStroke)
-            setIcon(IconDrawable(if (pinnedOnly) IconType.PIN_FILLED else IconType.PIN, pinFg, 11.5f), 3.5f)
+            background = roundedRipple(if (pinnedOnly) colorActiveTabBg else 0, dp(6f), 0)
             setOnClickListener {
                 pinnedOnly = !pinnedOnly
+                isClipboardPanelOpen = true
+                isSettingsOpen = false
                 renderFullImeView()
             }
         }
-        addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, controlHeight).apply { rightMargin = gap })
+        addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            rightMargin = dp(4)
+        })
 
-        // 4. Search Clips Pill
-        val searchPill = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(7), 0, dp(4), 0)
-            background = roundedRipple(
-                colorKeyBg,
-                dp(6f),
-                if (isFilterMode) colorAccent else colorKeyBorder
-            )
-            val st = TextView(this@ClipMaxImeService).apply {
-                text = if (keyboardSearchQuery.isEmpty()) "Search Clips…" else keyboardSearchQuery
-                textSize = 10f
-                setTextColor(if (keyboardSearchQuery.isEmpty()) colorHintText else colorKeyText)
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-                setIcon(IconDrawable(IconType.SEARCH, if (isFilterMode) colorAccent else colorHintText, 11f), 3.5f)
+        // 3. Search Clips (Icon stacked vertically above text, matching reference)
+        val searchBtn = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+            val fg = if (isFilterMode) colorActiveTabText else colorModText
+            val iv = createIconView(IconDrawable(IconType.SEARCH, fg, 14f))
+            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val tv = TextView(this@ClipMaxImeService).apply {
+                text = "Search Clips"
+                textSize = 9.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(fg)
+                gravity = Gravity.CENTER
             }
-            searchInputText = st
-            addView(st, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-            val clearX = createIconView(IconDrawable(IconType.CLOSE, colorHintText, 11f)).apply {
-                setPadding(dp(4), dp(4), dp(3), dp(4))
-                visibility = if (keyboardSearchQuery.isNotEmpty()) View.VISIBLE else View.GONE
-                setOnClickListener {
-                    keyboardSearchQuery = ""
-                    updateSearchUI()
-                    runKeyboardSearch()
-                }
-            }
-            searchClearBtn = clearX
-            addView(clearX, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
+            background = roundedRipple(if (isFilterMode) colorActiveTabBg else 0, dp(6f), 0)
             setOnClickListener {
                 isFilterMode = true
-                updateModeUI()
+                isClipboardPanelOpen = true
+                isSettingsOpen = false
+                renderFullImeView()
             }
         }
-        searchPillView = searchPill
-        addView(searchPill, LinearLayout.LayoutParams(0, controlHeight, 1f).apply { rightMargin = gap })
+        addView(searchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            rightMargin = dp(6)
+        })
 
-        // 5. System Keyboard Switcher
+        // Vertical Separator Line (matching reference image)
+        val separator = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(22)).apply {
+                leftMargin = dp(2)
+                rightMargin = dp(8)
+            }
+        }
+        addView(separator)
+
+        // 4. Settings (Newly confirmed requirement: Gear icon above text)
+        val settingsBtn = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+            val fg = if (isSettingsOpen) colorActiveTabText else colorModText
+            val iv = createIconView(IconDrawable(IconType.SETTINGS, fg, 14f))
+            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val tv = TextView(this@ClipMaxImeService).apply {
+                text = "Settings"
+                textSize = 9.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(fg)
+                gravity = Gravity.CENTER
+            }
+            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            background = roundedRipple(if (isSettingsOpen) colorActiveTabBg else 0, dp(6f), 0)
+            setOnClickListener {
+                isSettingsOpen = !isSettingsOpen
+                isClipboardPanelOpen = false
+                renderFullImeView()
+            }
+        }
+        addView(settingsBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            rightMargin = dp(6)
+        })
+
+        // Spacer to push IME switch to the far right
+        val spacer = View(this@ClipMaxImeService)
+        addView(spacer, LinearLayout.LayoutParams(0, 0, 1f))
+
+        // System Keyboard Switcher
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
+            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
             contentDescription = "Switch keyboard"
             val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 13f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -606,7 +710,259 @@ class ClipMaxImeService : InputMethodService() {
                 showSystemImePicker()
             }
         }
-        addView(imeSwitchBtn, LinearLayout.LayoutParams(controlHeight, controlHeight))
+        addView(imeSwitchBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
+    }
+
+    private fun buildSettingsPanel(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(colorBg)
+        val screenH = resources.displayMetrics.heightPixels
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val targetHeight = if (isLandscape) {
+            dp(180)
+        } else {
+            minOf(dp(276), (screenH * 0.38f).toInt()).coerceAtLeast(dp(236))
+        }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, targetHeight)
+
+        // Header (36dp)
+        val header = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(4), dp(8), dp(4))
+            setBackgroundColor(if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFE9EFEA.toInt()) else 0xFF161619.toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36))
+
+            val icon = createIconView(IconDrawable(IconType.SETTINGS, colorModText, 14f)).apply {
+                setPadding(0, 0, dp(6), 0)
+            }
+            addView(icon)
+
+            val title = TextView(this@ClipMaxImeService).apply {
+                text = "ClipMax Settings"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val closeBtn = Button(this@ClipMaxImeService).apply {
+                text = "Close"
+                isAllCaps = false
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(dp(8), 0, dp(8), 0)
+                setTextColor(colorModText)
+                background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
+                setIcon(IconDrawable(IconType.CLOSE, colorModText, 10f), 3.5f)
+                setOnClickListener {
+                    isSettingsOpen = false
+                    renderFullImeView()
+                }
+            }
+            addView(closeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        }
+        addView(header)
+
+        val divider = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }
+        addView(divider)
+
+        // Settings items in scrollable column
+        val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            isVerticalScrollBarEnabled = true
+        }
+
+        val list = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(12))
+        }
+
+        // 1. Theme Option (Graphite vs Classic)
+        val themeRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            val lbl = TextView(this@ClipMaxImeService).apply {
+                text = "Theme"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val currentTheme = appTheme
+            val graphiteBtn = Button(this@ClipMaxImeService).apply {
+                text = "Graphite"
+                textSize = 10f
+                isAllCaps = false
+                val active = (currentTheme == "graphite")
+                setTextColor(if (active) colorAccentText else colorModText)
+                background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                setOnClickListener {
+                    themePreferences.edit().putString("app_theme", "graphite").apply()
+                    renderFullImeView()
+                }
+            }
+            addView(graphiteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply { rightMargin = dp(6) })
+
+            val classicBtn = Button(this@ClipMaxImeService).apply {
+                text = "Classic"
+                textSize = 10f
+                isAllCaps = false
+                val active = (currentTheme == "classic")
+                setTextColor(if (active) colorAccentText else colorModText)
+                background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                setOnClickListener {
+                    themePreferences.edit().putString("app_theme", "classic").apply()
+                    renderFullImeView()
+                }
+            }
+            addView(classicBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)))
+        }
+        list.addView(themeRow)
+
+        val div1 = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+        }
+        list.addView(div1)
+
+        // 2. Resize Option (Height)
+        val resizeRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            val lbl = TextView(this@ClipMaxImeService).apply {
+                text = "Keyboard Height (Resize)"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val currentHeight = themePreferences.getString("keyboard_height", "normal") ?: "normal"
+            val heights = listOf("compact" to "Compact", "normal" to "Normal", "tall" to "Tall")
+            heights.forEachIndexed { idx, (key, title) ->
+                val active = (currentHeight == key)
+                val btn = Button(this@ClipMaxImeService).apply {
+                    text = title
+                    textSize = 10f
+                    isAllCaps = false
+                    setTextColor(if (active) colorAccentText else colorModText)
+                    background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                    setOnClickListener {
+                        themePreferences.edit().putString("keyboard_height", key).apply()
+                        renderFullImeView()
+                    }
+                }
+                addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+                    if (idx < heights.size - 1) rightMargin = dp(4)
+                })
+            }
+        }
+        list.addView(resizeRow)
+
+        val div2 = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+        }
+        list.addView(div2)
+
+        // 3. One-Handed Mode
+        val oneHandedRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            val lbl = TextView(this@ClipMaxImeService).apply {
+                text = "One-Handed Mode"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val currentMode = themePreferences.getString("one_handed_mode", "off") ?: "off"
+            val modes = listOf("left" to "Left", "off" to "Off", "right" to "Right")
+            modes.forEachIndexed { idx, (key, title) ->
+                val active = (currentMode == key)
+                val btn = Button(this@ClipMaxImeService).apply {
+                    text = title
+                    textSize = 10f
+                    isAllCaps = false
+                    setTextColor(if (active) colorAccentText else colorModText)
+                    background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                    setOnClickListener {
+                        themePreferences.edit().putString("one_handed_mode", key).apply()
+                        renderFullImeView()
+                    }
+                }
+                addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+                    if (idx < modes.size - 1) rightMargin = dp(4)
+                })
+            }
+        }
+        list.addView(oneHandedRow)
+
+        val div3 = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                topMargin = dp(4)
+                bottomMargin = dp(4)
+            }
+        }
+        list.addView(div3)
+
+        // 4. Share
+        val shareRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            val lbl = TextView(this@ClipMaxImeService).apply {
+                text = "Share ClipMax"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val shareBtn = Button(this@ClipMaxImeService).apply {
+                text = "Share App"
+                textSize = 10f
+                isAllCaps = false
+                setTextColor(0xFF111111.toInt())
+                background = roundedRipple(0xFFFFFFFF.toInt(), dp(6f), 0)
+                setOnClickListener {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, "Check out ClipMax - Android clipboard manager with large-text keyboard insertion!")
+                    }
+                    val chooser = Intent.createChooser(shareIntent, "Share ClipMax").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { startActivity(chooser) }
+                    setStatus("Share dialog opened.")
+                }
+            }
+            addView(shareBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)))
+        }
+        list.addView(shareRow)
+
+        scroll.addView(list)
+        addView(scroll)
     }
 
     private fun updateModeUI() {
@@ -1626,25 +1982,30 @@ class ClipMaxImeService : InputMethodService() {
 
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), 0, dp(7), 0)
-        background = roundedRipple(colorChipBg, dp(6f), colorChipBorder)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
-            rightMargin = dp(5)
+        setPadding(dp(12), 0, dp(12), 0)
+        background = roundedRipple(colorChipBg, dp(14f), colorChipBorder)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+            rightMargin = dp(6)
         }
 
         if (item.pinned) {
-            val pinIcon = createIconView(IconDrawable(IconType.PIN_FILLED, colorAccent, 10f)).apply {
+            val pinIcon = createIconView(IconDrawable(IconType.PIN_FILLED, colorAccent, 11f)).apply {
                 setPadding(0, 0, dp(4), 0)
             }
             addView(pinIcon)
         }
 
+        val displayContent = if (baseTitle.isNotBlank() && baseTitle != "Clip") {
+            baseTitle
+        } else {
+            getSnippet(item, 40).ifEmpty { "Clip" }
+        }
+
         val title = TextView(this@ClipMaxImeService).apply {
-            text = baseTitle.ifEmpty { "Clip" }
-            textSize = 10.5f
-            typeface = Typeface.DEFAULT_BOLD
+            text = displayContent
+            textSize = 12f
             setTextColor(colorKeyText)
-            maxWidth = dp(110)
+            maxWidth = dp(160)
             setSingleLine(true)
             ellipsize = TextUtils.TruncateAt.END
         }
@@ -1653,11 +2014,11 @@ class ClipMaxImeService : InputMethodService() {
         if (chunkLabel != null) {
             val chunkBadge = TextView(this@ClipMaxImeService).apply {
                 text = chunkLabel
-                textSize = 8f
+                textSize = 8.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorActiveTabText)
                 setPadding(dp(4), dp(1), dp(4), dp(1))
-                background = roundedDrawable(colorActiveTabBg, dp(3f), 0)
+                background = roundedDrawable(colorActiveTabBg, dp(4f), 0)
                 setSingleLine(true)
             }
             addView(chunkBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -1665,38 +2026,11 @@ class ClipMaxImeService : InputMethodService() {
             })
         }
 
-        val snippet = getSnippet(item, 32)
-        if (snippet.isNotEmpty()) {
-            val snipTv = TextView(this@ClipMaxImeService).apply {
-                text = "· $snippet"
-                textSize = 9.5f
-                typeface = Typeface.MONOSPACE
-                setTextColor(colorHintText)
-                maxWidth = dp(86)
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-            }
-            addView(snipTv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                leftMargin = dp(4)
-            })
-        }
-
-        val badge = TextView(this@ClipMaxImeService).apply {
-            text = humanSize(item.sizeBytes)
-            textSize = 8.5f
-            typeface = Typeface.MONOSPACE
-            setTextColor(colorHintText)
-            setPadding(dp(4), dp(1), dp(4), dp(1))
-            background = roundedDrawable(colorSnippetBg, dp(3f), 0)
-        }
-        addView(badge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = dp(5)
-        })
-
         setOnClickListener {
             insertItem(item)
         }
     }
+
 
     // =========================================================================
     // 3. STATUS / IN-FLIGHT BANNER
@@ -1740,9 +2074,19 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     // 4. APPROVED QWERTY / NUMERIC / SYMBOL KEYBOARD
     // =========================================================================
+    private fun getKeyRowHeight(): Int {
+        val heightPref = themePreferences.getString("keyboard_height", "normal") ?: "normal"
+        return when (heightPref) {
+            "compact" -> dp(38)
+            "tall" -> dp(46)
+            else -> dp(42)
+        }
+    }
+
     private fun keyLp(weight: Float): LinearLayout.LayoutParams {
         val m = dp(1.5f).toInt()
-        return LinearLayout.LayoutParams(0, dp(41), weight).apply {
+        val h = getKeyRowHeight() - dp(3)
+        return LinearLayout.LayoutParams(0, h, weight).apply {
             leftMargin = m
             rightMargin = m
         }
@@ -1762,20 +2106,28 @@ class ClipMaxImeService : InputMethodService() {
 
     // 4A. ALPHA (QWERTY)
     private fun renderAlphaRows(parent: LinearLayout) {
-        // Row 1: 10 keys (Q W E R T Y U I O P) with 1-0 hints
+        // Row 0: Dedicated number row (1 2 3 4 5 6 7 8 9 0) matching reference design
+        val row0 = createKeyRow()
+        numRow1.forEach { digit ->
+            row0.addView(createStandardKey(digit), keyLp(1f))
+        }
+        parent.addView(row0)
+
+        // Row 1: 10 keys (Q W E R T Y U I O P)
         val row1 = createKeyRow()
-        alphaRow1.forEachIndexed { idx, char ->
-            row1.addView(createAlphaKeyWithHint(char, alphaHints[idx]), keyLp(1f))
+        alphaRow1.forEach { char ->
+            row1.addView(createStandardKey(char), keyLp(1f))
         }
         parent.addView(row1)
 
         // Row 2: 9 keys (A S D F G H J K L) centered horizontally with 0.5f weight spacers
         val row2 = createKeyRow()
-        row2.addView(View(this), LinearLayout.LayoutParams(0, dp(41), 0.5f))
+        val spacerH = getKeyRowHeight() - dp(3)
+        row2.addView(View(this), LinearLayout.LayoutParams(0, spacerH, 0.5f))
         alphaRow2.forEach { char ->
             row2.addView(createStandardKey(char), keyLp(1f))
         }
-        row2.addView(View(this), LinearLayout.LayoutParams(0, dp(41), 0.5f))
+        row2.addView(View(this), LinearLayout.LayoutParams(0, spacerH, 0.5f))
         parent.addView(row2)
 
         // Row 3: Shift (1.35f), 7 keys (Z X C V B N M), Backspace (1.35f)
@@ -1789,16 +2141,17 @@ class ClipMaxImeService : InputMethodService() {
         row3.addView(createBackspaceKey(), keyLp(1.35f))
         parent.addView(row3)
 
-        // Row 4: ?123 (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
+        // Row 4: ?123 (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("?123") {
             keyboardMode = 1
             renderKeyboardRows()
         }, keyLp(1.35f))
 
-        row4.addView(createStandardKey(","), keyLp(1f))
-        row4.addView(createSpaceKey(), keyLp(4.6f))
-        row4.addView(createStandardKey("."), keyLp(1f))
+        row4.addView(createStandardKey(","), keyLp(0.85f))
+        row4.addView(createGlobeKey(), keyLp(0.85f))
+        row4.addView(createSpaceKey(), keyLp(4.75f))
+        row4.addView(createStandardKey("."), keyLp(0.85f))
         row4.addView(createEnterKey(), keyLp(1.35f))
         parent.addView(row4)
     }
@@ -1833,16 +2186,17 @@ class ClipMaxImeService : InputMethodService() {
         row3.addView(createBackspaceKey(), keyLp(1.35f))
         parent.addView(row3)
 
-        // Row 4: ABC (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
+        // Row 4: ABC (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
         }, keyLp(1.35f))
 
-        row4.addView(createStandardKey(","), keyLp(1f))
-        row4.addView(createSpaceKey(), keyLp(4.6f))
-        row4.addView(createStandardKey("."), keyLp(1f))
+        row4.addView(createStandardKey(","), keyLp(0.85f))
+        row4.addView(createGlobeKey(), keyLp(0.85f))
+        row4.addView(createSpaceKey(), keyLp(4.75f))
+        row4.addView(createStandardKey("."), keyLp(0.85f))
         row4.addView(createEnterKey(), keyLp(1.35f))
         parent.addView(row4)
     }
@@ -1877,16 +2231,17 @@ class ClipMaxImeService : InputMethodService() {
         row3.addView(createBackspaceKey(), keyLp(1.35f))
         parent.addView(row3)
 
-        // Row 4: ABC (1.35f), comma (1f), Space (4.6f), period (1f), Enter (1.35f)
+        // Row 4: ABC (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
         val row4 = createKeyRow()
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
         }, keyLp(1.35f))
 
-        row4.addView(createStandardKey(","), keyLp(1f))
-        row4.addView(createSpaceKey(), keyLp(4.6f))
-        row4.addView(createStandardKey("."), keyLp(1f))
+        row4.addView(createStandardKey(","), keyLp(0.85f))
+        row4.addView(createGlobeKey(), keyLp(0.85f))
+        row4.addView(createSpaceKey(), keyLp(4.75f))
+        row4.addView(createStandardKey("."), keyLp(0.85f))
         row4.addView(createEnterKey(), keyLp(1.35f))
         parent.addView(row4)
     }
@@ -1897,7 +2252,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun createKeyRow(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(45))
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, getKeyRowHeight())
     }
 
     private fun showKeyPreview(keyView: View, char: String) {
@@ -2081,13 +2436,23 @@ class ClipMaxImeService : InputMethodService() {
         setupBackspaceRepeat(this)
     }
 
+    private fun createGlobeKey(): View = FrameLayout(this).apply {
+        background = roundedRipple(colorModBg, dp(6f), colorKeyBorder)
+        contentDescription = "Switch input method"
+
+        val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 16f))
+        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+        attachKeyTouchFeedback(this, { showSystemImePicker() })
+    }
+
     private fun createSpaceKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
 
         val tv = TextView(this@ClipMaxImeService).apply {
-            text = "Space"
-            textSize = 11.5f
-            setTextColor(colorHintText)
+            text = "English"
+            textSize = 12.5f
+            setTextColor(colorKeyText)
             gravity = Gravity.CENTER
         }
         addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -2096,9 +2461,11 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun createEnterKey(): View = FrameLayout(this).apply {
-        background = roundedRipple(colorAccent, dp(6f), colorAccent)
+        val bgCol = if (isClassicTheme) colorAccent else colorKeyBg
+        val fgCol = if (isClassicTheme) colorAccentText else colorKeyText
+        background = roundedRipple(bgCol, dp(6f), colorKeyBorder)
 
-        val iv = createIconView(IconDrawable(IconType.ENTER, colorAccentText, 18f))
+        val iv = createIconView(IconDrawable(IconType.ENTER, fgCol, 18f))
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
         attachKeyTouchFeedback(this, { handleEnterPress() })
@@ -2672,7 +3039,7 @@ class ClipMaxImeService : InputMethodService() {
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
-        MERGE, SPLIT, UNDO, REDO
+        MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
     inner class IconDrawable(
@@ -2730,14 +3097,20 @@ class ClipMaxImeService : InputMethodService() {
                     canvas.drawLine(5f, 10.5f, 9.5f, 10.5f, strokePaint)
                 }
                 IconType.PIN -> {
-                    canvas.drawLine(8f, 1.5f, 8f, 4f, strokePaint)
-                    canvas.drawRoundRect(RectF(5f, 4f, 11f, 7.5f), 1f, 1f, strokePaint)
-                    canvas.drawLine(8f, 7.5f, 8f, 14.5f, strokePaint)
+                    canvas.save()
+                    canvas.rotate(-35f, 8f, 8f)
+                    canvas.drawLine(8f, 2f, 8f, 4.5f, strokePaint)
+                    canvas.drawRoundRect(RectF(5.5f, 4.5f, 10.5f, 7.5f), 1f, 1f, strokePaint)
+                    canvas.drawLine(8f, 7.5f, 8f, 14f, strokePaint)
+                    canvas.restore()
                 }
                 IconType.PIN_FILLED -> {
-                    canvas.drawLine(8f, 1.5f, 8f, 4f, strokePaint)
-                    canvas.drawRoundRect(RectF(5f, 4f, 11f, 7.5f), 1f, 1f, fillPaint)
-                    canvas.drawLine(8f, 7.5f, 8f, 14.5f, strokePaint)
+                    canvas.save()
+                    canvas.rotate(-35f, 8f, 8f)
+                    canvas.drawLine(8f, 2f, 8f, 4.5f, strokePaint)
+                    canvas.drawRoundRect(RectF(5.5f, 4.5f, 10.5f, 7.5f), 1f, 1f, fillPaint)
+                    canvas.drawLine(8f, 7.5f, 8f, 14f, strokePaint)
+                    canvas.restore()
                 }
                 IconType.KEYBOARD -> {
                     canvas.drawRoundRect(RectF(2f, 3.5f, 14f, 12.5f), 2f, 2f, strokePaint)
@@ -2825,6 +3198,15 @@ class ClipMaxImeService : InputMethodService() {
                 IconType.CLOSE -> {
                     canvas.drawLine(4f, 4f, 12f, 12f, strokePaint)
                     canvas.drawLine(12f, 4f, 4f, 12f, strokePaint)
+                }
+                IconType.SETTINGS -> {
+                    canvas.drawCircle(8f, 8f, 2.5f, strokePaint)
+                    for (i in 0 until 6) {
+                        val angle = (i * Math.PI / 3.0).toFloat()
+                        val c = Math.cos(angle.toDouble()).toFloat()
+                        val s = Math.sin(angle.toDouble()).toFloat()
+                        canvas.drawLine(8f + 3.5f * c, 8f + 3.5f * s, 8f + 6.5f * c, 8f + 6.5f * s, strokePaint)
+                    }
                 }
                 IconType.LOCK -> {
                     val p = Path().apply {
