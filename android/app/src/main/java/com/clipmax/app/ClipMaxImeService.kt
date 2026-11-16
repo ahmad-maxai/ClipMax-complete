@@ -127,6 +127,7 @@ class ClipMaxImeService : InputMethodService() {
 
     // Clipboard & Touch Feedback States
     private var isClipboardPanelOpen = false
+    private var toolbarState = 0 // 0 = State A (Snippets + Right Arrow), 1 = State B (Back + Clips + Pinned + Search)
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
     private var isMergeMode = false
     private var mergeSourceId: String? = null
@@ -377,9 +378,6 @@ class ClipMaxImeService : InputMethodService() {
             // 3. Compact Expandable Saved-Clipboard Panel
             content.addView(buildClipboardPanel())
         } else {
-            // 3B. Compact Saved-Clips Horizontal Strip
-            content.addView(buildSavedClipsStrip())
-
             // 4. Approved QWERTY / Numeric Keyboard Container
             val wrapper = FrameLayout(this).apply {
                 clipChildren = false
@@ -412,19 +410,104 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     // =========================================================================
-    // 1. TOOLBAR (Uniform 28dp Control Height, Balanced Spacing, Clear States)
+    // 1. TWO-STATE TOOLBAR (Phase 5B: State A & State B with smooth sliding structure)
     // =========================================================================
-    private fun buildToolbar(): View = LinearLayout(this).apply {
+    private fun buildToolbar(): View {
+        val rootFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36))
+            setBackgroundColor(colorToolbarBg)
+            clipChildren = true
+        }
+
+        val slidingContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            clipChildren = false
+        }
+
+        val screenW = resources.displayMetrics.widthPixels
+
+        // State A View (Width = screenW)
+        val stateAView = buildToolbarStateA().apply {
+            layoutParams = LinearLayout.LayoutParams(screenW, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
+        // State B View (Width = screenW)
+        val stateBView = buildToolbarStateB().apply {
+            layoutParams = LinearLayout.LayoutParams(screenW, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
+        slidingContainer.addView(stateAView)
+        slidingContainer.addView(stateBView)
+        rootFrame.addView(slidingContainer)
+
+        // Set position based on toolbarState
+        slidingContainer.translationX = if (toolbarState == 0) 0f else -screenW.toFloat()
+
+        return rootFrame
+    }
+
+    private fun buildToolbarStateA(): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(6), dp(4), dp(6), dp(4))
+        setPadding(dp(4), dp(3), dp(4), dp(3))
         setBackgroundColor(colorToolbarBg)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36))
+
+        // Horizontal scrollable snippet area
+        val scrollView = HorizontalScrollView(this@ClipMaxImeService).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            val container = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(2), 0, dp(2), 0)
+            }
+            chipsContainer = container
+            addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        addView(scrollView)
+        renderClipChips()
+
+        // Circular navigation arrow button at far right
+        val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
+            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
+            contentDescription = "More actions"
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, colorModText, 13f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                toolbarState = 1
+                renderFullImeView()
+            }
+        }
+        addView(rightArrowBtn, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+            leftMargin = dp(4)
+            rightMargin = dp(2)
+        })
+    }
+
+    private fun buildToolbarStateB(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(6), dp(3), dp(6), dp(3))
+        setBackgroundColor(colorToolbarBg)
 
         val controlHeight = dp(28)
         val gap = dp(4)
 
-        // 1. Clipboard / Clips Tab Button
+        // 1. Left-side Back arrow button to return to State A
+        val backBtn = FrameLayout(this@ClipMaxImeService).apply {
+            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
+            contentDescription = "Back to clips"
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, colorModText, 13f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                toolbarState = 0
+                renderFullImeView()
+            }
+        }
+        addView(backBtn, LinearLayout.LayoutParams(controlHeight, controlHeight).apply { rightMargin = gap })
+
+        // 2. Clipboard / Clips Tab Button
         val clipFg = if (isClipboardPanelOpen) colorActiveTabText else colorModText
         val clipBg = if (isClipboardPanelOpen) colorActiveTabBg else colorKeyBg
         val clipStroke = if (isClipboardPanelOpen) colorAccent else colorKeyBorder
@@ -448,7 +531,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(clipBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, controlHeight).apply { rightMargin = gap })
 
-        // 2. Pinned Tab Button
+        // 3. Pinned Tab Button
         val pinFg = if (pinnedOnly) colorActiveTabText else colorModText
         val pinBg = if (pinnedOnly) colorActiveTabBg else colorKeyBg
         val pinStroke = if (pinnedOnly) colorAccent else colorKeyBorder
@@ -472,7 +555,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, controlHeight).apply { rightMargin = gap })
 
-        // 3. Search Filter Pill (Flexible width, integrated clear 'X')
+        // 4. Search Clips Pill
         val searchPill = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -483,7 +566,7 @@ class ClipMaxImeService : InputMethodService() {
                 if (isFilterMode) colorAccent else colorKeyBorder
             )
             val st = TextView(this@ClipMaxImeService).apply {
-                text = if (keyboardSearchQuery.isEmpty()) "Search…" else keyboardSearchQuery
+                text = if (keyboardSearchQuery.isEmpty()) "Search Clips…" else keyboardSearchQuery
                 textSize = 10f
                 setTextColor(if (keyboardSearchQuery.isEmpty()) colorHintText else colorKeyText)
                 setSingleLine(true)
@@ -512,31 +595,6 @@ class ClipMaxImeService : InputMethodService() {
         }
         searchPillView = searchPill
         addView(searchPill, LinearLayout.LayoutParams(0, controlHeight, 1f).apply { rightMargin = gap })
-
-        // 4. Typing: Host / Filter Toggle
-        val modeFg = if (isFilterMode) colorActiveTabText else colorModText
-        val modeBg = if (isFilterMode) colorActiveTabBg else colorKeyBg
-        val modeStroke = if (isFilterMode) colorAccent else colorKeyBorder
-        val modeBtn = Button(this@ClipMaxImeService).apply {
-            text = if (isFilterMode) "Filter" else "Host"
-            isAllCaps = false
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(7), 0, dp(7), 0)
-            setTextColor(modeFg)
-            background = roundedRipple(modeBg, dp(6f), modeStroke)
-            setIcon(IconDrawable(if (isFilterMode) IconType.SEARCH else IconType.KEYBOARD, modeFg, 11f), 3.5f)
-            setOnClickListener {
-                isFilterMode = !isFilterMode
-                updateModeUI()
-            }
-        }
-        modeButton = modeBtn
-        addView(modeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, controlHeight).apply { rightMargin = gap })
 
         // 5. System Keyboard Switcher
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
@@ -2613,7 +2671,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
-        CHEVRON_DOWN, CHEVRON_UP, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
+        CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         MERGE, SPLIT, UNDO, REDO
     }
 
@@ -2745,6 +2803,22 @@ class ClipMaxImeService : InputMethodService() {
                         moveTo(3.5f, 10.5f)
                         lineTo(8f, 6f)
                         lineTo(12.5f, 10.5f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.CHEVRON_LEFT -> {
+                    val p = Path().apply {
+                        moveTo(10f, 3.5f)
+                        lineTo(5.5f, 8f)
+                        lineTo(10f, 12.5f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.CHEVRON_RIGHT -> {
+                    val p = Path().apply {
+                        moveTo(6f, 3.5f)
+                        lineTo(10.5f, 8f)
+                        lineTo(6f, 12.5f)
                     }
                     canvas.drawPath(p, strokePaint)
                 }
