@@ -290,15 +290,21 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
     private val wordsByLength = HashMap<Int, MutableList<String>>(24)
 
     init {
-        val unique = ArrayList<String>(wordsInFrequencyOrder.size)
-        for (raw in wordsInFrequencyOrder) {
+        val unique = ArrayList<String>(wordsInFrequencyOrder.size + 32)
+        fun addWord(raw: String) {
             val w = raw.trim().lowercase(Locale.ROOT)
-            if (w.isEmpty() || wordRank.containsKey(w)) continue
+            if (w.isEmpty() || wordRank.containsKey(w)) return
             val rank = unique.size
             unique.add(w)
             wordRank[w] = rank
             wordsByFirstChar.getOrPut(w[0]) { ArrayList() }.add(w)
             wordsByLength.getOrPut(w.length) { ArrayList() }.add(w)
+        }
+        for (raw in wordsInFrequencyOrder) {
+            addWord(raw)
+        }
+        for (target in HIGH_CONFIDENCE_TYPOS.values) {
+            addWord(target)
         }
         orderedWords = unique
     }
@@ -487,12 +493,14 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
         val second = matches.getOrNull(1)
         val sameFirst = best.word[0] == lower[0]
         val veryCommon = best.rank < 1200
+        val reasonablyCommon = best.rank < 2500
+        val isActivePrefixOfCommonWord = hasHigherRankedPrefix(lower, best.rank)
 
         // Conservative high-confidence auto-correction criteria:
-        // 1. Distance 1 on words >= 5 chars with either same starting letter or common word and clear edge over #2
-        // 2. Distance 1 on length 4 chars only if same first letter, top-600 word, and unique or 4x higher frequency than #2
+        // Never overwrite an active prefix of a more common valid word (e.g. "tomor" -> "tomorrow").
         val isHighConfidence = when {
-            best.distance == 1 && lower.length >= 5 && (sameFirst || veryCommon) &&
+            isActivePrefixOfCommonWord -> false
+            best.distance == 1 && lower.length >= 5 && ((sameFirst && reasonablyCommon) || veryCommon) &&
                 (second == null || second.distance > 1 || second.rank > best.rank * 3) -> true
             best.distance == 1 && lower.length == 4 && sameFirst && best.rank < 600 &&
                 (second == null || second.distance > 1 || second.rank > best.rank * 5) -> true
@@ -504,5 +512,16 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
         return matches.take(limit).mapIndexed { index, item ->
             if (index == 0) item.copy(highConfidence = isHighConfidence) else item
         }
+    }
+
+    private fun hasHigherRankedPrefix(prefix: String, candidateRank: Int): Boolean {
+        val bucket = wordsByFirstChar[prefix[0]] ?: return false
+        for (w in bucket) {
+            if (w.length > prefix.length && w.startsWith(prefix)) {
+                val r = wordRank[w] ?: Int.MAX_VALUE
+                if (r < candidateRank || r < 2000) return true
+            }
+        }
+        return false
     }
 }
