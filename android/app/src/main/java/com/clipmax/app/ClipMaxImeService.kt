@@ -129,6 +129,9 @@ class ClipMaxImeService : InputMethodService() {
     private var isClipboardPanelOpen = false
     private var isSettingsOpen = false
     private var toolbarState = 0 // 0 = State A (Snippets + Right Arrow), 1 = State B (Back + Pinned + Search + Settings)
+    private var toolbarContainer: FrameLayout? = null
+    private var toolbarStateAView: View? = null
+    private var toolbarStateBView: View? = null
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
     private var isMergeMode = false
     private var mergeSourceId: String? = null
@@ -492,33 +495,78 @@ class ClipMaxImeService : InputMethodService() {
             setBackgroundColor(colorToolbarBg)
             clipChildren = true
         }
+        toolbarContainer = rootFrame
 
-        val slidingContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            clipChildren = false
+        val viewA = buildToolbarStateA().apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            visibility = if (toolbarState == 0) View.VISIBLE else View.GONE
         }
+        toolbarStateAView = viewA
 
-        val screenW = resources.displayMetrics.widthPixels
-
-        // State A View (Width = screenW)
-        val stateAView = buildToolbarStateA().apply {
-            layoutParams = LinearLayout.LayoutParams(screenW, ViewGroup.LayoutParams.MATCH_PARENT)
+        val viewB = buildToolbarStateB().apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            visibility = if (toolbarState == 1) View.VISIBLE else View.GONE
         }
+        toolbarStateBView = viewB
 
-        // State B View (Width = screenW)
-        val stateBView = buildToolbarStateB().apply {
-            layoutParams = LinearLayout.LayoutParams(screenW, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-
-        slidingContainer.addView(stateAView)
-        slidingContainer.addView(stateBView)
-        rootFrame.addView(slidingContainer)
-
-        // Set position based on toolbarState
-        slidingContainer.translationX = if (toolbarState == 0) 0f else -screenW.toFloat()
+        rootFrame.addView(viewA)
+        rootFrame.addView(viewB)
 
         return rootFrame
+    }
+
+    private fun switchToolbarState(targetState: Int) {
+        toolbarState = targetState
+        val viewA = toolbarStateAView
+        val viewB = toolbarStateBView
+        val root = toolbarContainer
+
+        if (viewA == null || viewB == null || root == null || !root.isAttachedToWindow) {
+            renderFullImeView()
+            return
+        }
+
+        val w = root.width.toFloat().takeIf { it > 0 } ?: resources.displayMetrics.widthPixels.toFloat()
+
+        if (targetState == 1) {
+            viewA.animate().cancel()
+            viewB.animate().cancel()
+
+            viewB.translationX = w
+            viewB.visibility = View.VISIBLE
+
+            viewA.animate()
+                .translationX(-w)
+                .setDuration(160)
+                .withEndAction {
+                    viewA.visibility = View.GONE
+                    viewA.translationX = 0f
+                }
+                .start()
+            viewB.animate()
+                .translationX(0f)
+                .setDuration(160)
+                .start()
+        } else {
+            viewA.animate().cancel()
+            viewB.animate().cancel()
+
+            viewA.translationX = -w
+            viewA.visibility = View.VISIBLE
+
+            viewB.animate()
+                .translationX(w)
+                .setDuration(160)
+                .withEndAction {
+                    viewB.visibility = View.GONE
+                    viewB.translationX = 0f
+                }
+                .start()
+            viewA.animate()
+                .translationX(0f)
+                .setDuration(160)
+                .start()
+        }
     }
 
     private fun buildToolbarStateA(): View = LinearLayout(this).apply {
@@ -565,8 +613,7 @@ class ClipMaxImeService : InputMethodService() {
             val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, 0xFF111111.toInt(), 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
-                toolbarState = 1
-                renderFullImeView()
+                switchToolbarState(1)
             }
         }
         addView(rightArrowBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
@@ -588,9 +635,17 @@ class ClipMaxImeService : InputMethodService() {
             val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
+                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode
                 toolbarState = 0
                 isSettingsOpen = false
-                renderFullImeView()
+                isClipboardPanelOpen = false
+                isFilterMode = false
+                keyboardSearchQuery = ""
+                if (wasPanelOpen) {
+                    renderFullImeView()
+                } else {
+                    switchToolbarState(0)
+                }
             }
         }
         addView(backBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
@@ -698,7 +753,7 @@ class ClipMaxImeService : InputMethodService() {
 
         // Spacer to push IME switch to the far right
         val spacer = View(this@ClipMaxImeService)
-        addView(spacer, LinearLayout.LayoutParams(0, 0, 1f))
+        addView(spacer, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
         // System Keyboard Switcher
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
@@ -2824,7 +2879,8 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (contextMenuHost != null || isMergeMode || undoRedoHost != null) {
+            if (contextMenuHost != null || isMergeMode || undoRedoHost != null ||
+                isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
                 if (event.repeatCount == 0) {
                     event.startTracking()
                 }
@@ -2855,6 +2911,17 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 return true
             }
+            if (isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
+                if (!event.isCanceled) {
+                    isSettingsOpen = false
+                    isClipboardPanelOpen = false
+                    isFilterMode = false
+                    keyboardSearchQuery = ""
+                    toolbarState = 0
+                    renderFullImeView()
+                }
+                return true
+            }
         }
         return super.onKeyUp(keyCode, event)
     }
@@ -2863,6 +2930,11 @@ class ClipMaxImeService : InputMethodService() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode()
+        isSettingsOpen = false
+        isClipboardPanelOpen = false
+        isFilterMode = false
+        keyboardSearchQuery = ""
+        toolbarState = 0
         super.onWindowHidden()
     }
 
