@@ -30,6 +30,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.FrameLayout
@@ -45,12 +46,14 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * ClipMax Production Native Android InputMethodService (IME).
- * Implements the approved Gboard-inspired QWERTY and numeric layout with
+ * Implements the approved Graphite/Classic QWERTY and numeric layout with
  * 50,000-character chunked insertion, persistent local storage access,
- * live clip filtering, pin support, and theme synchronization.
+ * real clipboard preview pills, host insertion Undo/Redo, offline autocomplete
+ * and autocorrection, live clip filtering, and pin support.
  */
 class ClipMaxImeService : InputMethodService() {
 
@@ -65,9 +68,12 @@ class ClipMaxImeService : InputMethodService() {
     private val main = Handler(Looper.getMainLooper())
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private val inserter: ExecutorService = Executors.newSingleThreadExecutor()
+    private val suggestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     @Volatile private var generation = 0
     private var listRequest = 0
     private var isPasswordTarget = false
+    private var fieldCapabilities = InputFieldPolicy.evaluate(InputType.TYPE_CLASS_TEXT, 0)
+    private var currentEditorTarget = InsertionHistoryManager.EditorTarget(null, 0, 0)
     private var isInserting = false
     private var pinnedOnly = false
     private var keyboardSearchQuery = ""
@@ -78,6 +84,7 @@ class ClipMaxImeService : InputMethodService() {
     private var activeItemCodePoints = 0
     private var insertTask: Future<*>? = null
     private var items: List<ClipItem> = emptyList()
+    @Volatile private var snippetCache: Map<String, String> = emptyMap()
 
     // Keyboard Layout Mode: 0 = alpha (QWERTY), 1 = numeric (?123), 2 = symbols (=\<)
     private var keyboardMode = 0
@@ -91,6 +98,9 @@ class ClipMaxImeService : InputMethodService() {
     private var contentContainer: LinearLayout? = null
     private var clipboardScrollView: android.widget.ScrollView? = null
     private var chipsContainer: LinearLayout? = null
+    private var toolbarChipsScroll: HorizontalScrollView? = null
+    private var suggestionScrollView: HorizontalScrollView? = null
+    private var suggestionsContainer: LinearLayout? = null
     private var searchResultsContainer: LinearLayout? = null
     private var keyboardRowsContainer: LinearLayout? = null
     private var statusBannerView: LinearLayout? = null
@@ -103,6 +113,25 @@ class ClipMaxImeService : InputMethodService() {
     private var shiftButton: View? = null
     private var shiftImageView: ImageView? = null
     private val letterKeyViews = mutableListOf<Pair<TextView, String>>()
+
+    // Host Insertion History & Offline Typing Intelligence (strictly separate from Merge/Split undoStack)
+    private val insertionHistory = InsertionHistoryManager()
+    @Volatile private var typingEngine: TypingIntelligenceEngine = TypingIntelligenceEngine.createFallback()
+    private val suggestionGeneration = AtomicInteger(0)
+    private var toolbarStateACenterMode = 0 // 0 = Clipboard previews, 1 = Typing suggestions
+    private var currentWordAnalysis: TypingIntelligenceEngine.WordAnalysis? = null
+    private var activeComposingWord: String = ""
+    private var currentNextWordSuggestions: List<String> = emptyList()
+    private var lastRevertOriginalWord: String? = null
+    private val suppressedAutocorrectWords = HashSet<String>()
+
+    // State B Undo/Redo Button Refs
+    private var stateBUndoBtn: LinearLayout? = null
+    private var stateBUndoIcon: ImageView? = null
+    private var stateBUndoText: TextView? = null
+    private var stateBRedoBtn: LinearLayout? = null
+    private var stateBRedoIcon: ImageView? = null
+    private var stateBRedoText: TextView? = null
 
     private val parenChunkRegex = Regex("^(.*?)\\s*\\((Chunk\\s+(\\d+)/(\\d+))\\)$", RegexOption.IGNORE_CASE)
     private val dotChunkTimeRegex = Regex("^(.*?)\\s*[·•]\\s*(Chunk\\s+(\\d+)/(\\d+))(?:\\s*[·•]\\s*\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[AP]M)?)?$", RegexOption.IGNORE_CASE)
@@ -172,6 +201,15 @@ class ClipMaxImeService : InputMethodService() {
 
     private val isClassicTheme: Boolean
         get() = appTheme == "classic"
+
+    private val isAutocompleteEnabled: Boolean
+        get() = themePreferences.getBoolean("typing_autocomplete", true)
+
+    private val isAutoCorrectEnabled: Boolean
+        get() = themePreferences.getBoolean("typing_autocorrect", true)
+
+    private val isSuggestionsEnabled: Boolean
+        get() = themePreferences.getBoolean("typing_suggestions", true)
 
     // Theme Color Tokens (Evaluated dynamically, reads app preference before system night mode)
     private val isNightMode: Boolean
@@ -290,13 +328,28 @@ class ClipMaxImeService : InputMethodService() {
         captureMode = CapturePreferences.mode(capturePreferences)
         capturePreferences.registerOnSharedPreferenceChangeListener(capturePreferenceListener)
 
-        // Observe in-app theme preference changes in real-time
+        // Observe in-app theme & typing preference changes in real-time
         themePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == "app_theme") {
-                main.post { renderFullImeView() }
+            when (key) {
+                "app_theme" -> main.post { renderFullImeView() }
+                "typing_autocomplete", "typing_autocorrect", "typing_suggestions" -> main.post {
+                    onTypingSettingsChanged()
+                }
             }
         }
         themePreferences.registerOnSharedPreferenceChangeListener(themePreferenceListener)
+
+        // Load bundled local-only English dictionary off the main UI thread
+        io.execute {
+            val loaded = runCatching {
+                resources.openRawResource(R.raw.en_words).use { stream ->
+                    TypingIntelligenceEngine.fromStream(stream)
+                }
+            }.getOrNull()
+            if (loaded != null && !serviceDestroyed) {
+                typingEngine = loaded
+            }
+        }
 
         clipboardManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
@@ -436,6 +489,16 @@ class ClipMaxImeService : InputMethodService() {
         searchInputText = null
         searchPillView = null
         searchClearBtn = null
+        chipsContainer = null
+        toolbarChipsScroll = null
+        suggestionScrollView = null
+        suggestionsContainer = null
+        stateBUndoBtn = null
+        stateBUndoIcon = null
+        stateBUndoText = null
+        stateBRedoBtn = null
+        stateBRedoIcon = null
+        stateBRedoText = null
 
         // Apply One-Handed Mode padding
         val oneHanded = themePreferences.getString("one_handed_mode", "off") ?: "off"
@@ -532,6 +595,9 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun switchToolbarState(targetState: Int) {
         toolbarState = targetState
+        if (targetState == 1) {
+            updateInsertionHistoryButtons()
+        }
         val viewA = toolbarStateAView
         val viewB = toolbarStateBView
         val root = toolbarContainer
@@ -602,28 +668,39 @@ class ClipMaxImeService : InputMethodService() {
         setPadding(dp(6), dp(3), dp(6), dp(3))
         setBackgroundColor(colorToolbarBg)
 
-        // 1. Far-left Clipboard icon button (matching reference image)
+        // 1. Far-left Clipboard icon button (switches back from Suggestions to Clipboard Pills, or opens Clipboard Panel)
         val clipIconBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
             contentDescription = "Clipboard history"
             val iv = createIconView(IconDrawable(IconType.CLIPBOARD, colorKeyText, 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
-                pinnedOnly = false
-                isFilterMode = false
-                isSettingsOpen = false
-                isClipboardPanelOpen = !isClipboardPanelOpen
-                renderFullImeView()
+                if (toolbarStateACenterMode == 1 && !isClipboardPanelOpen && !isSettingsOpen) {
+                    showClipboardPillsInToolbar()
+                } else {
+                    pinnedOnly = false
+                    isFilterMode = false
+                    isSettingsOpen = false
+                    isClipboardPanelOpen = !isClipboardPanelOpen
+                    renderFullImeView()
+                }
             }
         }
         addView(clipIconBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
             rightMargin = dp(6)
         })
 
-        // 2. Horizontal scrollable snippet area (first snippet readable, second snippet partially visible with trailing fade effect)
+        // 2. Center slot sharing exact 38dp toolbar space between Clipboard Previews (0) & Typing Suggestions (1)
+        val centerFrame = FrameLayout(this@ClipMaxImeService).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        }
+
         val scrollView = HorizontalScrollView(this@ClipMaxImeService).apply {
             isHorizontalScrollBarEnabled = false
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(20))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            visibility = if (toolbarStateACenterMode == 0) View.VISIBLE else View.GONE
             val container = LinearLayout(this@ClipMaxImeService).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -632,10 +709,31 @@ class ClipMaxImeService : InputMethodService() {
             chipsContainer = container
             addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        addView(scrollView)
+        toolbarChipsScroll = scrollView
+        centerFrame.addView(scrollView)
         renderClipChips()
 
-        // 3. Circular navigation arrow button at far right (White circle with dark right chevron, matching reference image)
+        val suggestScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            visibility = if (toolbarStateACenterMode == 1) View.VISIBLE else View.GONE
+            val container = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(2), 0, dp(8), 0)
+            }
+            suggestionsContainer = container
+            addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        suggestionScrollView = suggestScroll
+        centerFrame.addView(suggestScroll)
+        renderSuggestionStrip()
+
+        addView(centerFrame)
+
+        // 3. Circular navigation arrow button at far right (White circle with dark right chevron)
         val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(0xFFFFFFFF.toInt(), dp(16f), 0)
             contentDescription = "More actions"
@@ -658,11 +756,11 @@ class ClipMaxImeService : InputMethodService() {
         setPadding(dp(6), dp(3), dp(6), dp(3))
         setBackgroundColor(colorToolbarBg)
 
-        // 1. Navigation Back Button (Left side, persistent while State B is active)
+        // 1. Navigation Back Button (Left side, ALWAYS pinned & visible while State B is active)
         val backBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(0xFFFFFFFF.toInt(), dp(16f), 0)
+            background = roundedRipple(0xFFFFFFFF.toInt(), dp(15f), 0)
             contentDescription = "Back to clipboard snippets"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 14f))
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 13.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly
@@ -680,150 +778,169 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
-        addView(backBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
-            rightMargin = dp(6)
-        })
-
-        // 2. Pinned (Icon stacked vertically above text, matching reference)
-        val pinActive = isClipboardPanelOpen && pinnedOnly
-        val pinBtn = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(6), dp(2), dp(6), dp(2))
-            val fg = if (pinActive) colorActiveTabText else colorModText
-            val iv = createIconView(IconDrawable(if (pinActive) IconType.PIN_FILLED else IconType.PIN, fg, 13.5f))
-            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            val tv = TextView(this@ClipMaxImeService).apply {
-                text = "Pinned"
-                textSize = 9.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(fg)
-                gravity = Gravity.CENTER
-                setSingleLine(true)
-                maxLines = 1
-            }
-            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            background = roundedRipple(if (pinActive) colorActiveTabBg else 0, dp(6f), 0)
-            setOnClickListener {
-                if (isClipboardPanelOpen && pinnedOnly) {
-                    pinnedOnly = false
-                    isClipboardPanelOpen = false
-                } else {
-                    pinnedOnly = true
-                    isClipboardPanelOpen = true
-                    isSettingsOpen = false
-                    isFilterMode = false
-                    keyboardSearchQuery = ""
-                    keyboardSearchResults = emptyList()
-                }
-                renderFullImeView()
-            }
-        }
-        addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-            rightMargin = dp(2)
-        })
-
-        // 3. Search Clips (Icon stacked vertically above text, matching reference)
-        val searchBtn = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(6), dp(2), dp(6), dp(2))
-            val fg = if (isFilterMode) colorActiveTabText else colorModText
-            val iv = createIconView(IconDrawable(IconType.SEARCH, fg, 13.5f))
-            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            val tv = TextView(this@ClipMaxImeService).apply {
-                text = "Search Clips"
-                textSize = 9.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(fg)
-                gravity = Gravity.CENTER
-                setSingleLine(true)
-                maxLines = 1
-            }
-            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            background = roundedRipple(if (isFilterMode) colorActiveTabBg else 0, dp(6f), 0)
-            setOnClickListener {
-                if (isFilterMode) {
-                    isFilterMode = false
-                    keyboardSearchQuery = ""
-                    keyboardSearchResults = emptyList()
-                } else {
-                    isFilterMode = true
-                    isClipboardPanelOpen = false
-                    isSettingsOpen = false
-                    pinnedOnly = false
-                    keyboardSearchQuery = ""
-                    keyboardSearchResults = items
-                }
-                renderFullImeView()
-            }
-        }
-        addView(searchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+        addView(backBtn, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
             rightMargin = dp(4)
         })
 
-        // Vertical Separator Line (matching reference image)
+        // Scrollable / fill-viewport row holding: Undo, Redo, Pinned, Search Clips, Settings
+        val actionsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        }
+
+        val actionsRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
+        }
+
+        fun makeStateBAction(
+            iconType: IconType,
+            label: String,
+            fgColor: Int,
+            bgColor: Int,
+            onClick: () -> Unit
+        ): Triple<LinearLayout, ImageView, TextView> {
+            var ivRef: ImageView? = null
+            var tvRef: TextView? = null
+            val btn = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                minimumWidth = dp(46)
+                setPadding(dp(6), dp(2), dp(6), dp(2))
+                val iv = createIconView(IconDrawable(iconType, fgColor, 13f))
+                ivRef = iv
+                addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                val tv = TextView(this@ClipMaxImeService).apply {
+                    text = label
+                    textSize = 8.8f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(fgColor)
+                    gravity = Gravity.CENTER
+                    setSingleLine(true)
+                    maxLines = 1
+                }
+                tvRef = tv
+                addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                background = roundedRipple(bgColor, dp(6f), 0)
+                setOnClickListener { onClick() }
+            }
+            return Triple(btn, ivRef!!, tvRef!!)
+        }
+
+        // 2. Host Insertion Undo
+        val (undoBtn, undoIv, undoTv) = makeStateBAction(IconType.UNDO, "Undo", colorModText, 0) {
+            performInsertionUndo()
+        }
+        undoBtn.contentDescription = "Undo pasted clip or autocorrect"
+        stateBUndoBtn = undoBtn
+        stateBUndoIcon = undoIv
+        stateBUndoText = undoTv
+        actionsRow.addView(undoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+
+        // 3. Host Insertion Redo
+        val (redoBtn, redoIv, redoTv) = makeStateBAction(IconType.REDO, "Redo", colorModText, 0) {
+            performInsertionRedo()
+        }
+        redoBtn.contentDescription = "Redo pasted clip or autocorrect"
+        stateBRedoBtn = redoBtn
+        stateBRedoIcon = redoIv
+        stateBRedoText = redoTv
+        actionsRow.addView(redoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+
+        // Subtle Separator between History actions and Navigation panels
         val separator = View(this@ClipMaxImeService).apply {
             setBackgroundColor(colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(dp(1), dp(22)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(20)).apply {
                 leftMargin = dp(2)
-                rightMargin = dp(4)
+                rightMargin = dp(2)
             }
         }
-        addView(separator)
+        actionsRow.addView(separator)
 
-        // 4. Settings (Gear icon above text)
-        val settingsBtn = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(6), dp(2), dp(6), dp(2))
-            val fg = if (isSettingsOpen) colorActiveTabText else colorModText
-            val iv = createIconView(IconDrawable(IconType.SETTINGS, fg, 13.5f))
-            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            val tv = TextView(this@ClipMaxImeService).apply {
-                text = "Settings"
-                textSize = 9.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(fg)
-                gravity = Gravity.CENTER
-                setSingleLine(true)
-                maxLines = 1
-            }
-            addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-            background = roundedRipple(if (isSettingsOpen) colorActiveTabBg else 0, dp(6f), 0)
-            setOnClickListener {
-                isSettingsOpen = !isSettingsOpen
-                isClipboardPanelOpen = false
-                isFilterMode = false
+        // 4. Pinned
+        val pinActive = isClipboardPanelOpen && pinnedOnly
+        val (pinBtn, _, _) = makeStateBAction(
+            if (pinActive) IconType.PIN_FILLED else IconType.PIN,
+            "Pinned",
+            if (pinActive) colorActiveTabText else colorModText,
+            if (pinActive) colorActiveTabBg else 0
+        ) {
+            if (isClipboardPanelOpen && pinnedOnly) {
                 pinnedOnly = false
-                renderFullImeView()
+                isClipboardPanelOpen = false
+            } else {
+                pinnedOnly = true
+                isClipboardPanelOpen = true
+                isSettingsOpen = false
+                isFilterMode = false
+                keyboardSearchQuery = ""
+                keyboardSearchResults = emptyList()
             }
+            renderFullImeView()
         }
-        addView(settingsBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-            rightMargin = dp(4)
-        })
+        actionsRow.addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        // Spacer to push IME switch to the far right
-        val spacer = View(this@ClipMaxImeService)
-        addView(spacer, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        // 5. Search Clips
+        val (searchBtn, _, _) = makeStateBAction(
+            IconType.SEARCH,
+            "Search Clips",
+            if (isFilterMode) colorActiveTabText else colorModText,
+            if (isFilterMode) colorActiveTabBg else 0
+        ) {
+            if (isFilterMode) {
+                isFilterMode = false
+                keyboardSearchQuery = ""
+                keyboardSearchResults = emptyList()
+            } else {
+                isFilterMode = true
+                isClipboardPanelOpen = false
+                isSettingsOpen = false
+                pinnedOnly = false
+                keyboardSearchQuery = ""
+                keyboardSearchResults = items
+            }
+            renderFullImeView()
+        }
+        searchBtn.contentDescription = "Search Clips"
+        actionsRow.addView(searchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        // System Keyboard Switcher
+        // 6. Settings
+        val (settingsBtn, _, _) = makeStateBAction(
+            IconType.SETTINGS,
+            "Settings",
+            if (isSettingsOpen) colorActiveTabText else colorModText,
+            if (isSettingsOpen) colorActiveTabBg else 0
+        ) {
+            isSettingsOpen = !isSettingsOpen
+            isClipboardPanelOpen = false
+            isFilterMode = false
+            pinnedOnly = false
+            renderFullImeView()
+        }
+        actionsRow.addView(settingsBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+
+        actionsScroll.addView(actionsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(actionsScroll)
+
+        // System Keyboard Switcher pinned far right
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
             contentDescription = "Switch keyboard"
-            val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 13f))
+            val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 12.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 showSystemImePicker()
             }
         }
-        addView(imeSwitchBtn, LinearLayout.LayoutParams(dp(30), dp(30)))
+        addView(imeSwitchBtn, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+            leftMargin = dp(4)
+        })
+
+        updateInsertionHistoryButtons()
     }
 
     private fun buildSettingsPanel(): View = LinearLayout(this).apply {
@@ -1098,6 +1215,70 @@ class ClipMaxImeService : InputMethodService() {
             addView(shareBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)))
         }
         list.addView(shareRow)
+
+        val div4 = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        }
+        list.addView(div4)
+
+        // 5. Typing Assistance Section
+        val typingHeader = TextView(this@ClipMaxImeService).apply {
+            text = "Typing Assistance"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorAccent)
+            setPadding(0, dp(2), 0, dp(4))
+        }
+        list.addView(typingHeader)
+
+        fun addBooleanSettingRow(labelText: String, prefKey: String, defaultVal: Boolean = true) {
+            val row = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(5), 0, dp(5))
+                val lbl = TextView(this@ClipMaxImeService).apply {
+                    text = labelText
+                    textSize = 11.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorKeyText)
+                }
+                addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+                val enabled = themePreferences.getBoolean(prefKey, defaultVal)
+                listOf(true to "On", false to "Off").forEachIndexed { idx, (value, title) ->
+                    val active = (enabled == value)
+                    val btn = Button(this@ClipMaxImeService).apply {
+                        text = title
+                        textSize = 10f
+                        isAllCaps = false
+                        minHeight = 0
+                        minimumHeight = 0
+                        minWidth = 0
+                        minimumWidth = 0
+                        setPadding(dp(11), 0, dp(11), 0)
+                        setTextColor(if (active) colorAccentText else colorModText)
+                        background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                        setOnClickListener {
+                            themePreferences.edit().putBoolean(prefKey, value).apply()
+                            onTypingSettingsChanged()
+                            renderFullImeView()
+                        }
+                    }
+                    addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
+                        if (idx == 0) rightMargin = dp(4)
+                    })
+                }
+            }
+            list.addView(row)
+        }
+
+        addBooleanSettingRow("Autocomplete", "typing_autocomplete", true)
+        addBooleanSettingRow("Automatic Correction", "typing_autocorrect", true)
+        addBooleanSettingRow("Suggestions", "typing_suggestions", true)
 
         scroll.addView(list)
         addView(scroll)
@@ -2278,7 +2459,7 @@ class ClipMaxImeService : InputMethodService() {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(12), 0, dp(12), 0)
         background = roundedRipple(colorChipBg, dp(14f), colorChipBorder)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29)).apply {
             rightMargin = dp(6)
         }
 
@@ -2289,18 +2470,28 @@ class ClipMaxImeService : InputMethodService() {
             addView(pinIcon)
         }
 
-        val displayContent = if (baseTitle.isNotBlank() && baseTitle != "Clip") {
-            baseTitle
-        } else {
-            getSnippet(item, 40).ifEmpty { "Clip" }
-        }
+        val rawSnippet = snippetCache[item.id] ?: getRawSnippetPrefix(item, 180)
+        val previewText = ClipPreviewFormatter.resolveChipPreview(
+            baseTitle = baseTitle,
+            rawSnippet = rawSnippet,
+            isPasswordTarget = isPasswordTarget,
+            maxChars = 72
+        )
+
+        val screenW = resources.displayMetrics.widthPixels
+        val oneHandedPad = if ((themePreferences.getString("one_handed_mode", "off") ?: "off") != "off") dp(54) else 0
+        val availableToolbarW = (screenW - oneHandedPad - dp(86)).coerceAtLeast(dp(180))
+        val adaptiveMaxW = minOf(dp(220), (availableToolbarW * 0.62f).toInt()).coerceAtLeast(dp(145))
 
         val title = TextView(this@ClipMaxImeService).apply {
-            text = displayContent
+            text = previewText
             textSize = 12f
             setTextColor(colorKeyText)
-            maxWidth = dp(160)
+            minWidth = dp(56)
+            maxWidth = adaptiveMaxW
+            gravity = Gravity.CENTER_VERTICAL
             setSingleLine(true)
+            maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -2316,7 +2507,7 @@ class ClipMaxImeService : InputMethodService() {
                 setSingleLine(true)
             }
             addView(chunkBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                leftMargin = dp(4)
+                leftMargin = dp(5)
             })
         }
 
@@ -2777,7 +2968,14 @@ class ClipMaxImeService : InputMethodService() {
             updateSearchUI()
             runKeyboardSearch()
         } else {
-            currentInputConnection?.commitText(letter, 1)
+            val conn = currentInputConnection
+            if (conn != null) {
+                insertionHistory.invalidateImmediateBackspaceRevert()
+                lastRevertOriginalWord = null
+                conn.commitText(letter, 1)
+                updateInsertionHistoryButtons()
+                refreshTypingSuggestionsAsync()
+            }
         }
         if (shiftState == 1) { // 1-shot shifted -> auto revert to lowercase
             shiftState = 0
@@ -2791,7 +2989,20 @@ class ClipMaxImeService : InputMethodService() {
             updateSearchUI()
             runKeyboardSearch()
         } else {
-            currentInputConnection?.commitText(char, 1)
+            val conn = currentInputConnection ?: return
+            if (isWordBoundaryDelimiter(char)) {
+                commitWordBoundaryWithIntelligence(conn, char)
+            } else {
+                insertionHistory.invalidateImmediateBackspaceRevert()
+                lastRevertOriginalWord = null
+                conn.commitText(char, 1)
+                updateInsertionHistoryButtons()
+                if (char == "'") {
+                    refreshTypingSuggestionsAsync()
+                } else {
+                    clearTypingSuggestionsView()
+                }
+            }
         }
     }
 
@@ -2801,7 +3012,8 @@ class ClipMaxImeService : InputMethodService() {
             updateSearchUI()
             runKeyboardSearch()
         } else {
-            currentInputConnection?.commitText(" ", 1)
+            val conn = currentInputConnection ?: return
+            commitWordBoundaryWithIntelligence(conn, " ")
         }
     }
 
@@ -2814,12 +3026,30 @@ class ClipMaxImeService : InputMethodService() {
             }
         } else {
             val conn = currentInputConnection ?: return
+            val gateway = buildEditorGateway(conn)
+            if (gateway != null && !isPasswordTarget) {
+                val reverted = insertionHistory.tryImmediateBackspaceRevertAutocorrect(gateway)
+                if (reverted != null) {
+                    if (fieldCapabilities.allowSessionLearning) {
+                        suppressedAutocorrectWords.add(reverted.lowercase(Locale.ROOT))
+                    }
+                    lastRevertOriginalWord = null
+                    updateInsertionHistoryButtons()
+                    refreshTypingSuggestionsAsync()
+                    return
+                }
+            }
+
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            lastRevertOriginalWord = null
             val selected = conn.getSelectedText(0)
             if (!selected.isNullOrEmpty()) {
                 conn.commitText("", 1)
             } else {
                 conn.deleteSurroundingText(1, 0)
             }
+            updateInsertionHistoryButtons()
+            refreshTypingSuggestionsAsync()
         }
     }
 
@@ -2834,9 +3064,11 @@ class ClipMaxImeService : InputMethodService() {
             val info = currentInputEditorInfo
             val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
             if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                insertionHistory.invalidateImmediateBackspaceRevert()
+                clearTypingSuggestionsView()
                 conn.performEditorAction(action)
             } else {
-                conn.commitText("\n", 1)
+                commitWordBoundaryWithIntelligence(conn, "\n")
             }
         }
     }
@@ -2908,8 +3140,16 @@ class ClipMaxImeService : InputMethodService() {
         io.execute {
             CapturePreferences.cleanupExpired(store, capturePreferences)
             val found = runCatching { store.listItems() }.getOrElse { emptyList() }
+            val prebuiltSnippets = HashMap<String, String>(minOf(found.size, 64))
+            for (item in found.take(64)) {
+                val snip = getRawSnippetPrefix(item, 180)
+                if (snip.isNotEmpty()) {
+                    prebuiltSnippets[item.id] = snip
+                }
+            }
             main.post {
                 if (request != listRequest || imeRootFrame == null) return@post
+                snippetCache = prebuiltSnippets
                 items = found.sortedWith(
                     compareByDescending<ClipItem> { it.pinned }
                         .thenByDescending { it.createdAt }
@@ -2984,6 +3224,16 @@ class ClipMaxImeService : InputMethodService() {
         if (isInserting) cancelInsertion(userInitiated = false)
         generation++
         val token = generation
+        val startTarget = currentEditorTarget
+        val selectedBefore = runCatching { connection.getSelectedText(0) }.getOrNull()
+        val hasSelectionBefore = !selectedBefore.isNullOrEmpty()
+        val beforeAnchor = if (!hasSelectionBefore) {
+            runCatching { connection.getTextBeforeCursor(InsertionHistoryManager.ANCHOR_LENGTH, 0)?.toString() }.getOrNull().orEmpty()
+        } else ""
+        val afterAnchor = if (!hasSelectionBefore) {
+            runCatching { connection.getTextAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH, 0)?.toString() }.getOrNull().orEmpty()
+        } else ""
+
         isInserting = true
         insertedCodePoints = 0
         lastReportedCodePoints = 0
@@ -2994,6 +3244,11 @@ class ClipMaxImeService : InputMethodService() {
             try {
                 val source = openSource()
                 activeItemCodePoints = source.characterCount
+                val trackedBuffer = if (!hasSelectionBefore && source.characterCount <= InsertionHistoryManager.MAX_TRACKED_INSERTION_CHARS) {
+                    StringBuilder(minOf(source.characterCount + 16, InsertionHistoryManager.MAX_TRACKED_INSERTION_CHARS + 16))
+                } else {
+                    null
+                }
                 main.post {
                     if (generation == token) setStatus("Inserting $title (${activeItemCodePoints.grouped()} chars)…")
                 }
@@ -3001,11 +3256,33 @@ class ClipMaxImeService : InputMethodService() {
                     TextChunker.forEachChunk(
                         reader = reader,
                         isCancelled = { generation != token || Thread.currentThread().isInterrupted }
-                    ) { chunk -> deliverChunk(connection, token, chunk) }
+                    ) { chunk ->
+                        val ok = deliverChunk(connection, token, chunk)
+                        if (ok && trackedBuffer != null) {
+                            if (trackedBuffer.length + chunk.length <= InsertionHistoryManager.MAX_TRACKED_INSERTION_CHARS) {
+                                trackedBuffer.append(chunk)
+                            }
+                        }
+                        ok
+                    }
                 }
                 main.post {
                     if (generation == token) {
                         isInserting = false
+                        val insertedText = trackedBuffer?.toString()
+                        if (complete && !isPasswordTarget && !insertedText.isNullOrEmpty() &&
+                            insertedText.length <= InsertionHistoryManager.MAX_TRACKED_INSERTION_CHARS &&
+                            currentEditorTarget == startTarget
+                        ) {
+                            insertionHistory.recordClipInsertion(
+                                target = startTarget,
+                                insertedText = insertedText,
+                                beforeAnchor = beforeAnchor,
+                                afterAnchor = afterAnchor
+                            )
+                            clearTypingSuggestionsView()
+                            updateInsertionHistoryButtons()
+                        }
                         setStatus(if (complete) "Inserted ${insertedCodePoints.grouped()} chars." else "Insertion paused.")
                     }
                 }
@@ -3068,16 +3345,20 @@ class ClipMaxImeService : InputMethodService() {
         statusCancelBtn?.visibility = if (isInserting) View.VISIBLE else View.GONE
     }
 
-    private fun getSnippet(item: ClipItem, maxChars: Int = 40): String {
+    private fun getRawSnippetPrefix(item: ClipItem, maxChars: Int = 180): String {
         return try {
             store.openTextReader(item.id).use { reader ->
                 val buf = CharArray(maxChars)
                 val read = reader.read(buf, 0, maxChars)
-                if (read > 0) String(buf, 0, read).replace("\n", " ").trim() else ""
+                if (read > 0) String(buf, 0, read) else ""
             }
         } catch (_: Throwable) {
             ""
         }
+    }
+
+    private fun getSnippet(item: ClipItem, maxChars: Int = 40): String {
+        return ClipPreviewFormatter.normalizePreviewText(getRawSnippetPrefix(item, maxChars), maxChars)
     }
 
     fun showSystemImePicker() {
@@ -3094,10 +3375,25 @@ class ClipMaxImeService : InputMethodService() {
         super.onStartInput(attribute, restarting)
         dismissContextMenu(animate = false)
         generation++
+        suggestionGeneration.incrementAndGet()
         insertTask?.cancel(true)
         insertTask = null
         isInserting = false
-        isPasswordTarget = isSensitiveField(attribute.inputType)
+        fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
+        isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
+        currentEditorTarget = InsertionHistoryManager.EditorTarget(
+            packageName = attribute.packageName,
+            fieldId = attribute.fieldId,
+            inputType = attribute.inputType
+        )
+        insertionHistory.clearForTargetChangeIfNeeded(currentEditorTarget)
+        suppressedAutocorrectWords.clear()
+        currentWordAnalysis = null
+        activeComposingWord = ""
+        currentNextWordSuggestions = emptyList()
+        lastRevertOriginalWord = null
+        toolbarStateACenterMode = 0
+
         inputSessionActive = true
         inputViewActive = false
         updateCaptureMonitoring()
@@ -3114,17 +3410,50 @@ class ClipMaxImeService : InputMethodService() {
             main.postDelayed(task, 250)
         }
         renderClipChips()
+        updateToolbarCenterVisibility()
+        updateInsertionHistoryButtons()
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         inputViewActive = true
+        toolbarStateACenterMode = 0
+        updateToolbarCenterVisibility()
+        updateInsertionHistoryButtons()
         updateCaptureMonitoring()
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
             capturePrimaryClip(CaptureSource.CLIPBOARD_POLL)
         }
         reloadItems()
         scheduleExpiryCleanup()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        if (!inputViewActive) return
+        updateInsertionHistoryButtons()
+        if (newSelStart != newSelEnd) {
+            clearTypingSuggestionsView()
+            return
+        }
+        // Only clear/resync if cursor jumped outside expected typing flow
+        val delta = kotlin.math.abs(newSelStart - oldSelStart)
+        if (delta > 1) {
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            lastRevertOriginalWord = null
+            if (!isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled) {
+                refreshTypingSuggestionsAsync()
+            } else {
+                clearTypingSuggestionsView()
+            }
+        }
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -3252,7 +3581,502 @@ class ClipMaxImeService : InputMethodService() {
         insertTask?.cancel(true)
         io.shutdownNow()
         inserter.shutdownNow()
+        suggestExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    // =========================================================================
+    // HOST INSERTION UNDO/REDO & TYPING INTELLIGENCE HELPERS
+    // =========================================================================
+    private fun buildEditorGateway(conn: InputConnection? = currentInputConnection): InsertionHistoryManager.HostEditorGateway? {
+        val ic = conn ?: return null
+        return object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget(): InsertionHistoryManager.EditorTarget = currentEditorTarget
+            override fun isPasswordField(): Boolean = isPasswordTarget
+            override fun hasActiveSelection(): Boolean {
+                val sel = runCatching { ic.getSelectedText(0) }.getOrNull()
+                return !sel.isNullOrEmpty()
+            }
+            override fun textBeforeCursor(maxChars: Int): String? =
+                runCatching { ic.getTextBeforeCursor(maxChars, 0)?.toString() }.getOrNull()
+            override fun textAfterCursor(maxChars: Int): String? =
+                runCatching { ic.getTextAfterCursor(maxChars, 0)?.toString() }.getOrNull()
+            override fun deleteBeforeCursor(length: Int): Boolean =
+                runCatching { ic.deleteSurroundingText(length, 0) }.getOrDefault(false)
+            override fun commitText(text: String): Boolean =
+                runCatching { ic.commitText(text, 1) }.getOrDefault(false)
+            override fun runBatchEdit(block: () -> Boolean): Boolean {
+                return try {
+                    ic.beginBatchEdit()
+                    block()
+                } finally {
+                    runCatching { ic.endBatchEdit() }
+                }
+            }
+        }
+    }
+
+    private fun updateInsertionHistoryButtons() {
+        val undoBtn = stateBUndoBtn
+        val redoBtn = stateBRedoBtn
+        if (undoBtn == null || redoBtn == null) return
+
+        val gateway = buildEditorGateway()
+        val canUndo = gateway != null && insertionHistory.canSafelyUndo(gateway).allowed
+        val canRedo = gateway != null && insertionHistory.canSafelyRedo(gateway).allowed
+
+        val undoFg = if (canUndo) colorKeyText else colorHintText
+        undoBtn.isEnabled = canUndo
+        undoBtn.isClickable = canUndo
+        undoBtn.alpha = if (canUndo) 1f else 0.38f
+        stateBUndoIcon?.setImageDrawable(IconDrawable(IconType.UNDO, undoFg, 13f))
+        stateBUndoText?.setTextColor(undoFg)
+
+        val redoFg = if (canRedo) colorKeyText else colorHintText
+        redoBtn.isEnabled = canRedo
+        redoBtn.isClickable = canRedo
+        redoBtn.alpha = if (canRedo) 1f else 0.38f
+        stateBRedoIcon?.setImageDrawable(IconDrawable(IconType.REDO, redoFg, 13f))
+        stateBRedoText?.setTextColor(redoFg)
+    }
+
+    private fun performInsertionUndo() {
+        val gateway = buildEditorGateway()
+        if (gateway == null) {
+            setStatus("Undo unavailable: no active input field.")
+            updateInsertionHistoryButtons()
+            return
+        }
+        val result = insertionHistory.undo(gateway)
+        if (result.success && result.entry?.kind == InsertionHistoryManager.ActionKind.AUTOCORRECT) {
+            if (fieldCapabilities.allowSessionLearning) {
+                suppressedAutocorrectWords.add(result.entry.rawOriginalWord.lowercase(Locale.ROOT))
+            }
+            lastRevertOriginalWord = null
+            refreshTypingSuggestionsAsync()
+        } else {
+            clearTypingSuggestionsView()
+        }
+        updateInsertionHistoryButtons()
+        setStatus(result.message)
+    }
+
+    private fun performInsertionRedo() {
+        val gateway = buildEditorGateway()
+        if (gateway == null) {
+            setStatus("Redo unavailable: no active input field.")
+            updateInsertionHistoryButtons()
+            return
+        }
+        val result = insertionHistory.redo(gateway)
+        clearTypingSuggestionsView()
+        updateInsertionHistoryButtons()
+        setStatus(result.message)
+    }
+
+    private fun onTypingSettingsChanged() {
+        if (!isSuggestionsEnabled || !fieldCapabilities.allowSuggestions) {
+            showClipboardPillsInToolbar()
+        } else {
+            refreshTypingSuggestionsAsync()
+        }
+    }
+
+    private fun showClipboardPillsInToolbar() {
+        suggestionGeneration.incrementAndGet()
+        toolbarStateACenterMode = 0
+        currentWordAnalysis = null
+        activeComposingWord = ""
+        currentNextWordSuggestions = emptyList()
+        lastRevertOriginalWord = null
+        updateToolbarCenterVisibility()
+    }
+
+    private fun clearTypingSuggestionsView() {
+        currentWordAnalysis = null
+        activeComposingWord = ""
+        currentNextWordSuggestions = emptyList()
+        toolbarStateACenterMode = 0
+        updateToolbarCenterVisibility()
+    }
+
+    private fun updateToolbarCenterVisibility() {
+        val showSuggest = toolbarStateACenterMode == 1 &&
+            !isPasswordTarget &&
+            !isFilterMode &&
+            isSuggestionsEnabled &&
+            fieldCapabilities.allowSuggestions
+        toolbarChipsScroll?.visibility = if (showSuggest) View.GONE else View.VISIBLE
+        suggestionScrollView?.visibility = if (showSuggest) View.VISIBLE else View.GONE
+    }
+
+    private data class ComposingContext(
+        val composingWord: String,
+        val fullToken: String,
+        val beforeAnchor: String,
+        val afterAnchor: String,
+        val isSentenceStart: Boolean,
+        val previousWord: String?,
+        val endedWithSpace: Boolean,
+        val midWord: Boolean
+    )
+
+    private fun extractComposingContext(conn: InputConnection): ComposingContext? {
+        val before = runCatching { conn.getTextBeforeCursor(72, 0)?.toString() }.getOrNull() ?: return null
+        val after = runCatching { conn.getTextAfterCursor(48, 0)?.toString() }.getOrNull().orEmpty()
+        val selected = runCatching { conn.getSelectedText(0) }.getOrNull()
+        if (!selected.isNullOrEmpty()) return null
+
+        val midWord = after.isNotEmpty() && (after[0].isLetterOrDigit() || after[0] == '\'')
+        val endedWithSpace = before.isNotEmpty() && before.last().isWhitespace()
+
+        // Full non-whitespace token right before cursor
+        var wsIdx = before.length - 1
+        while (wsIdx >= 0 && !before[wsIdx].isWhitespace()) wsIdx--
+        val fullToken = if (midWord || endedWithSpace) "" else before.substring(wsIdx + 1)
+
+        // Trailing letter/apostrophe word
+        var wordStart = before.length - 1
+        while (wordStart >= 0 && (before[wordStart].isLetter() || before[wordStart] == '\'')) {
+            wordStart--
+        }
+        val composingWord = if (midWord || endedWithSpace) "" else before.substring(wordStart + 1)
+        val anchorBeforeWord = if (composingWord.isNotEmpty()) {
+            before.substring(0, wordStart + 1).takeLast(InsertionHistoryManager.ANCHOR_LENGTH)
+        } else {
+            before.takeLast(InsertionHistoryManager.ANCHOR_LENGTH)
+        }
+
+        // Check sentence start before fullToken
+        var scanIdx = if (fullToken.isNotEmpty()) wsIdx else before.length - 1
+        while (scanIdx >= 0 && before[scanIdx] == ' ') scanIdx--
+        val isSentenceStart = scanIdx < 0 || before[scanIdx] in charArrayOf('\n', '.', '!', '?')
+
+        // Extract previous completed word (when composing or right after space)
+        var prevEnd = scanIdx
+        while (prevEnd >= 0 && !before[prevEnd].isLetter() && before[prevEnd] != '\'') {
+            if (!before[prevEnd].isWhitespace()) {
+                prevEnd = -1
+                break
+            }
+            prevEnd--
+        }
+        val prevWord = if (prevEnd >= 0) {
+            var prevStart = prevEnd
+            while (prevStart >= 0 && (before[prevStart].isLetter() || before[prevStart] == '\'')) prevStart--
+            before.substring(prevStart + 1, prevEnd + 1).takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+
+        return ComposingContext(
+            composingWord = composingWord,
+            fullToken = fullToken,
+            beforeAnchor = anchorBeforeWord,
+            afterAnchor = after,
+            isSentenceStart = isSentenceStart,
+            previousWord = prevWord,
+            endedWithSpace = endedWithSpace,
+            midWord = midWord
+        )
+    }
+
+    private fun refreshTypingSuggestionsAsync() {
+        if (isPasswordTarget || isFilterMode) {
+            clearTypingSuggestionsView()
+            return
+        }
+        val allowAutocomp = isAutocompleteEnabled && fieldCapabilities.allowAutocomplete
+        val allowAutocorr = isAutoCorrectEnabled && fieldCapabilities.allowAutocorrect
+        val allowSuggestUI = isSuggestionsEnabled && fieldCapabilities.allowSuggestions
+
+        if (!allowAutocomp && !allowAutocorr && !allowSuggestUI) {
+            clearTypingSuggestionsView()
+            return
+        }
+        val conn = currentInputConnection ?: return
+        val ctx = extractComposingContext(conn) ?: run {
+            clearTypingSuggestionsView()
+            return
+        }
+        if (ctx.midWord || ctx.composingWord.isEmpty()) {
+            if (ctx.endedWithSpace && allowAutocomp && allowSuggestUI && ctx.previousWord != null) {
+                val nextWords = typingEngine.nextWordSuggestions(ctx.previousWord, true)
+                currentWordAnalysis = null
+                activeComposingWord = ""
+                currentNextWordSuggestions = nextWords
+                if (nextWords.isNotEmpty() || lastRevertOriginalWord != null) {
+                    toolbarStateACenterMode = 1
+                    renderSuggestionStrip()
+                    updateToolbarCenterVisibility()
+                } else {
+                    clearTypingSuggestionsView()
+                }
+            } else {
+                clearTypingSuggestionsView()
+            }
+            return
+        }
+
+        val reqGen = suggestionGeneration.incrementAndGet()
+        val suppressedSnapshot = suppressedAutocorrectWords.toSet()
+        suggestExecutor.execute {
+            val analysis = typingEngine.analyzeWord(
+                composingWord = ctx.composingWord,
+                fullTokenBeforeCursor = ctx.fullToken,
+                isSentenceStart = ctx.isSentenceStart,
+                autocompleteEnabled = allowAutocomp,
+                autoCorrectEnabled = allowAutocorr,
+                suppressedWordsLower = suppressedSnapshot,
+                maxSuggestions = 4
+            )
+            main.post {
+                if (reqGen != suggestionGeneration.get() || serviceDestroyed || isPasswordTarget || isFilterMode) {
+                    return@post
+                }
+                activeComposingWord = ctx.composingWord
+                currentWordAnalysis = analysis
+                currentNextWordSuggestions = emptyList()
+                if (allowSuggestUI && fieldCapabilities.allowSuggestions) {
+                    toolbarStateACenterMode = 1
+                    renderSuggestionStrip()
+                    updateToolbarCenterVisibility()
+                }
+            }
+        }
+    }
+
+    private fun isWordBoundaryDelimiter(ch: String): Boolean {
+        return ch == " " || ch == "." || ch == "," || ch == "!" || ch == "?" || ch == ";" || ch == ":"
+    }
+
+    private fun commitWordBoundaryWithIntelligence(conn: InputConnection, delimiter: String) {
+        suggestionGeneration.incrementAndGet()
+        if (isPasswordTarget || !isAutoCorrectEnabled || !fieldCapabilities.allowAutocorrect) {
+            lastRevertOriginalWord = null
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            conn.commitText(delimiter, 1)
+            updateInsertionHistoryButtons()
+            refreshTypingSuggestionsAsync()
+            return
+        }
+
+        val ctx = extractComposingContext(conn)
+        val word = ctx?.composingWord.orEmpty()
+        if (ctx == null || ctx.midWord || word.length < 2) {
+            lastRevertOriginalWord = null
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            conn.commitText(delimiter, 1)
+            updateInsertionHistoryButtons()
+            refreshTypingSuggestionsAsync()
+            return
+        }
+
+        val suppressedSnapshot = suppressedAutocorrectWords.toSet()
+        val cached = currentWordAnalysis?.takeIf { it.originalWord == word }
+        val analysis = cached ?: typingEngine.analyzeWord(
+            composingWord = word,
+            fullTokenBeforeCursor = ctx.fullToken,
+            isSentenceStart = ctx.isSentenceStart,
+            autocompleteEnabled = isAutocompleteEnabled && fieldCapabilities.allowAutocomplete,
+            autoCorrectEnabled = true,
+            suppressedWordsLower = suppressedSnapshot,
+            maxSuggestions = 4
+        )
+
+        val correction = analysis.autoCorrection
+        if (correction != null && correction != word && word.lowercase(Locale.ROOT) !in suppressedSnapshot) {
+            val committed = try {
+                conn.beginBatchEdit()
+                conn.deleteSurroundingText(word.length, 0) && conn.commitText(correction + delimiter, 1)
+            } finally {
+                runCatching { conn.endBatchEdit() }
+            }
+            if (committed) {
+                insertionHistory.recordAutocorrect(
+                    target = currentEditorTarget,
+                    rawOriginalWord = word,
+                    correctedWord = correction,
+                    delimiter = delimiter,
+                    beforeAnchor = ctx.beforeAnchor,
+                    afterAnchor = ctx.afterAnchor
+                )
+                lastRevertOriginalWord = word
+                currentWordAnalysis = null
+                activeComposingWord = ""
+                currentNextWordSuggestions = if (isAutocompleteEnabled && fieldCapabilities.allowAutocomplete) {
+                    typingEngine.nextWordSuggestions(correction, true)
+                } else emptyList()
+                if (isSuggestionsEnabled && fieldCapabilities.allowSuggestions) {
+                    toolbarStateACenterMode = 1
+                    renderSuggestionStrip()
+                    updateToolbarCenterVisibility()
+                }
+                updateInsertionHistoryButtons()
+                return
+            }
+        }
+
+        lastRevertOriginalWord = null
+        insertionHistory.invalidateImmediateBackspaceRevert()
+        conn.commitText(delimiter, 1)
+        updateInsertionHistoryButtons()
+        refreshTypingSuggestionsAsync()
+    }
+
+    private fun renderSuggestionStrip() {
+        val container = suggestionsContainer ?: return
+        container.removeAllViews()
+        if (isPasswordTarget || !isSuggestionsEnabled || !fieldCapabilities.allowSuggestions) return
+
+        val revertOrig = lastRevertOriginalWord
+        if (revertOrig != null) {
+            container.addView(buildSuggestionChip("Undo \"$revertOrig\"", isHighlight = false, isRevert = true) {
+                val gateway = buildEditorGateway()
+                if (gateway != null) {
+                    val res = insertionHistory.undo(gateway)
+                    if (res.success && fieldCapabilities.allowSessionLearning) {
+                        suppressedAutocorrectWords.add(revertOrig.lowercase(Locale.ROOT))
+                    }
+                    lastRevertOriginalWord = null
+                    updateInsertionHistoryButtons()
+                    refreshTypingSuggestionsAsync()
+                    setStatus(res.message)
+                }
+            })
+        }
+
+        val analysis = currentWordAnalysis
+        val word = activeComposingWord
+        if (analysis != null && word.isNotEmpty()) {
+            // Always show the typed word option if autocorrect would change it or it's unknown, so user can keep it
+            if (analysis.autoCorrection != null || !analysis.isKnownWord) {
+                container.addView(buildSuggestionChip("\"$word\"", isHighlight = false, isRevert = false) {
+                    acceptTypedWordAsIs(word)
+                })
+            }
+            for ((idx, sug) in analysis.suggestions.withIndex()) {
+                val highlight = (sug == analysis.autoCorrection) || (idx == 0 && analysis.autoCorrection == null)
+                container.addView(buildSuggestionChip(sug, isHighlight = highlight, isRevert = false) {
+                    applyManualSuggestion(sug)
+                })
+            }
+        } else if (currentNextWordSuggestions.isNotEmpty()) {
+            for ((idx, nextWord) in currentNextWordSuggestions.withIndex()) {
+                container.addView(buildSuggestionChip(nextWord, isHighlight = (idx == 0), isRevert = false) {
+                    insertNextWordSuggestion(nextWord)
+                })
+            }
+        }
+    }
+
+    private fun buildSuggestionChip(
+        label: String,
+        isHighlight: Boolean,
+        isRevert: Boolean,
+        onClick: () -> Unit
+    ): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(11), 0, dp(11), 0)
+        val bgCol = when {
+            isHighlight -> colorActiveTabBg
+            else -> colorChipBg
+        }
+        val strokeCol = when {
+            isHighlight -> colorAccent
+            else -> colorChipBorder
+        }
+        val fgCol = when {
+            isHighlight -> colorActiveTabText
+            isRevert -> colorModText
+            else -> colorKeyText
+        }
+        background = roundedRipple(bgCol, dp(14f), strokeCol)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29)).apply {
+            rightMargin = dp(6)
+        }
+
+        if (isRevert) {
+            val undoIv = createIconView(IconDrawable(IconType.UNDO, fgCol, 11f)).apply {
+                setPadding(0, 0, dp(4), 0)
+            }
+            addView(undoIv)
+        }
+
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = label
+            textSize = 12f
+            typeface = if (isHighlight) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            setTextColor(fgCol)
+            maxWidth = dp(170)
+            setSingleLine(true)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        addView(tv)
+        setOnClickListener { onClick() }
+    }
+
+    private fun acceptTypedWordAsIs(word: String) {
+        val conn = currentInputConnection ?: return
+        val ctx = extractComposingContext(conn) ?: return
+        if (ctx.composingWord != word || ctx.midWord) return
+        if (fieldCapabilities.allowSessionLearning) {
+            suppressedAutocorrectWords.add(word.lowercase(Locale.ROOT))
+        }
+        lastRevertOriginalWord = null
+        insertionHistory.invalidateImmediateBackspaceRevert()
+        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        if (after.isEmpty() || !after[0].isWhitespace()) {
+            conn.commitText(" ", 1)
+        }
+        updateInsertionHistoryButtons()
+        refreshTypingSuggestionsAsync()
+    }
+
+    private fun applyManualSuggestion(chosenWord: String) {
+        val conn = currentInputConnection ?: return
+        val ctx = extractComposingContext(conn) ?: return
+        val word = ctx.composingWord
+        if (word.isEmpty() || ctx.midWord) return
+        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
+        val committed = try {
+            conn.beginBatchEdit()
+            conn.deleteSurroundingText(word.length, 0) && conn.commitText(chosenWord + trailingSpace, 1)
+        } finally {
+            runCatching { conn.endBatchEdit() }
+        }
+        if (committed) {
+            lastRevertOriginalWord = null
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            updateInsertionHistoryButtons()
+            currentWordAnalysis = null
+            activeComposingWord = ""
+            currentNextWordSuggestions = if (isAutocompleteEnabled && fieldCapabilities.allowAutocomplete) {
+                typingEngine.nextWordSuggestions(chosenWord, true)
+            } else emptyList()
+            if (currentNextWordSuggestions.isNotEmpty() && isSuggestionsEnabled && fieldCapabilities.allowSuggestions) {
+                toolbarStateACenterMode = 1
+                renderSuggestionStrip()
+                updateToolbarCenterVisibility()
+            } else {
+                showClipboardPillsInToolbar()
+            }
+        }
+    }
+
+    private fun insertNextWordSuggestion(nextWord: String) {
+        val conn = currentInputConnection ?: return
+        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
+        conn.commitText(nextWord + trailingSpace, 1)
+        lastRevertOriginalWord = null
+        insertionHistory.invalidateImmediateBackspaceRevert()
+        updateInsertionHistoryButtons()
+        refreshTypingSuggestionsAsync()
     }
 
     private fun isSensitiveField(inputType: Int): Boolean {
