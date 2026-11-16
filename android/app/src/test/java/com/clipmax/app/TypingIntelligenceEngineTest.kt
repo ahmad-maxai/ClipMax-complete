@@ -44,6 +44,12 @@ class TypingIntelligenceEngineTest {
 
         val sentenceCap = engine.analyzeWord("Recieved", "Recieved", isSentenceStart = true, autocompleteEnabled = true, autoCorrectEnabled = true)
         assertEquals("Received", sentenceCap.autoCorrection)
+
+        val sentenceThe = engine.analyzeWord("Teh", "Teh", isSentenceStart = true, autocompleteEnabled = true, autoCorrectEnabled = true)
+        assertEquals("The", sentenceThe.autoCorrection)
+
+        val allCaps = engine.analyzeWord("TEH", "TEH", isSentenceStart = false, autocompleteEnabled = true, autoCorrectEnabled = true)
+        assertEquals("THE", allCaps.autoCorrection)
     }
 
     @Test

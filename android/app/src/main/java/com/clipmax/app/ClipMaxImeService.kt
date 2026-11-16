@@ -27,6 +27,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
@@ -91,6 +92,10 @@ class ClipMaxImeService : InputMethodService() {
     // Shift State: 0 = off (lowercase), 1 = shifted (1-shot uppercase), 2 = caps lock
     private var shiftState = 0
     private var lastShiftTapTime = 0L
+    private var autoCapMode = AutoCapitalizationPolicy.CapMode.SENTENCES
+    private var manualShiftOverride = false
+    private var currentLayoutGeometry: KeyboardLayoutSpec.GeometryDp =
+        KeyboardLayoutSpec.computeGeometryDp("normal", 800f, false, false)
 
     // UI View References
     private var imeRootFrame: FrameLayout? = null
@@ -297,7 +302,6 @@ class ClipMaxImeService : InputMethodService() {
 
     // QWERTY Letter Rows (All 26 letters: 10 + 9 + 7)
     private val alphaRow1 = listOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P")
-    private val alphaHints = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     private val alphaRow2 = listOf("A", "S", "D", "F", "G", "H", "J", "K", "L")
     private val alphaRow3 = listOf("Z", "X", "C", "V", "B", "N", "M")
 
@@ -527,7 +531,10 @@ class ClipMaxImeService : InputMethodService() {
                 content.addView(buildSearchInterface())
             }
 
-            // 4. Approved QWERTY / Numeric Keyboard Container
+            // 4. Approved 4-row Ergonomic QWERTY / Numeric Keyboard Container
+            val geom = refreshKeyboardGeometry()
+            syncAutoCapitalization(preserveManualShift = true)
+
             val wrapper = FrameLayout(this).apply {
                 clipChildren = false
                 clipToPadding = false
@@ -543,7 +550,12 @@ class ClipMaxImeService : InputMethodService() {
                 clipChildren = false
                 clipToPadding = false
                 setBackgroundColor(colorBg)
-                setPadding(dp(3), dp(2), dp(3), dp(3))
+                setPadding(
+                    dp(geom.sidePaddingDp).toInt(),
+                    dp(geom.topPaddingDp).toInt(),
+                    dp(geom.sidePaddingDp).toInt(),
+                    dp(geom.bottomPaddingDp).toInt()
+                )
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2557,23 +2569,34 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     // =========================================================================
-    // 4. APPROVED QWERTY / NUMERIC / SYMBOL KEYBOARD
+    // 4. ERGONOMIC 4-ROW QWERTY / NUMERIC / SYMBOL KEYBOARD
     // =========================================================================
-    private fun getKeyRowHeight(): Int {
+    private fun refreshKeyboardGeometry(): KeyboardLayoutSpec.GeometryDp {
+        val dm = resources.displayMetrics
+        val density = dm.density.coerceAtLeast(1f)
+        val screenHeightDp = dm.heightPixels / density
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val heightPref = themePreferences.getString("keyboard_height", "normal") ?: "normal"
-        return when (heightPref) {
-            "compact" -> dp(38)
-            "tall" -> dp(46)
-            else -> dp(42)
-        }
+        val geom = KeyboardLayoutSpec.computeGeometryDp(
+            heightPref = heightPref,
+            screenHeightDp = screenHeightDp,
+            isLandscape = isLandscape,
+            hasFilterBar = isFilterMode
+        )
+        currentLayoutGeometry = geom
+        return geom
     }
 
+    private fun getKeyRowHeight(): Int = dp(currentLayoutGeometry.keyHeightDp).toInt()
+
+    private fun keyCornerRadiusPx(): Float = dp(currentLayoutGeometry.cornerRadiusDp)
+
     private fun keyLp(weight: Float): LinearLayout.LayoutParams {
-        val m = dp(1.5f).toInt()
-        val h = getKeyRowHeight() - dp(3)
+        val sideGap = (dp(currentLayoutGeometry.horizontalGapDp) / 2f).toInt().coerceAtLeast(1)
+        val h = getKeyRowHeight()
         return LinearLayout.LayoutParams(0, h, weight).apply {
-            leftMargin = m
-            rightMargin = m
+            leftMargin = sideGap
+            rightMargin = sideGap
         }
     }
 
@@ -2581,6 +2604,7 @@ class ClipMaxImeService : InputMethodService() {
         val container = keyboardRowsContainer ?: return
         container.removeAllViews()
         letterKeyViews.clear()
+        refreshKeyboardGeometry()
 
         when (keyboardMode) {
             0 -> renderAlphaRows(container)
@@ -2589,27 +2613,18 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    // 4A. ALPHA (QWERTY)
+    // 4A. ALPHA (QWERTY with embedded long-press 1-0 on top row, matching Gboard 4-row ergonomics)
     private fun renderAlphaRows(parent: LinearLayout) {
-        // Row 0: Dedicated number row (1 2 3 4 5 6 7 8 9 0) unless Search Clips header is occupying top strip
-        if (!isFilterMode) {
-            val row0 = createKeyRow()
-            numRow1.forEach { digit ->
-                row0.addView(createStandardKey(digit), keyLp(1f))
-            }
-            parent.addView(row0)
-        }
-
-        // Row 1: 10 keys (Q W E R T Y U I O P)
-        val row1 = createKeyRow()
-        alphaRow1.forEach { char ->
-            row1.addView(createStandardKey(char), keyLp(1f))
+        // Row 1: 10 dual-function keys (Q1 W2 E3 R4 T5 Y6 U7 I8 O9 P0)
+        val row1 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.TOP_ROW_EMBEDDED_NUMBERS.forEach { (char, digit) ->
+            row1.addView(createAlphaKeyWithHint(char, digit), keyLp(1f))
         }
         parent.addView(row1)
 
         // Row 2: 9 keys (A S D F G H J K L) centered horizontally with 0.5f weight spacers
-        val row2 = createKeyRow()
-        val spacerH = getKeyRowHeight() - dp(3)
+        val row2 = createKeyRow(isBottomRow = false)
+        val spacerH = getKeyRowHeight()
         row2.addView(View(this), LinearLayout.LayoutParams(0, spacerH, 0.5f))
         alphaRow2.forEach { char ->
             row2.addView(createStandardKey(char), keyLp(1f))
@@ -2617,129 +2632,124 @@ class ClipMaxImeService : InputMethodService() {
         row2.addView(View(this), LinearLayout.LayoutParams(0, spacerH, 0.5f))
         parent.addView(row2)
 
-        // Row 3: Shift (1.35f), 7 keys (Z X C V B N M), Backspace (1.35f)
-        val row3 = createKeyRow()
+        // Row 3: Shift (1.5f), 7 keys (Z X C V B N M), Backspace (1.5f) = 10.0f aligned flush
+        val row3 = createKeyRow(isBottomRow = false)
         val shiftBtn = createShiftKey()
         shiftButton = shiftBtn
-        row3.addView(shiftBtn, keyLp(1.35f))
+        row3.addView(shiftBtn, keyLp(1.5f))
         alphaRow3.forEach { char ->
             row3.addView(createStandardKey(char), keyLp(1f))
         }
-        row3.addView(createBackspaceKey(), keyLp(1.35f))
+        row3.addView(createBackspaceKey(), keyLp(1.5f))
         parent.addView(row3)
 
-        // Row 4: ?123 (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
-        val row4 = createKeyRow()
+        // Row 4: ?123 (1.45f), comma (0.9f), Globe (0.9f), Space (4.4f), period (0.9f), Enter (1.45f) = 10.0f
+        val row4 = createKeyRow(isBottomRow = true)
         row4.addView(createModifierKey("?123") {
             keyboardMode = 1
             renderKeyboardRows()
-        }, keyLp(1.35f))
+        }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.85f))
-        row4.addView(createGlobeKey(), keyLp(0.85f))
-        row4.addView(createSpaceKey(), keyLp(4.75f))
-        row4.addView(createStandardKey("."), keyLp(0.85f))
-        row4.addView(createEnterKey(), keyLp(1.35f))
+        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createGlobeKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createStandardKey("."), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
         parent.addView(row4)
     }
 
     // 4B. NUMERIC (?123)
     private fun renderNumericRows(parent: LinearLayout) {
-        // Row 1: 1 2 3 4 5 6 7 8 9 0 (all 10 digits visible without overflow)
-        val row1 = createKeyRow()
+        val row1 = createKeyRow(isBottomRow = false)
         numRow1.forEach { digit ->
             row1.addView(createStandardKey(digit), keyLp(1f))
         }
         parent.addView(row1)
 
-        // Row 2: @ # $ % & - + ( ) / (10 symbols)
-        val row2 = createKeyRow()
+        val row2 = createKeyRow(isBottomRow = false)
         numRow2.forEach { sym ->
             row2.addView(createStandardKey(sym), keyLp(1f))
         }
         parent.addView(row2)
 
-        // Row 3: =\< toggle (1.35f), 7 symbols (* " ' : ; ! ?), Backspace (1.35f)
-        val row3 = createKeyRow()
+        val row3 = createKeyRow(isBottomRow = false)
         row3.addView(createModifierKey("=\\<") {
             keyboardMode = 2
             renderKeyboardRows()
-        }, keyLp(1.35f))
+        }, keyLp(1.5f))
 
         numRow3.forEach { sym ->
             row3.addView(createStandardKey(sym), keyLp(1f))
         }
 
-        row3.addView(createBackspaceKey(), keyLp(1.35f))
+        row3.addView(createBackspaceKey(), keyLp(1.5f))
         parent.addView(row3)
 
-        // Row 4: ABC (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
-        val row4 = createKeyRow()
+        val row4 = createKeyRow(isBottomRow = true)
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
-        }, keyLp(1.35f))
+        }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.85f))
-        row4.addView(createGlobeKey(), keyLp(0.85f))
-        row4.addView(createSpaceKey(), keyLp(4.75f))
-        row4.addView(createStandardKey("."), keyLp(0.85f))
-        row4.addView(createEnterKey(), keyLp(1.35f))
+        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createGlobeKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createStandardKey("."), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
         parent.addView(row4)
     }
 
     // 4C. SECONDARY SYMBOLS (=\<)
     private fun renderSymbolRows(parent: LinearLayout) {
-        // Row 1: ~ ` | • √ π ÷ × § Δ (10 keys)
-        val row1 = createKeyRow()
+        val row1 = createKeyRow(isBottomRow = false)
         symRow1.forEach { sym ->
             row1.addView(createStandardKey(sym), keyLp(1f))
         }
         parent.addView(row1)
 
-        // Row 2: £ € ¥ ¢ ^ ° = { } \ (10 keys)
-        val row2 = createKeyRow()
+        val row2 = createKeyRow(isBottomRow = false)
         symRow2.forEach { sym ->
             row2.addView(createStandardKey(sym), keyLp(1f))
         }
         parent.addView(row2)
 
-        // Row 3: ?123 toggle (1.35f), 8 symbols (< > % © ® ™ [ ]), Backspace (1.35f)
-        val row3 = createKeyRow()
+        val row3 = createKeyRow(isBottomRow = false)
         row3.addView(createModifierKey("?123") {
             keyboardMode = 1
             renderKeyboardRows()
-        }, keyLp(1.35f))
+        }, keyLp(1.5f))
 
         symRow3.forEach { sym ->
             row3.addView(createStandardKey(sym), keyLp(0.875f))
         }
 
-        row3.addView(createBackspaceKey(), keyLp(1.35f))
+        row3.addView(createBackspaceKey(), keyLp(1.5f))
         parent.addView(row3)
 
-        // Row 4: ABC (1.35f), comma (0.85f), Globe (0.85f), Space (4.75f), period (0.85f), Enter (1.35f)
-        val row4 = createKeyRow()
+        val row4 = createKeyRow(isBottomRow = true)
         row4.addView(createModifierKey("ABC") {
             keyboardMode = 0
             renderKeyboardRows()
-        }, keyLp(1.35f))
+        }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.85f))
-        row4.addView(createGlobeKey(), keyLp(0.85f))
-        row4.addView(createSpaceKey(), keyLp(4.75f))
-        row4.addView(createStandardKey("."), keyLp(0.85f))
-        row4.addView(createEnterKey(), keyLp(1.35f))
+        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createGlobeKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createStandardKey("."), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
         parent.addView(row4)
     }
 
     // =========================================================================
     // KEY VIEW BUILDERS, ACTIONS & FEEDBACK
     // =========================================================================
-    private fun createKeyRow(): LinearLayout = LinearLayout(this).apply {
+    private fun createKeyRow(isBottomRow: Boolean = false): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, getKeyRowHeight())
+        val gapPx = if (isBottomRow) 0 else dp(currentLayoutGeometry.interRowGapDp).toInt()
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, getKeyRowHeight()).apply {
+            bottomMargin = gapPx
+        }
     }
 
     private fun showKeyPreview(keyView: View, char: String) {
@@ -2818,46 +2828,110 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    private fun createAlphaKeyWithHint(char: String, hint: String): View = FrameLayout(this).apply {
-        background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
+    private fun attachDualFunctionTouchFeedback(
+        keyView: View,
+        primaryChar: String,
+        longPressChar: String
+    ) {
+        val controller = KeyboardLayoutSpec.LongPressKeyController()
+        val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
+        val longPressTask = Runnable {
+            if (controller.onLongPressTimeout()) {
+                keyView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                showKeyPreview(keyView, longPressChar)
+                handleGenericCharPress(longPressChar)
+            }
+        }
 
-        // Main Letter
+        keyView.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onDown()
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    val displayChar = if (shiftState == 0) {
+                        primaryChar.lowercase(Locale.ROOT)
+                    } else {
+                        primaryChar.uppercase(Locale.ROOT)
+                    }
+                    showKeyPreview(v, displayChar)
+                    main.postDelayed(longPressTask, thresholdMs)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val x = event.x
+                    val y = event.y
+                    val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
+                    if (!inside && controller.onMove(insideBounds = false)) {
+                        main.removeCallbacks(longPressTask)
+                        v.isPressed = false
+                        hideKeyPreview()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    main.removeCallbacks(longPressTask)
+                    v.isPressed = false
+                    hideKeyPreview()
+                    if (controller.onUp()) {
+                        handleLetterPress(primaryChar)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onCancel()
+                    v.isPressed = false
+                    hideKeyPreview()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun createAlphaKeyWithHint(char: String, hint: String): View = FrameLayout(this).apply {
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+
+        // Primary letter (visually dominant, optically padded slightly below top-right digit legend)
         val tv = TextView(this@ClipMaxImeService).apply {
             text = if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT)
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
+            textSize = currentLayoutGeometry.primaryTextSizeSp
+            typeface = Typeface.DEFAULT
             setTextColor(colorKeyText)
             gravity = Gravity.CENTER
+            setPadding(0, dp(2), 0, 0)
         }
         letterKeyViews.add(tv to char)
         addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        // Secondary hint digit in top-right
+        // Discreet superscript number legend pinned top-right (visible in normal and long-press states)
         val hintTv = TextView(this@ClipMaxImeService).apply {
             text = hint
-            textSize = 9f
-            typeface = Typeface.MONOSPACE
+            textSize = currentLayoutGeometry.numberLegendSizeSp
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorHintText)
             gravity = Gravity.TOP or Gravity.END
-            setPadding(0, dp(2), dp(4), 0)
+            setPadding(0, dp(2), dp(5), 0)
         }
         addView(hintTv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        attachKeyTouchFeedback(
+        attachDualFunctionTouchFeedback(
             keyView = this,
-            onCommit = { handleLetterPress(char) },
-            previewChar = { if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT) }
+            primaryChar = char,
+            longPressChar = hint
         )
     }
 
     private fun createStandardKey(char: String): View = FrameLayout(this).apply {
-        background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
 
         val isLetter = char.length == 1 && char[0].isLetter()
         val tv = TextView(this@ClipMaxImeService).apply {
             text = if (isLetter && shiftState == 0) char.lowercase(Locale.ROOT) else char
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
+            textSize = if (isLetter) currentLayoutGeometry.primaryTextSizeSp else (currentLayoutGeometry.primaryTextSizeSp - 2f).coerceAtLeast(15f)
+            typeface = Typeface.DEFAULT
             setTextColor(colorKeyText)
             gravity = Gravity.CENTER
             if (isLetter) letterKeyViews.add(this to char)
@@ -2884,11 +2958,11 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun createModifierKey(title: String, onClick: () -> Unit): View = FrameLayout(this).apply {
-        background = roundedRipple(colorModBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = title
-            textSize = 12f
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorModText)
             gravity = Gravity.CENTER
@@ -2905,7 +2979,7 @@ class ClipMaxImeService : InputMethodService() {
             else -> Triple(colorModBg, colorModText, IconType.SHIFT)
         }
         val strokeCol = if (shiftState == 1) colorAccent else colorKeyBorder
-        background = roundedRipple(bgCol, dp(6f), strokeCol)
+        background = roundedRipple(bgCol, keyCornerRadiusPx(), strokeCol)
 
         val iv = createIconView(IconDrawable(iconType, fgCol, 18f))
         shiftImageView = iv
@@ -2915,7 +2989,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun createBackspaceKey(): View = FrameLayout(this).apply {
-        background = roundedRipple(colorModBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
 
         val iv = createIconView(IconDrawable(IconType.BACKSPACE, colorModText, 18f))
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -2924,7 +2998,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun createGlobeKey(): View = FrameLayout(this).apply {
-        background = roundedRipple(colorModBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
         contentDescription = "Switch input method"
 
         val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 16f))
@@ -2934,11 +3008,11 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun createSpaceKey(): View = FrameLayout(this).apply {
-        background = roundedRipple(colorKeyBg, dp(6f), colorKeyBorder)
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = "English"
-            textSize = 12.5f
+            textSize = 13f
             setTextColor(colorKeyText)
             gravity = Gravity.CENTER
         }
@@ -2950,7 +3024,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun createEnterKey(): View = FrameLayout(this).apply {
         val bgCol = if (isClassicTheme) colorAccent else colorKeyBg
         val fgCol = if (isClassicTheme) colorAccentText else colorKeyText
-        background = roundedRipple(bgCol, dp(6f), colorKeyBorder)
+        background = roundedRipple(bgCol, keyCornerRadiusPx(), colorKeyBorder)
 
         val iv = createIconView(IconDrawable(IconType.ENTER, fgCol, 18f))
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -2972,12 +3046,14 @@ class ClipMaxImeService : InputMethodService() {
             if (conn != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 lastRevertOriginalWord = null
+                manualShiftOverride = false
                 conn.commitText(letter, 1)
                 updateInsertionHistoryButtons()
                 refreshTypingSuggestionsAsync()
             }
         }
-        if (shiftState == 1) { // 1-shot shifted -> auto revert to lowercase
+        if (shiftState == 1 && autoCapMode != AutoCapitalizationPolicy.CapMode.CHARACTERS) {
+            // 1-shot shifted -> return to normal lowercase typing after first letter
             shiftState = 0
             updateShiftUI()
         }
@@ -2990,9 +3066,11 @@ class ClipMaxImeService : InputMethodService() {
             runKeyboardSearch()
         } else {
             val conn = currentInputConnection ?: return
+            manualShiftOverride = false
             if (isWordBoundaryDelimiter(char)) {
                 commitWordBoundaryWithIntelligence(conn, char)
             } else {
+                val beforeBefore = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 lastRevertOriginalWord = null
                 conn.commitText(char, 1)
@@ -3002,6 +3080,10 @@ class ClipMaxImeService : InputMethodService() {
                 } else {
                     clearTypingSuggestionsView()
                 }
+                syncAutoCapitalization(
+                    preserveManualShift = false,
+                    predictedBeforeText = beforeBefore?.plus(char)
+                )
             }
         }
     }
@@ -3013,6 +3095,7 @@ class ClipMaxImeService : InputMethodService() {
             runKeyboardSearch()
         } else {
             val conn = currentInputConnection ?: return
+            manualShiftOverride = false
             commitWordBoundaryWithIntelligence(conn, " ")
         }
     }
@@ -3026,6 +3109,7 @@ class ClipMaxImeService : InputMethodService() {
             }
         } else {
             val conn = currentInputConnection ?: return
+            manualShiftOverride = false
             val gateway = buildEditorGateway(conn)
             if (gateway != null && !isPasswordTarget) {
                 val reverted = insertionHistory.tryImmediateBackspaceRevertAutocorrect(gateway)
@@ -3036,20 +3120,28 @@ class ClipMaxImeService : InputMethodService() {
                     lastRevertOriginalWord = null
                     updateInsertionHistoryButtons()
                     refreshTypingSuggestionsAsync()
+                    syncAutoCapitalization(preserveManualShift = false)
                     return
                 }
             }
 
             insertionHistory.invalidateImmediateBackspaceRevert()
             lastRevertOriginalWord = null
-            val selected = conn.getSelectedText(0)
-            if (!selected.isNullOrEmpty()) {
-                conn.commitText("", 1)
-            } else {
+            val selected = runCatching { conn.getSelectedText(0) }.getOrNull()
+            val predictedAfterDelete = if (selected.isNullOrEmpty()) {
+                val preDelete = runCatching { conn.getTextBeforeCursor(50, 0)?.toString() }.getOrNull()
                 conn.deleteSurroundingText(1, 0)
+                preDelete?.dropLast(1)
+            } else {
+                conn.commitText("", 1)
+                null
             }
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
+            syncAutoCapitalization(
+                preserveManualShift = false,
+                predictedBeforeText = predictedAfterDelete
+            )
         }
     }
 
@@ -3061,12 +3153,14 @@ class ClipMaxImeService : InputMethodService() {
             renderFullImeView()
         } else {
             val conn = currentInputConnection ?: return
+            manualShiftOverride = false
             val info = currentInputEditorInfo
             val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
             if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 clearTypingSuggestionsView()
                 conn.performEditorAction(action)
+                syncAutoCapitalization(preserveManualShift = false)
             } else {
                 commitWordBoundaryWithIntelligence(conn, "\n")
             }
@@ -3080,6 +3174,7 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             shiftState = if (shiftState == 0) 1 else 0 // Single tap -> Toggle Shifted
         }
+        manualShiftOverride = true
         lastShiftTapTime = now
         updateShiftUI()
     }
@@ -3095,7 +3190,7 @@ class ClipMaxImeService : InputMethodService() {
             else -> Triple(colorModBg, colorModText, IconType.SHIFT)
         }
         val strokeCol = if (shiftState == 1) colorAccent else colorKeyBorder
-        btn.background = roundedRipple(bgCol, dp(6f), strokeCol)
+        btn.background = roundedRipple(bgCol, keyCornerRadiusPx(), strokeCol)
         shiftImageView?.setImageDrawable(IconDrawable(iconType, fgCol, 18f))
     }
 
@@ -3283,6 +3378,10 @@ class ClipMaxImeService : InputMethodService() {
                             clearTypingSuggestionsView()
                             updateInsertionHistoryButtons()
                         }
+                        if (complete) {
+                            manualShiftOverride = false
+                            syncAutoCapitalization(preserveManualShift = false)
+                        }
                         setStatus(if (complete) "Inserted ${insertedCodePoints.grouped()} chars." else "Insertion paused.")
                     }
                 }
@@ -3381,6 +3480,9 @@ class ClipMaxImeService : InputMethodService() {
         isInserting = false
         fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
+        autoCapMode = AutoCapitalizationPolicy.resolveCapMode(attribute.inputType, isFilterMode)
+        manualShiftOverride = false
+        shiftState = 0
         currentEditorTarget = InsertionHistoryManager.EditorTarget(
             packageName = attribute.packageName,
             fieldId = attribute.fieldId,
@@ -3412,14 +3514,20 @@ class ClipMaxImeService : InputMethodService() {
         renderClipChips()
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
+        syncAutoCapitalization(preserveManualShift = false)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         inputViewActive = true
+        autoCapMode = AutoCapitalizationPolicy.resolveCapMode(info.inputType, isFilterMode)
+        if (!restarting) {
+            manualShiftOverride = false
+        }
         toolbarStateACenterMode = 0
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
+        syncAutoCapitalization(preserveManualShift = manualShiftOverride)
         updateCaptureMonitoring()
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
             capturePrimaryClip(CaptureSource.CLIPBOARD_POLL)
@@ -3441,11 +3549,13 @@ class ClipMaxImeService : InputMethodService() {
         updateInsertionHistoryButtons()
         if (newSelStart != newSelEnd) {
             clearTypingSuggestionsView()
+            syncAutoCapitalization(preserveManualShift = false)
             return
         }
-        // Only clear/resync if cursor jumped outside expected typing flow
+        // If cursor jumped outside 1-char typing flow, clear manual shift override & re-sync context
         val delta = kotlin.math.abs(newSelStart - oldSelStart)
         if (delta > 1) {
+            manualShiftOverride = false
             insertionHistory.invalidateImmediateBackspaceRevert()
             lastRevertOriginalWord = null
             if (!isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled) {
@@ -3453,6 +3563,9 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 clearTypingSuggestionsView()
             }
+            syncAutoCapitalization(preserveManualShift = false)
+        } else {
+            syncAutoCapitalization(preserveManualShift = true)
         }
     }
 
@@ -3657,7 +3770,9 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             clearTypingSuggestionsView()
         }
+        manualShiftOverride = false
         updateInsertionHistoryButtons()
+        syncAutoCapitalization(preserveManualShift = false)
         setStatus(result.message)
     }
 
@@ -3670,7 +3785,9 @@ class ClipMaxImeService : InputMethodService() {
         }
         val result = insertionHistory.redo(gateway)
         clearTypingSuggestionsView()
+        manualShiftOverride = false
         updateInsertionHistoryButtons()
+        syncAutoCapitalization(preserveManualShift = false)
         setStatus(result.message)
     }
 
@@ -3850,14 +3967,81 @@ class ClipMaxImeService : InputMethodService() {
         return ch == " " || ch == "." || ch == "," || ch == "!" || ch == "?" || ch == ";" || ch == ":"
     }
 
+    private fun syncAutoCapitalization(
+        preserveManualShift: Boolean = false,
+        predictedBeforeText: String? = null
+    ) {
+        if (isFilterMode) {
+            autoCapMode = AutoCapitalizationPolicy.CapMode.NONE
+            if (shiftState == 1 && !preserveManualShift) {
+                shiftState = 0
+                updateShiftUI()
+            }
+            return
+        }
+        val info = currentInputEditorInfo
+        val resolved = if (info != null) {
+            AutoCapitalizationPolicy.resolveCapMode(info.inputType, isFilterMode = false)
+        } else {
+            AutoCapitalizationPolicy.CapMode.NONE
+        }
+        autoCapMode = resolved
+
+        if (shiftState == 2) {
+            if (resolved == AutoCapitalizationPolicy.CapMode.NONE) {
+                shiftState = 0
+                updateShiftUI()
+            }
+            return
+        }
+
+        if (preserveManualShift && manualShiftOverride) {
+            return
+        }
+
+        if (resolved == AutoCapitalizationPolicy.CapMode.NONE) {
+            if (shiftState != 0) {
+                shiftState = 0
+                updateShiftUI()
+            }
+            return
+        }
+
+        val conn = currentInputConnection
+        val before = predictedBeforeText ?: runCatching { conn?.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
+        val after = runCatching { conn?.getTextAfterCursor(16, 0)?.toString() }.getOrNull()
+        val hasSel = !runCatching { conn?.getSelectedText(0) }.getOrNull().isNullOrEmpty()
+        val androidCaps = if (info != null && conn != null) {
+            runCatching { conn.getCursorCapsMode(info.inputType) }.getOrDefault(0)
+        } else 0
+
+        val wantShift = AutoCapitalizationPolicy.shouldAutoShift(
+            capMode = resolved,
+            textBeforeCursor = before,
+            textAfterCursor = after,
+            hasSelection = hasSel,
+            androidCursorCapsMode = androidCaps
+        )
+        val nextState = if (wantShift) 1 else 0
+        if (shiftState != nextState) {
+            shiftState = nextState
+            updateShiftUI()
+        }
+    }
+
     private fun commitWordBoundaryWithIntelligence(conn: InputConnection, delimiter: String) {
         suggestionGeneration.incrementAndGet()
+        val beforeFallback = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
         if (isPasswordTarget || !isAutoCorrectEnabled || !fieldCapabilities.allowAutocorrect) {
             lastRevertOriginalWord = null
             insertionHistory.invalidateImmediateBackspaceRevert()
             conn.commitText(delimiter, 1)
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
+            syncAutoCapitalization(
+                preserveManualShift = false,
+                predictedBeforeText = beforeFallback?.plus(delimiter)
+            )
             return
         }
 
@@ -3869,6 +4053,10 @@ class ClipMaxImeService : InputMethodService() {
             conn.commitText(delimiter, 1)
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
+            syncAutoCapitalization(
+                preserveManualShift = false,
+                predictedBeforeText = beforeFallback?.plus(delimiter)
+            )
             return
         }
 
@@ -3913,6 +4101,10 @@ class ClipMaxImeService : InputMethodService() {
                     updateToolbarCenterVisibility()
                 }
                 updateInsertionHistoryButtons()
+                syncAutoCapitalization(
+                    preserveManualShift = false,
+                    predictedBeforeText = ctx.beforeAnchor + correction + delimiter
+                )
                 return
             }
         }
@@ -3922,6 +4114,10 @@ class ClipMaxImeService : InputMethodService() {
         conn.commitText(delimiter, 1)
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
+        syncAutoCapitalization(
+            preserveManualShift = false,
+            predictedBeforeText = ctx.beforeAnchor + ctx.composingWord + delimiter
+        )
     }
 
     private fun renderSuggestionStrip() {
@@ -4032,8 +4228,10 @@ class ClipMaxImeService : InputMethodService() {
         if (after.isEmpty() || !after[0].isWhitespace()) {
             conn.commitText(" ", 1)
         }
+        manualShiftOverride = false
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
+        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = ctx.beforeAnchor + word + " ")
     }
 
     private fun applyManualSuggestion(chosenWord: String) {
@@ -4051,6 +4249,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         if (committed) {
             lastRevertOriginalWord = null
+            manualShiftOverride = false
             insertionHistory.invalidateImmediateBackspaceRevert()
             updateInsertionHistoryButtons()
             currentWordAnalysis = null
@@ -4065,18 +4264,25 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 showClipboardPillsInToolbar()
             }
+            syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = ctx.beforeAnchor + chosenWord + trailingSpace)
         }
     }
 
     private fun insertNextWordSuggestion(nextWord: String) {
         val conn = currentInputConnection ?: return
+        val beforeFallback = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
         val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
         val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
         conn.commitText(nextWord + trailingSpace, 1)
         lastRevertOriginalWord = null
+        manualShiftOverride = false
         insertionHistory.invalidateImmediateBackspaceRevert()
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
+        syncAutoCapitalization(
+            preserveManualShift = false,
+            predictedBeforeText = beforeFallback?.plus(nextWord + trailingSpace)
+        )
     }
 
     private fun isSensitiveField(inputType: Int): Boolean {
