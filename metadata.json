@@ -1,0 +1,6 @@
+{
+  "name": "ClipMax Native Android Redesign",
+  "description": "Experimental native Android redesign of ClipMax featuring a restrained charcoal, grey and muted mint-green palette, local persistent storage, 50,000 UTF-16 chunking, .txt and ZIP backup support, and IME keyboard integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
