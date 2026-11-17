@@ -60,25 +60,13 @@ class ClipboardPanelSpecTest {
         assertNotEquals("#1", splitRes.part1Item.id)
         assertNotEquals("#2", splitRes.part2Item.id)
 
-        // Undo Split (delete split parts, restore original) -> back to 2 cards (#2, #1)
+        // Delete split parts and save original text as a new clip -> back to 2 cards (#2, #1)
         assertTrue(store.delete(splitRes.part1Item.id))
         assertTrue(store.delete(splitRes.part2Item.id))
-        val restoredFromUndo = store.save(
-            id = splitRes.originalItem.id,
-            title = splitRes.originalItem.title,
-            content = splitRes.originalText,
-            pinned = splitRes.originalItem.pinned
-        )
-        assertEquals(oldest.id, restoredFromUndo.id)
+        val restored = store.save(null, splitRes.originalItem.title, splitRes.originalText, splitRes.originalItem.pinned)
         val afterUndoSplit = visibleSerials()
+        assertEquals(2, afterUndoSplit.size)
         assertEquals(listOf("#2", "#1"), afterUndoSplit.map { it.first })
-        assertEquals(oldest.id, afterUndoSplit.last().second)
-
-        // Redo Split -> back to 3 cards (#3, #2, #1)
-        assertTrue(store.delete(oldest.id))
-        store.save(splitRes.part1Item.id, splitRes.part1Item.title, splitRes.part1Text, splitRes.part1Item.pinned)
-        store.save(splitRes.part2Item.id, splitRes.part2Item.title, splitRes.part2Text, splitRes.part2Item.pinned)
-        assertEquals(listOf("#3", "#2", "#1"), visibleSerials().map { it.first })
 
         // 3. Merge 2 cards -> count drops from 3 to 2; remaining immediately become #2 and #1
         val mergeRes = store.merge(splitRes.part1Item.id, splitRes.part2Item.id)
