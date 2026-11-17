@@ -101,7 +101,15 @@ class ClipMaxImeService : InputMethodService() {
     private var imeRootFrame: FrameLayout? = null
     private var imeSurfaceFrame: FrameLayout? = null
     private var contentContainer: LinearLayout? = null
+    private var clipboardPanelRoot: LinearLayout? = null
     private var clipboardScrollView: android.widget.ScrollView? = null
+    private var clipboardCardsContainer: LinearLayout? = null
+    private var clipboardHeaderCountTv: TextView? = null
+    private var clipboardMergeBanner: TextView? = null
+    private var clipboardSavedScrollY: Int = 0
+
+    private var settingsScrollView: android.widget.ScrollView? = null
+    private var settingsSavedScrollY: Int = 0
     private var chipsContainer: LinearLayout? = null
     private var toolbarChipsScroll: HorizontalScrollView? = null
     private var suggestionScrollView: HorizontalScrollView? = null
@@ -421,6 +429,7 @@ class ClipMaxImeService : InputMethodService() {
                         host.getGlobalVisibleRect(rect)
                         if (!rect.contains(ev.rawX.toInt(), ev.rawY.toInt())) {
                             dismissUndoRedoControl()
+                            return true // Consume outside tap so underlying card action is not triggered
                         }
                     }
                 }
@@ -477,12 +486,27 @@ class ClipMaxImeService : InputMethodService() {
         return root
     }
 
+    private fun applyOneHandedPadding() {
+        val content = contentContainer ?: return
+        val oneHanded = themePreferences.getString("one_handed_mode", "off") ?: "off"
+        val (padLeft, padRight) = when (oneHanded) {
+            "left" -> 0 to dp(54)
+            "right" -> dp(54) to 0
+            else -> 0 to 0
+        }
+        content.setPadding(padLeft, 0, padRight, 0)
+    }
+
     private fun renderFullImeView() {
         val content = contentContainer ?: return
         dismissContextMenu(animate = false)
-        dismissUndoRedoControl()
         pendingRenderAfterContextMenu = false
+        clipboardPanelRoot = null
         clipboardScrollView = null
+        clipboardCardsContainer = null
+        clipboardHeaderCountTv = null
+        clipboardMergeBanner = null
+        settingsScrollView = null
         imeRootFrame?.setBackgroundColor(colorBg)
         content.removeAllViews()
         content.setBackgroundColor(colorBg)
@@ -505,13 +529,7 @@ class ClipMaxImeService : InputMethodService() {
         stateBRedoText = null
 
         // Apply One-Handed Mode padding
-        val oneHanded = themePreferences.getString("one_handed_mode", "off") ?: "off"
-        val (padLeft, padRight) = when (oneHanded) {
-            "left" -> 0 to dp(54)
-            "right" -> dp(54) to 0
-            else -> 0 to 0
-        }
-        content.setPadding(padLeft, 0, padRight, 0)
+        applyOneHandedPadding()
 
         // 1. ClipMax Compact Toolbar
         content.addView(buildToolbar())
@@ -571,6 +589,9 @@ class ClipMaxImeService : InputMethodService() {
             }
             renderClipChips()
         }
+
+        // Preserve any active Split/Merge floating Undo/Redo overlay above rebuilt content
+        undoRedoHost?.bringToFront()
     }
 
     // =========================================================================
@@ -693,7 +714,9 @@ class ClipMaxImeService : InputMethodService() {
                     pinnedOnly = false
                     isFilterMode = false
                     isSettingsOpen = false
+                    settingsSavedScrollY = 0
                     isClipboardPanelOpen = !isClipboardPanelOpen
+                    clipboardSavedScrollY = 0
                     renderFullImeView()
                 }
             }
@@ -779,6 +802,8 @@ class ClipMaxImeService : InputMethodService() {
                 toolbarState = 0
                 isSettingsOpen = false
                 isClipboardPanelOpen = false
+                clipboardSavedScrollY = 0
+                settingsSavedScrollY = 0
                 isFilterMode = false
                 pinnedOnly = false
                 keyboardSearchQuery = ""
@@ -884,10 +909,13 @@ class ClipMaxImeService : InputMethodService() {
             if (isClipboardPanelOpen && pinnedOnly) {
                 pinnedOnly = false
                 isClipboardPanelOpen = false
+                clipboardSavedScrollY = 0
             } else {
                 pinnedOnly = true
                 isClipboardPanelOpen = true
+                clipboardSavedScrollY = 0
                 isSettingsOpen = false
+                settingsSavedScrollY = 0
                 isFilterMode = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = emptyList()
@@ -910,7 +938,9 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 isFilterMode = true
                 isClipboardPanelOpen = false
+                clipboardSavedScrollY = 0
                 isSettingsOpen = false
+                settingsSavedScrollY = 0
                 pinnedOnly = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = items
@@ -928,7 +958,9 @@ class ClipMaxImeService : InputMethodService() {
             if (isSettingsOpen) colorActiveTabBg else 0
         ) {
             isSettingsOpen = !isSettingsOpen
+            settingsSavedScrollY = 0
             isClipboardPanelOpen = false
+            clipboardSavedScrollY = 0
             isFilterMode = false
             pinnedOnly = false
             renderFullImeView()
@@ -1003,6 +1035,7 @@ class ClipMaxImeService : InputMethodService() {
                 setIcon(IconDrawable(IconType.CLOSE, colorModText, 10f), 3.5f)
                 setOnClickListener {
                     isSettingsOpen = false
+                    settingsSavedScrollY = 0
                     renderFullImeView()
                 }
             }
@@ -1020,7 +1053,11 @@ class ClipMaxImeService : InputMethodService() {
         val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             isVerticalScrollBarEnabled = true
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                settingsSavedScrollY = scrollY
+            }
         }
+        settingsScrollView = scroll
 
         val list = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.VERTICAL
@@ -1105,8 +1142,15 @@ class ClipMaxImeService : InputMethodService() {
 
             val currentHeight = themePreferences.getString("keyboard_height", "normal") ?: "normal"
             val heights = listOf("compact" to "Compact", "normal" to "Normal", "tall" to "Tall")
+            val heightButtons = mutableListOf<Pair<String, Button>>()
+            fun styleHeightButtons(selectedKey: String) {
+                heightButtons.forEach { (k, b) ->
+                    val active = (k == selectedKey)
+                    b.setTextColor(if (active) colorAccentText else colorModText)
+                    b.background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                }
+            }
             heights.forEachIndexed { idx, (key, title) ->
-                val active = (currentHeight == key)
                 val btn = Button(this@ClipMaxImeService).apply {
                     text = title
                     textSize = 10f
@@ -1116,17 +1160,17 @@ class ClipMaxImeService : InputMethodService() {
                     minWidth = 0
                     minimumWidth = 0
                     setPadding(dp(9), 0, dp(9), 0)
-                    setTextColor(if (active) colorAccentText else colorModText)
-                    background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
                     setOnClickListener {
                         themePreferences.edit().putString("keyboard_height", key).apply()
-                        renderFullImeView()
+                        styleHeightButtons(key)
                     }
                 }
+                heightButtons.add(key to btn)
                 addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                     if (idx < heights.size - 1) rightMargin = dp(4)
                 })
             }
+            styleHeightButtons(currentHeight)
         }
         list.addView(resizeRow)
 
@@ -1154,8 +1198,15 @@ class ClipMaxImeService : InputMethodService() {
 
             val currentMode = themePreferences.getString("one_handed_mode", "off") ?: "off"
             val modes = listOf("left" to "Left", "off" to "Off", "right" to "Right")
+            val modeButtons = mutableListOf<Pair<String, Button>>()
+            fun styleModeButtons(selectedKey: String) {
+                modeButtons.forEach { (k, b) ->
+                    val active = (k == selectedKey)
+                    b.setTextColor(if (active) colorAccentText else colorModText)
+                    b.background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
+                }
+            }
             modes.forEachIndexed { idx, (key, title) ->
-                val active = (currentMode == key)
                 val btn = Button(this@ClipMaxImeService).apply {
                     text = title
                     textSize = 10f
@@ -1165,17 +1216,18 @@ class ClipMaxImeService : InputMethodService() {
                     minWidth = 0
                     minimumWidth = 0
                     setPadding(dp(10), 0, dp(10), 0)
-                    setTextColor(if (active) colorAccentText else colorModText)
-                    background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
                     setOnClickListener {
                         themePreferences.edit().putString("one_handed_mode", key).apply()
-                        renderFullImeView()
+                        styleModeButtons(key)
+                        applyOneHandedPadding()
                     }
                 }
+                modeButtons.add(key to btn)
                 addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                     if (idx < modes.size - 1) rightMargin = dp(4)
                 })
             }
+            styleModeButtons(currentMode)
         }
         list.addView(oneHandedRow)
 
@@ -1260,9 +1312,20 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-                val enabled = themePreferences.getBoolean(prefKey, defaultVal)
+                val optionButtons = mutableListOf<Pair<Boolean, Button>>()
+                fun styleOptionButtons(selectedVal: Boolean) {
+                    optionButtons.forEach { (btnVal, btn) ->
+                        val active = (selectedVal == btnVal)
+                        btn.setTextColor(if (active) colorAccentText else colorModText)
+                        btn.background = roundedRipple(
+                            if (active) colorAccent else colorKeyBg,
+                            dp(6f),
+                            if (active) colorAccent else colorKeyBorder
+                        )
+                    }
+                }
+
                 listOf(true to "On", false to "Off").forEachIndexed { idx, (value, title) ->
-                    val active = (enabled == value)
                     val btn = Button(this@ClipMaxImeService).apply {
                         text = title
                         textSize = 10f
@@ -1272,18 +1335,18 @@ class ClipMaxImeService : InputMethodService() {
                         minWidth = 0
                         minimumWidth = 0
                         setPadding(dp(11), 0, dp(11), 0)
-                        setTextColor(if (active) colorAccentText else colorModText)
-                        background = roundedRipple(if (active) colorAccent else colorKeyBg, dp(6f), if (active) colorAccent else colorKeyBorder)
                         setOnClickListener {
                             themePreferences.edit().putBoolean(prefKey, value).apply()
                             onTypingSettingsChanged()
-                            renderFullImeView()
+                            styleOptionButtons(value)
                         }
                     }
+                    optionButtons.add(value to btn)
                     addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
                         if (idx == 0) rightMargin = dp(4)
                     })
                 }
+                styleOptionButtons(themePreferences.getBoolean(prefKey, defaultVal))
             }
             list.addView(row)
         }
@@ -1294,6 +1357,11 @@ class ClipMaxImeService : InputMethodService() {
 
         scroll.addView(list)
         addView(scroll)
+
+        val restoreY = settingsSavedScrollY
+        if (restoreY > 0) {
+            scroll.post { scroll.scrollTo(0, restoreY) }
+        }
     }
 
     private fun buildSearchInterface(): View = LinearLayout(this).apply {
@@ -1472,105 +1540,19 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     // 1B. EXPANDABLE SAVED-CLIPBOARD PANEL
     // =========================================================================
-    private fun buildClipboardPanel(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setBackgroundColor(colorBg)
-        val screenH = resources.displayMetrics.heightPixels
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val targetHeight = if (isLandscape) {
-            dp(170)
-        } else {
-            minOf(dp(276), (screenH * 0.38f).toInt()).coerceAtLeast(dp(236))
-        }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, targetHeight)
-
+    private fun getVisibleClipboardItems(): List<ClipItem> {
         val base = if (keyboardSearchQuery.isNotEmpty()) keyboardSearchResults else items
-        val visible = if (pinnedOnly) base.filter { it.pinned } else base
+        return if (pinnedOnly) base.filter { it.pinned } else base
+    }
 
-        // Panel Header Bar (34dp)
-        val subHeader = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(3), dp(8), dp(3))
-            setBackgroundColor(if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFE9EFEA.toInt()) else 0xFF161619.toInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+    private fun clipboardHeaderLabel(visibleCount: Int): String = when {
+        keyboardSearchQuery.isNotEmpty() -> "Matches ($visibleCount)"
+        pinnedOnly -> "Pinned Clips ($visibleCount)"
+        else -> "Saved Clips ($visibleCount)"
+    }
 
-            val headerIcon = createIconView(IconDrawable(IconType.CLIPBOARD, colorAccent, 13f)).apply {
-                setPadding(0, 0, dp(6), 0)
-            }
-            addView(headerIcon)
-
-            val countTv = TextView(this@ClipMaxImeService).apply {
-                text = when {
-                    keyboardSearchQuery.isNotEmpty() -> "Matches (${visible.size})"
-                    pinnedOnly -> "Pinned Clips (${visible.size})"
-                    else -> "Saved Clips (${visible.size})"
-                }
-                textSize = 11.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorKeyText)
-            }
-            addView(countTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-            val backToKbBtn = Button(this@ClipMaxImeService).apply {
-                text = "Keyboard"
-                isAllCaps = false
-                textSize = 10f
-                typeface = Typeface.DEFAULT_BOLD
-                minHeight = 0
-                minimumHeight = 0
-                minWidth = 0
-                minimumWidth = 0
-                setPadding(dp(8), 0, dp(8), 0)
-                setTextColor(colorActiveTabText)
-                background = roundedRipple(colorActiveTabBg, dp(6f), colorAccent)
-                setIcon(IconDrawable(IconType.KEYBOARD, colorActiveTabText, 11f), 4f)
-                setOnClickListener {
-                    isClipboardPanelOpen = false
-                    pinnedOnly = false
-                    renderFullImeView()
-                }
-            }
-            addView(backToKbBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
-        }
-        addView(subHeader)
-
-        val headerDivider = View(this@ClipMaxImeService).apply {
-            setBackgroundColor(colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-        }
-        addView(headerDivider)
-
-        if (isMergeMode) {
-            val mergeBanner = TextView(this@ClipMaxImeService).apply {
-                text = "Merge Mode: Tap another card to merge. Tap source card to cancel."
-                textSize = 10f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorAccentText)
-                setBackgroundColor(colorAccent)
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-                setOnClickListener {
-                    isMergeMode = false
-                    mergeSourceId = null
-                    setStatus("Merge cancelled.")
-                    reloadItems()
-                }
-            }
-            addView(mergeBanner)
-        }
-
-        // Scrollable cards list
-        val scrollView = android.widget.ScrollView(this@ClipMaxImeService).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            isVerticalScrollBarEnabled = true
-        }
-        clipboardScrollView = scrollView
-
-        val cardsList = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(8))
-        }
-
+    private fun populateClipboardCards(cardsList: LinearLayout, visible: List<ClipItem>) {
+        cardsList.removeAllViews()
         if (isPasswordTarget) {
             cardsList.addView(TextView(this@ClipMaxImeService).apply {
                 text = "Password field active: Saved clips withheld for privacy"
@@ -1630,9 +1612,135 @@ class ClipMaxImeService : InputMethodService() {
                 i += 2
             }
         }
+    }
+
+    private fun refreshClipboardPanelInPlace() {
+        val cardsList = clipboardCardsContainer
+        val scroll = clipboardScrollView
+        if (!isClipboardPanelOpen || cardsList == null || scroll == null) {
+            return
+        }
+        val visible = getVisibleClipboardItems()
+        val preservedScrollY = scroll.scrollY
+        clipboardSavedScrollY = preservedScrollY
+        clipboardHeaderCountTv?.text = clipboardHeaderLabel(visible.size)
+        clipboardMergeBanner?.visibility = if (isMergeMode) View.VISIBLE else View.GONE
+        populateClipboardCards(cardsList, visible)
+        scroll.post {
+            if (clipboardScrollView === scroll) {
+                scroll.scrollTo(0, preservedScrollY)
+            }
+        }
+    }
+
+    private fun buildClipboardPanel(): View = LinearLayout(this).apply {
+        clipboardPanelRoot = this
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(colorBg)
+        val screenH = resources.displayMetrics.heightPixels
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val targetHeight = if (isLandscape) {
+            dp(170)
+        } else {
+            minOf(dp(276), (screenH * 0.38f).toInt()).coerceAtLeast(dp(236))
+        }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, targetHeight)
+
+        val visible = getVisibleClipboardItems()
+
+        // Panel Header Bar (34dp)
+        val subHeader = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(3), dp(8), dp(3))
+            setBackgroundColor(if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFE9EFEA.toInt()) else 0xFF161619.toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+
+            val headerIcon = createIconView(IconDrawable(IconType.CLIPBOARD, colorAccent, 13f)).apply {
+                setPadding(0, 0, dp(6), 0)
+            }
+            addView(headerIcon)
+
+            val countTv = TextView(this@ClipMaxImeService).apply {
+                text = clipboardHeaderLabel(visible.size)
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }
+            clipboardHeaderCountTv = countTv
+            addView(countTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val backToKbBtn = Button(this@ClipMaxImeService).apply {
+                text = "Keyboard"
+                isAllCaps = false
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(dp(8), 0, dp(8), 0)
+                setTextColor(colorActiveTabText)
+                background = roundedRipple(colorActiveTabBg, dp(6f), colorAccent)
+                setIcon(IconDrawable(IconType.KEYBOARD, colorActiveTabText, 11f), 4f)
+                setOnClickListener {
+                    isClipboardPanelOpen = false
+                    clipboardSavedScrollY = 0
+                    pinnedOnly = false
+                    renderFullImeView()
+                }
+            }
+            addView(backToKbBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        }
+        addView(subHeader)
+
+        val headerDivider = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }
+        addView(headerDivider)
+
+        val mergeBanner = TextView(this@ClipMaxImeService).apply {
+            text = "Merge Mode: Drag source card onto target card or tap another card to merge."
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorAccentText)
+            setBackgroundColor(colorAccent)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            visibility = if (isMergeMode) View.VISIBLE else View.GONE
+            setOnClickListener {
+                exitMergeMode(refresh = true)
+                setStatus("Merge cancelled.")
+            }
+        }
+        clipboardMergeBanner = mergeBanner
+        addView(mergeBanner)
+
+        // Scrollable cards list
+        val scrollView = android.widget.ScrollView(this@ClipMaxImeService).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            isVerticalScrollBarEnabled = true
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                clipboardSavedScrollY = scrollY
+            }
+        }
+        clipboardScrollView = scrollView
+
+        val cardsList = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(8))
+        }
+        clipboardCardsContainer = cardsList
+
+        populateClipboardCards(cardsList, visible)
 
         scrollView.addView(cardsList)
         addView(scrollView)
+
+        val restoreY = clipboardSavedScrollY
+        if (restoreY > 0) {
+            scrollView.post { scrollView.scrollTo(0, restoreY) }
+        }
     }
 
     private var undoBtnRef: Button? = null
@@ -1643,6 +1751,7 @@ class ClipMaxImeService : InputMethodService() {
         undoRedoHost = null
         undoBtnRef = null
         redoBtnRef = null
+        host.animate().cancel()
         host.animate()
             .alpha(0f)
             .scaleX(0.9f)
@@ -1675,15 +1784,27 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun showUndoRedoControl() {
-        dismissUndoRedoControl()
         val surface = imeSurfaceFrame ?: return
         val hasUndo = undoStack.isNotEmpty()
         val hasRedo = redoStack.isNotEmpty()
         if (!hasUndo && !hasRedo) return
 
+        val existing = undoRedoHost
+        if (existing != null && existing.parent === surface) {
+            existing.animate().cancel()
+            existing.alpha = 1f
+            existing.scaleX = 1f
+            existing.scaleY = 1f
+            existing.visibility = View.VISIBLE
+            updateUndoRedoControl()
+            existing.bringToFront()
+            return
+        }
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
             background = roundedDrawable(colorKeyBg, dp(16f), colorAccent)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                 elevation = dp(10f)
@@ -1764,11 +1885,17 @@ class ClipMaxImeService : InputMethodService() {
         container.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
     }
 
-    private fun exitMergeMode() {
-        if (isMergeMode) {
+    private fun exitMergeMode(refresh: Boolean = true) {
+        if (isMergeMode || mergeSourceId != null) {
             isMergeMode = false
             mergeSourceId = null
-            reloadItems()
+            if (refresh) {
+                if (isClipboardPanelOpen && clipboardCardsContainer != null) {
+                    refreshClipboardPanelInPlace()
+                } else {
+                    reloadItems()
+                }
+            }
         }
     }
 
@@ -1777,7 +1904,8 @@ class ClipMaxImeService : InputMethodService() {
             setStatus("Cannot merge a card with itself.")
             return
         }
-        exitMergeMode()
+        isMergeMode = false
+        mergeSourceId = null
         io.execute {
             try {
                 val mergeRes = store.merge(sourceId, targetId)
@@ -1804,6 +1932,9 @@ class ClipMaxImeService : InputMethodService() {
             } catch (e: Exception) {
                 main.post {
                     setStatus("Merge failed: ${e.message}")
+                    if (isClipboardPanelOpen && clipboardCardsContainer != null) {
+                        refreshClipboardPanelInPlace()
+                    }
                 }
             }
         }
@@ -1923,7 +2054,11 @@ class ClipMaxImeService : InputMethodService() {
             surface?.removeView(host)
             if (pendingRenderAfterContextMenu && imeRootFrame != null) {
                 pendingRenderAfterContextMenu = false
-                renderFullImeView()
+                if (isClipboardPanelOpen && clipboardCardsContainer != null) {
+                    refreshClipboardPanelInPlace()
+                } else {
+                    renderFullImeView()
+                }
             }
             return
         }
@@ -1935,7 +2070,11 @@ class ClipMaxImeService : InputMethodService() {
                 surface.removeView(host)
                 if (pendingRenderAfterContextMenu && contextMenuHost == null && imeRootFrame != null) {
                     pendingRenderAfterContextMenu = false
-                    renderFullImeView()
+                    if (isClipboardPanelOpen && clipboardCardsContainer != null) {
+                        refreshClipboardPanelInPlace()
+                    } else {
+                        renderFullImeView()
+                    }
                 }
             }
             .start()
@@ -2142,8 +2281,12 @@ class ClipMaxImeService : InputMethodService() {
                 dismissContextMenu(animate = true)
                 isMergeMode = true
                 mergeSourceId = targetId
-                setStatus("Merge Mode: Tap another card to merge with \"${item.title}\"")
-                reloadItems()
+                setStatus("Merge Mode: Drag or tap another card to merge with \"${item.title}\"")
+                if (isClipboardPanelOpen && clipboardCardsContainer != null) {
+                    refreshClipboardPanelInPlace()
+                } else {
+                    reloadItems()
+                }
             }
 
             addActionRow(
@@ -2152,9 +2295,7 @@ class ClipMaxImeService : InputMethodService() {
                 tint = colorKeyText
             ) {
                 dismissContextMenu(animate = true)
-                io.execute {
-                    splitItem(targetId)
-                }
+                splitItem(targetId)
             }
         }
 
@@ -3261,6 +3402,8 @@ class ClipMaxImeService : InputMethodService() {
                 } else if (isClipboardPanelOpen) {
                     if (contextMenuHost != null) {
                         pendingRenderAfterContextMenu = true
+                    } else if (clipboardCardsContainer != null) {
+                        refreshClipboardPanelInPlace()
                     } else {
                         renderFullImeView()
                     }
@@ -3290,6 +3433,8 @@ class ClipMaxImeService : InputMethodService() {
                 if (isClipboardPanelOpen) {
                     if (contextMenuHost != null) {
                         pendingRenderAfterContextMenu = true
+                    } else if (clipboardCardsContainer != null) {
+                        refreshClipboardPanelInPlace()
                     } else {
                         renderFullImeView()
                     }
@@ -3606,7 +3751,9 @@ class ClipMaxImeService : InputMethodService() {
             if (isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState == 1) {
                 if (!event.isCanceled) {
                     isSettingsOpen = false
+                    settingsSavedScrollY = 0
                     isClipboardPanelOpen = false
+                    clipboardSavedScrollY = 0
                     isFilterMode = false
                     pinnedOnly = false
                     keyboardSearchQuery = ""
@@ -3623,10 +3770,12 @@ class ClipMaxImeService : InputMethodService() {
     override fun onWindowHidden() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        exitMergeMode()
+        exitMergeMode(refresh = false)
         val needsReset = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
         isSettingsOpen = false
+        settingsSavedScrollY = 0
         isClipboardPanelOpen = false
+        clipboardSavedScrollY = 0
         isFilterMode = false
         pinnedOnly = false
         keyboardSearchQuery = ""
@@ -3641,7 +3790,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        exitMergeMode()
+        exitMergeMode(refresh = false)
         super.onConfigurationChanged(newConfig)
         if (imeRootFrame != null) {
             renderFullImeView()
@@ -3651,7 +3800,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        exitMergeMode()
+        exitMergeMode(refresh = false)
         inputViewActive = false
         updateCaptureMonitoring()
         super.onFinishInputView(finishingInput)
@@ -3660,7 +3809,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInput() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        exitMergeMode()
+        exitMergeMode(refresh = false)
         generation++
         inputSessionActive = false
         inputViewActive = false
@@ -3679,7 +3828,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onDestroy() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        exitMergeMode()
+        exitMergeMode(refresh = false)
         serviceDestroyed = true
         generation++
         inputSessionActive = false
