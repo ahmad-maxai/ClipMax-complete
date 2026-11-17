@@ -15,7 +15,8 @@ class InsertionHistoryManagerTest {
         var target: InsertionHistoryManager.EditorTarget = InsertionHistoryManager.EditorTarget("com.example.notes", 1, 1),
         var passwordField: Boolean = false,
         var selectionActive: Boolean = false,
-        var exposeContext: Boolean = true
+        var exposeContext: Boolean = true,
+        var normalizeCrlf: Boolean = false
     ) : InsertionHistoryManager.HostEditorGateway {
         val buffer = StringBuilder(initialText)
         var cursor = initialCursor
@@ -44,8 +45,9 @@ class InsertionHistoryManagerTest {
         }
 
         override fun commitText(text: String): Boolean {
-            buffer.insert(cursor, text)
-            cursor += text.length
+            val applied = if (normalizeCrlf) text.replace("\r\n", "\n").replace('\r', '\n') else text
+            buffer.insert(cursor, applied)
+            cursor += applied.length
             return true
         }
 
@@ -229,12 +231,12 @@ class InsertionHistoryManagerTest {
     fun testHostLineEndingNormalizationAndRollbackOnOptimisticRejection() {
         val history = InsertionHistoryManager()
         val target = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 1, 1, sessionId = 3L)
-        val editor = FakeHostEditorGateway(initialText = "Intro\n", target = target)
+        val editor = FakeHostEditorGateway(initialText = "Intro\n", target = target, normalizeCrlf = true)
 
-        // Saved clip contains CRLF, but host editor normalizes newlines to LF
+        // Saved clip contains CRLF, and host editor normalizes newlines to LF
         val clipWithCrlf = "Line 1\r\nLine 2"
-        val normalizedClip = "Line 1\nLine 2"
-        assertTrue(editor.commitText(normalizedClip))
+        assertTrue(editor.commitText(clipWithCrlf))
+        assertEquals("Intro\nLine 1\nLine 2", editor.buffer.toString())
         assertTrue(history.recordClipInsertion(target, clipWithCrlf, "Intro\r\n", ""))
 
         assertTrue(history.canSafelyUndo(editor).allowed)
