@@ -243,13 +243,31 @@ class InsertionHistoryManagerTest {
         // Must delete exact 13 normalized chars ("Line 1\nLine 2"), not 14, preserving "Intro\n"
         assertEquals("Intro\n", editor.buffer.toString())
 
-        // Rollback when an optimistic IPC InputConnection returns true but silently ignores edit
-        val entry = undoRes.entry!!
-        assertTrue(history.rollbackLastUndo(entry))
-        assertFalse(history.hasAnyRedoEntries())
-        assertEquals(entry, history.peekUndo())
+        // Redo restores normalized clip cleanly
+        assertTrue(history.redo(editor).success)
+        assertEquals("Intro\nLine 1\nLine 2", editor.buffer.toString())
 
-        // Perform undo again and simulate redo + rollback on silent rejection
+        // Rollback when an optimistic IPC InputConnection returns true but silently ignores delete
+        val rejectingGateway = object : InsertionHistoryManager.HostEditorGateway {
+            val fixedText = "Intro\nLine 1\nLine 2"
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int) = fixedText.takeLast(maxChars)
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int) = true
+            override fun commitText(text: String) = true
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+        val history2 = InsertionHistoryManager()
+        assertTrue(history2.recordClipInsertion(target, clipWithCrlf, "Intro\r\n", ""))
+        val optimisticUndo = history2.undo(rejectingGateway)
+        assertTrue(optimisticUndo.success)
+        assertTrue(history2.rollbackLastUndo(optimisticUndo.entry!!))
+        assertFalse(history2.hasAnyRedoEntries())
+        assertEquals(optimisticUndo.entry, history2.peekUndo())
+
+        // Rollback after redo on silent rejection
         assertTrue(history.undo(editor).success)
         val redoRes = history.redo(editor)
         assertTrue(redoRes.success)
