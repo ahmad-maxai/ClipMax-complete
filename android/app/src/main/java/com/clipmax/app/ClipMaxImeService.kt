@@ -116,6 +116,9 @@ class ClipMaxImeService : InputMethodService() {
     private var clipboardScrollView: android.widget.ScrollView? = null
     private var clipboardCardsContainer: LinearLayout? = null
     private var clipboardHeaderCountTv: TextView? = null
+    private var clipboardCaptureToggleRef: FrameLayout? = null
+    private var clipboardCaptureThumbRef: View? = null
+    private var clipboardCaptureLabelRef: TextView? = null
     private var clipboardMergeBanner: TextView? = null
     private var clipboardSavedScrollY: Int = 0
 
@@ -289,7 +292,11 @@ class ClipMaxImeService : InputMethodService() {
         if (key == CapturePreferences.MODE_KEY) {
             captureMode = CapturePreferences.mode(capturePreferences)
             updateCaptureMonitoring()
-            main.post { updateCaptureStatus(); renderClipChips() }
+            main.post {
+                updateCaptureStatus()
+                updateClipboardCaptureToggleUI()
+                renderClipChips()
+            }
         }
     }
 
@@ -467,6 +474,9 @@ class ClipMaxImeService : InputMethodService() {
         clipboardScrollView = null
         clipboardCardsContainer = null
         clipboardHeaderCountTv = null
+        clipboardCaptureToggleRef = null
+        clipboardCaptureThumbRef = null
+        clipboardCaptureLabelRef = null
         clipboardMergeBanner = null
         settingsScrollView = null
         emojiScrollView = null
@@ -1564,10 +1574,62 @@ class ClipMaxImeService : InputMethodService() {
         return if (pinnedOnly) base.filter { it.pinned } else base
     }
 
-    private fun clipboardHeaderLabel(visibleCount: Int): String = when {
-        keyboardSearchQuery.isNotEmpty() -> "Matches ($visibleCount)"
-        pinnedOnly -> "Pinned Clips ($visibleCount)"
-        else -> "Saved Clips ($visibleCount)"
+    private fun clipboardHeaderLabel(@Suppress("UNUSED_PARAMETER") visibleCount: Int): String = when {
+        keyboardSearchQuery.isNotEmpty() -> "Matches"
+        pinnedOnly -> "Pinned Clips"
+        else -> "Clipboard"
+    }
+
+    private fun updateClipboardCaptureToggleUI() {
+        val toggle = clipboardCaptureToggleRef ?: return
+        val thumb = clipboardCaptureThumbRef ?: return
+        val label = clipboardCaptureLabelRef ?: return
+        val enabled = CapturePreferences.isEnabled(captureMode)
+
+        toggle.background = if (enabled) {
+            roundedRipple(colorAccent, dp(12f), colorAccent)
+        } else {
+            roundedRipple(colorModBg, dp(12f), colorKeyBorder)
+        }
+        toggle.contentDescription = if (enabled) {
+            "Clipboard capture on. Tap to turn off."
+        } else {
+            "Clipboard capture off. Tap to turn on."
+        }
+
+        val thumbLp = (thumb.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(dp(18), dp(18))
+        thumbLp.width = dp(18)
+        thumbLp.height = dp(18)
+        if (enabled) {
+            thumbLp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            thumbLp.rightMargin = dp(3)
+            thumbLp.leftMargin = 0
+            thumb.background = roundedDrawable(colorAccentText, dp(9f))
+        } else {
+            thumbLp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            thumbLp.leftMargin = dp(3)
+            thumbLp.rightMargin = 0
+            thumb.background = roundedDrawable(colorHintText, dp(9f))
+        }
+        thumb.layoutParams = thumbLp
+
+        val labelLp = (label.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        if (enabled) {
+            label.text = "ON"
+            label.setTextColor(colorAccentText)
+            labelLp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            labelLp.leftMargin = dp(8)
+            labelLp.rightMargin = 0
+        } else {
+            label.text = "OFF"
+            label.setTextColor(colorHintText)
+            labelLp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            labelLp.rightMargin = dp(7)
+            labelLp.leftMargin = 0
+        }
+        label.layoutParams = labelLp
     }
 
     private fun populateClipboardCards(cardsList: LinearLayout, visible: List<ClipItem>) {
@@ -1594,28 +1656,39 @@ class ClipMaxImeService : InputMethodService() {
                 gravity = Gravity.CENTER
             })
         } else {
+            val cardGapPx = dp(ClipboardPanelSpec.CARD_SPACING_DP).toInt()
+            val halfGapLeft = cardGapPx / 2
+            val halfGapRight = cardGapPx - halfGapLeft
+            val totalVisible = visible.size
+
             // Two-column responsive grid layout (chunk items into pairs)
             var i = 0
-            while (i < visible.size) {
+            while (i < totalVisible) {
+                val hasNextRow = (i + 2) < totalVisible
                 val rowLayout = LinearLayout(this@ClipMaxImeService).apply {
                     orientation = LinearLayout.HORIZONTAL
                     weightSum = 2f
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = dp(6)
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        bottomMargin = if (hasNextRow) cardGapPx else 0
                     }
                 }
 
                 val item1 = visible[i]
-                val card1 = buildCompactCard(item1)
-                rowLayout.addView(card1, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    rightMargin = dp(3)
+                val serial1 = ClipboardPanelSpec.computeSerialNumber(i, totalVisible)
+                val card1 = buildCompactCard(item1, serialNumber = serial1)
+                rowLayout.addView(card1, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    rightMargin = halfGapLeft
                 })
 
-                if (i + 1 < visible.size) {
+                if (i + 1 < totalVisible) {
                     val item2 = visible[i + 1]
-                    val card2 = buildCompactCard(item2)
-                    rowLayout.addView(card2, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        leftMargin = dp(3)
+                    val serial2 = ClipboardPanelSpec.computeSerialNumber(i + 1, totalVisible)
+                    val card2 = buildCompactCard(item2, serialNumber = serial2)
+                    rowLayout.addView(card2, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        leftMargin = halfGapRight
                     })
                 } else {
                     // Empty spacer view for odd count so 1st card maintains exact 50% width
@@ -1623,7 +1696,7 @@ class ClipMaxImeService : InputMethodService() {
                         visibility = View.INVISIBLE
                     }
                     rowLayout.addView(spacer, LinearLayout.LayoutParams(0, 0, 1f).apply {
-                        leftMargin = dp(3)
+                        leftMargin = halfGapRight
                     })
                 }
 
@@ -1643,6 +1716,7 @@ class ClipMaxImeService : InputMethodService() {
         val preservedScrollY = scroll.scrollY
         clipboardSavedScrollY = preservedScrollY
         clipboardHeaderCountTv?.text = clipboardHeaderLabel(visible.size)
+        updateClipboardCaptureToggleUI()
         clipboardMergeBanner?.visibility = if (isMergeMode) View.VISIBLE else View.GONE
         populateClipboardCards(cardsList, visible)
         scroll.post {
@@ -1660,41 +1734,18 @@ class ClipMaxImeService : InputMethodService() {
 
         val visible = getVisibleClipboardItems()
 
-        // Panel Header Bar (34dp)
-        val subHeader = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(3), dp(8), dp(3))
+        // Gboard-inspired Clipboard Navigation Header:
+        // Left: prominent circular back arrow | Center: Clipboard title | Right: ON/OFF capture toggle
+        val subHeader = FrameLayout(this@ClipMaxImeService).apply {
+            setPadding(dp(10), dp(3), dp(10), dp(3))
             setBackgroundColor(if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFE9EFEA.toInt()) else 0xFF161619.toInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ClipboardPanelSpec.HEADER_HEIGHT_DP).toInt())
 
-            val headerIcon = createIconView(IconDrawable(IconType.CLIPBOARD, colorAccent, 13f)).apply {
-                setPadding(0, 0, dp(6), 0)
-            }
-            addView(headerIcon)
-
-            val countTv = TextView(this@ClipMaxImeService).apply {
-                text = clipboardHeaderLabel(visible.size)
-                textSize = 11.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorKeyText)
-            }
-            clipboardHeaderCountTv = countTv
-            addView(countTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-            val backToKbBtn = Button(this@ClipMaxImeService).apply {
-                text = "Keyboard"
-                isAllCaps = false
-                textSize = 10f
-                typeface = Typeface.DEFAULT_BOLD
-                minHeight = 0
-                minimumHeight = 0
-                minWidth = 0
-                minimumWidth = 0
-                setPadding(dp(8), 0, dp(8), 0)
-                setTextColor(colorActiveTabText)
-                background = roundedRipple(colorActiveTabBg, dp(6f), colorAccent)
-                setIcon(IconDrawable(IconType.KEYBOARD, colorActiveTabText, 11f), 4f)
+            val backBtn = FrameLayout(this@ClipMaxImeService).apply {
+                background = roundedRipple(colorKeyBg, dp(16f), colorKeyBorder)
+                contentDescription = "Back to keyboard"
+                val iv = createIconView(IconDrawable(IconType.ARROW_LEFT, colorKeyText, 14.5f))
+                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                 setOnClickListener {
                     isClipboardPanelOpen = false
                     clipboardSavedScrollY = 0
@@ -1702,7 +1753,46 @@ class ClipMaxImeService : InputMethodService() {
                     renderFullImeView()
                 }
             }
-            addView(backToKbBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+            addView(backBtn, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.START or Gravity.CENTER_VERTICAL))
+
+            val titleTv = TextView(this@ClipMaxImeService).apply {
+                text = clipboardHeaderLabel(visible.size)
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                gravity = Gravity.CENTER
+                setSingleLine(true)
+            }
+            clipboardHeaderCountTv = titleTv
+            addView(titleTv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+            val captureToggle = FrameLayout(this@ClipMaxImeService).apply {
+                isClickable = true
+                isFocusable = true
+                val label = TextView(this@ClipMaxImeService).apply {
+                    textSize = 9.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                }
+                clipboardCaptureLabelRef = label
+                addView(label, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                val thumb = View(this@ClipMaxImeService)
+                clipboardCaptureThumbRef = thumb
+                addView(thumb, FrameLayout.LayoutParams(dp(18), dp(18)))
+
+                setOnClickListener {
+                    val nextEnabled = !CapturePreferences.isEnabled(captureMode)
+                    CapturePreferences.setCaptureEnabled(capturePreferences, nextEnabled)
+                    captureMode = CapturePreferences.mode(capturePreferences)
+                    updateCaptureMonitoring()
+                    updateClipboardCaptureToggleUI()
+                    updateCaptureStatus()
+                }
+            }
+            clipboardCaptureToggleRef = captureToggle
+            addView(captureToggle, FrameLayout.LayoutParams(dp(54), dp(24), Gravity.END or Gravity.CENTER_VERTICAL))
+            updateClipboardCaptureToggleUI()
         }
         addView(subHeader)
 
@@ -1728,7 +1818,7 @@ class ClipMaxImeService : InputMethodService() {
         clipboardMergeBanner = mergeBanner
         addView(mergeBanner)
 
-        // Scrollable cards list
+        // Scrollable cards list with 1.5x card spacing (9dp)
         val scrollView = android.widget.ScrollView(this@ClipMaxImeService).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             isVerticalScrollBarEnabled = true
@@ -1738,9 +1828,10 @@ class ClipMaxImeService : InputMethodService() {
         }
         clipboardScrollView = scrollView
 
+        val listPadPx = dp(ClipboardPanelSpec.CARD_SPACING_DP).toInt()
         val cardsList = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(8))
+            setPadding(listPadPx, listPadPx, listPadPx, listPadPx)
         }
         clipboardCardsContainer = cardsList
 
@@ -2160,7 +2251,7 @@ class ClipMaxImeService : InputMethodService() {
         return left to top
     }
 
-    private fun showContextMenu(targetCard: View, item: ClipItem) {
+    private fun showContextMenu(targetCard: View, item: ClipItem, serialNumber: Int = 1) {
         dismissContextMenu(animate = false)
         val surface = imeSurfaceFrame ?: return
         val content = contentContainer ?: return
@@ -2220,7 +2311,7 @@ class ClipMaxImeService : InputMethodService() {
                 topMargin = scrollBoundsTop
             }
         }
-        val spotlightCard = buildCompactCard(item, isSpotlight = true).apply {
+        val spotlightCard = buildCompactCard(item, serialNumber = serialNumber, isSpotlight = true).apply {
             isClickable = true
             isLongClickable = false
             setOnClickListener { dismissContextMenu(animate = true) }
@@ -2426,114 +2517,77 @@ class ClipMaxImeService : InputMethodService() {
         return "Saved Clip"
     }
 
-    private fun buildCompactCard(item: ClipItem, isSpotlight: Boolean = false): View = LinearLayout(this).apply {
-        val (baseTitle, chunkLabel) = parseTitleAndChunk(item.title)
-        val snippet = getSnippet(item, 72)
-        val resolvedTitle = displayTitleForCard(baseTitle, snippet)
+    private fun buildCompactCard(
+        item: ClipItem,
+        serialNumber: Int = 1,
+        isSpotlight: Boolean = false
+    ): View = LinearLayout(this).apply {
+        val rawContent = snippetCache[item.id] ?: getRawSnippetPrefix(item, 240)
+        val previewContent = ClipboardPanelSpec.resolveCardContentPreview(rawContent, 220)
+        val serialLabel = "#$serialNumber"
+        val radiusPx = dp(ClipboardPanelSpec.CARD_CORNER_RADIUS_DP)
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val minCardHeightPx = dp(
+            if (isLandscape) ClipboardPanelSpec.CARD_MIN_HEIGHT_LANDSCAPE_DP
+            else ClipboardPanelSpec.CARD_MIN_HEIGHT_PORTRAIT_DP
+        ).toInt()
 
         orientation = LinearLayout.VERTICAL
         isFocusable = true
-        contentDescription = "$resolvedTitle. Tap to insert. Long press for options."
-        setPadding(dp(8), dp(6), dp(8), dp(6))
+        minimumHeight = minCardHeightPx
+        contentDescription = "Clip $serialLabel. $previewContent. Tap to insert. Long press for options."
+        setPadding(
+            dp(ClipboardPanelSpec.CARD_PADDING_HORIZONTAL_DP).toInt(),
+            dp(ClipboardPanelSpec.CARD_PADDING_VERTICAL_DP).toInt(),
+            dp(ClipboardPanelSpec.CARD_PADDING_HORIZONTAL_DP).toInt(),
+            dp(ClipboardPanelSpec.CARD_PADDING_VERTICAL_DP).toInt()
+        )
         val isSource = isMergeMode && item.id == mergeSourceId
         val isTargetCandidate = isMergeMode && item.id != mergeSourceId
 
         background = when {
-            isSpotlight -> roundedDrawable(colorKeyBg, dp(8f), colorAccent)
-            isSource -> roundedDrawable(if (isNightMode) 0x332DD4BF else 0x330D9488, dp(8f), colorAccent)
-            isTargetCandidate -> roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
-            else -> roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+            isSpotlight -> roundedDrawable(colorKeyBg, radiusPx, colorAccent)
+            isSource -> roundedDrawable(if (isNightMode) 0x332DD4BF else 0x330D9488, radiusPx, colorAccent)
+            isTargetCandidate -> roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
+            else -> roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
         }
 
-        // A. Header: Pin Icon, Title, Optional Multi-Chunk Badge
-        val headerRow = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-
-            if (item.pinned) {
-                val pinIcon = createIconView(IconDrawable(IconType.PIN_FILLED, colorAccent, 10f)).apply {
-                    setPadding(0, 0, dp(4), 0)
-                }
-                addView(pinIcon)
-            }
-
-            val titleTv = TextView(this@ClipMaxImeService).apply {
-                text = resolvedTitle
-                textSize = 11f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorKeyText)
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-            }
-            addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                rightMargin = dp(4)
-            })
-
-            if (chunkLabel != null) {
-                val chunkBadge = TextView(this@ClipMaxImeService).apply {
-                    text = chunkLabel
-                    textSize = 8f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorActiveTabText)
-                    setPadding(dp(4), dp(1), dp(4), dp(1))
-                    background = roundedDrawable(colorActiveTabBg, dp(4f), colorAccent)
-                    setSingleLine(true)
-                }
-                addView(chunkBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
-
-            if (isSource) {
-                val srcBadge = TextView(this@ClipMaxImeService).apply {
-                    text = "Source"
-                    textSize = 8f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorAccentText)
-                    setPadding(dp(4), dp(1), dp(4), dp(1))
-                    background = roundedDrawable(colorAccent, dp(3f))
-                    setSingleLine(true)
-                }
-                addView(srcBadge, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    leftMargin = dp(4)
-                })
-            }
+        // Row 1: Strictly ONLY the dynamic bottom-up positional serial number ("#1", "#2", ...)
+        val serialTv = TextView(this@ClipMaxImeService).apply {
+            text = serialLabel
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorModText)
+            setSingleLine(true)
+            includeFontPadding = false
         }
-        addView(headerRow)
-
-        // B. Content Preview (2 lines max, crisp wrapping without excess expansion)
-        if (snippet.isNotEmpty()) {
-            val snippetBox = FrameLayout(this@ClipMaxImeService).apply {
-                setPadding(dp(6), dp(3), dp(6), dp(3))
-                background = roundedDrawable(colorSnippetBg, dp(5f), colorSnippetBorder)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = dp(3)
-                    bottomMargin = if (item.sizeBytes > 1024L) dp(3) else 0
-                }
-
-                val snipTv = TextView(this@ClipMaxImeService).apply {
-                    text = snippet
-                    textSize = 9.5f
-                    typeface = Typeface.MONOSPACE
-                    setTextColor(colorModText)
-                    setLineSpacing(dp(1.5f), 1f)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                }
-                addView(snipTv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        addView(
+            serialTv,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(4)
             }
-            addView(snippetBox)
-        }
+        )
 
-        // C. Minimal Metadata (Size only if > 1 KiB, no copy count or timestamps)
-        if (item.sizeBytes > 1024L) {
-            val metaTv = TextView(this@ClipMaxImeService).apply {
-                text = humanSize(item.sizeBytes)
-                textSize = 8.5f
-                typeface = Typeface.MONOSPACE
-                setTextColor(colorHintText)
-                setSingleLine(true)
-            }
-            addView(metaTv)
+        // Row 2: Direct beginning of the original clipboard content (unified surface, no nested box/metadata)
+        val contentTv = TextView(this@ClipMaxImeService).apply {
+            text = previewContent
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT
+            setTextColor(colorKeyText)
+            setLineSpacing(dp(1.5f), 1f)
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.END
         }
+        addView(
+            contentTv,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         if (!isSpotlight) {
             if (isSource) {
@@ -2556,14 +2610,14 @@ class ClipMaxImeService : InputMethodService() {
                     when (event.action) {
                         android.view.DragEvent.ACTION_DRAG_STARTED -> true
                         android.view.DragEvent.ACTION_DRAG_ENTERED -> {
-                            v.background = roundedDrawable(if (isNightMode) 0x552DD4BF else 0x550D9488, dp(8f), colorAccent)
+                            v.background = roundedDrawable(if (isNightMode) 0x552DD4BF else 0x550D9488, radiusPx, colorAccent)
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                                 v.elevation = dp(6f)
                             }
                             true
                         }
                         android.view.DragEvent.ACTION_DRAG_EXITED -> {
-                            v.background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+                            v.background = roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                                 v.elevation = 0f
                             }
@@ -2579,7 +2633,7 @@ class ClipMaxImeService : InputMethodService() {
                             }
                         }
                         android.view.DragEvent.ACTION_DRAG_ENDED -> {
-                            v.background = roundedRipple(colorKeyBg, dp(8f), colorKeyBorder)
+                            v.background = roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                                 v.elevation = 0f
                             }
@@ -2611,7 +2665,7 @@ class ClipMaxImeService : InputMethodService() {
             if (!isMergeMode) {
                 setOnLongClickListener {
                     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                    showContextMenu(this, item)
+                    showContextMenu(this, item, serialNumber)
                     true
                 }
             }
@@ -5372,7 +5426,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
-        CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
+        CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_LEFT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         SEND, GO, NEXT, DONE, SPACE,
         EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
@@ -5528,6 +5582,16 @@ class ClipMaxImeService : InputMethodService() {
                         moveTo(6f, 3.5f)
                         lineTo(10.5f, 8f)
                         lineTo(6f, 12.5f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.ARROW_LEFT -> {
+                    val p = Path().apply {
+                        moveTo(12.5f, 8f)
+                        lineTo(3.5f, 8f)
+                        moveTo(7.5f, 4f)
+                        lineTo(3.5f, 8f)
+                        lineTo(7.5f, 12f)
                     }
                     canvas.drawPath(p, strokePaint)
                 }

@@ -8,6 +8,7 @@ internal object CapturePreferences {
     const val PREFS_NAME = "clipmax_capture"
     const val MODE_KEY = "mode"
     const val DEFAULT_MODE = "24h"
+    private const val LAST_ENABLED_MODE_KEY = "last_enabled_mode"
     private const val LAST_CLIPBOARD_SIGNATURE_KEY = "last_clipboard_signature"
     private const val LAST_CLIP_TIMESTAMP_KEY = "last_clipboard_timestamp"
     private const val LAST_CAPTURED_IDS_KEY = "last_captured_ids"
@@ -28,6 +29,22 @@ internal object CapturePreferences {
 
     fun mode(preferences: SharedPreferences): String =
         preferences.getString(MODE_KEY, DEFAULT_MODE)?.takeIf { it in modes } ?: DEFAULT_MODE
+
+    fun setCaptureEnabled(preferences: SharedPreferences, enabled: Boolean) {
+        val current = mode(preferences)
+        val remembered = preferences.getString(LAST_ENABLED_MODE_KEY, null)?.takeIf { it in modes && it != "off" }
+        val transition = ClipboardPanelSpec.resolveCaptureToggleTransition(
+            currentMode = current,
+            rememberedEnabledMode = remembered,
+            enable = enabled,
+            defaultEnabledMode = DEFAULT_MODE
+        )
+        val editor = preferences.edit().putString(MODE_KEY, transition.nextMode)
+        if (transition.rememberedEnabledMode != null) {
+            editor.putString(LAST_ENABLED_MODE_KEY, transition.rememberedEnabledMode)
+        }
+        editor.apply()
+    }
 
     fun lastClipboardSignature(preferences: SharedPreferences): String? =
         preferences.getString(LAST_CLIPBOARD_SIGNATURE_KEY, null)

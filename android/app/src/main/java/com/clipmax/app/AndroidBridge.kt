@@ -330,12 +330,7 @@ class AndroidBridge(
     fun setCaptureEnabled(enabled: Boolean) {
         try {
             val prefs = CapturePreferences.preferences(context)
-            val current = CapturePreferences.mode(prefs)
-            if (!enabled) {
-                prefs.edit().putString(CapturePreferences.MODE_KEY, "off").apply()
-            } else if (current == "off") {
-                prefs.edit().putString(CapturePreferences.MODE_KEY, "24h").apply()
-            }
+            CapturePreferences.setCaptureEnabled(prefs, enabled)
         } catch (e: Throwable) {
             // ignore
         }
