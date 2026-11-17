@@ -988,11 +988,11 @@ class ClipMaxImeService : InputMethodService() {
     private fun buildPasteUndoCapsule(): FrameLayout {
         val host = FrameLayout(this).apply {
             val lp = FrameLayout.LayoutParams(
-                dp(PasteUndoCapsuleSpec.WIDTH_DP),
-                dp(PasteUndoCapsuleSpec.HEIGHT_DP)
+                dp(PasteUndoCapsuleSpec.WIDTH_DP.toInt()),
+                dp(PasteUndoCapsuleSpec.HEIGHT_DP.toInt())
             ).apply {
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                rightMargin = dp(PasteUndoCapsuleSpec.RIGHT_MARGIN_DP)
+                rightMargin = dp(PasteUndoCapsuleSpec.RIGHT_MARGIN_DP.toInt())
             }
             layoutParams = lp
             visibility = View.GONE
