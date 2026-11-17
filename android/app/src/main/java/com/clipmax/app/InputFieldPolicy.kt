@@ -82,24 +82,37 @@ internal object InputFieldPolicy {
         }
     }
 
+    enum class NumericFieldKind {
+        NONE,
+        NUMBER,
+        PHONE,
+        DATETIME,
+        PIN
+    }
+
     data class FieldCapabilities(
         val isPasswordOrPin: Boolean,
         val allowClipboard: Boolean,
         val allowSuggestions: Boolean,
         val allowAutocomplete: Boolean,
         val allowAutocorrect: Boolean,
-        val allowSessionLearning: Boolean
+        val allowSessionLearning: Boolean,
+        val numericFieldKind: NumericFieldKind = NumericFieldKind.NONE
     )
+
+    fun shouldUseDedicatedNumpad(capabilities: FieldCapabilities, isFilterMode: Boolean = false): Boolean =
+        !isFilterMode && capabilities.numericFieldKind != NumericFieldKind.NONE
 
     fun evaluate(inputType: Int, imeOptions: Int = 0): FieldCapabilities {
         val fieldClass = inputType and TYPE_MASK_CLASS
         val variation = inputType and TYPE_MASK_VARIATION
 
+        val isNumericPin = fieldClass == TYPE_CLASS_NUMBER && variation == TYPE_NUMBER_VARIATION_PASSWORD
         val isPassword = (fieldClass == TYPE_CLASS_TEXT && (
             variation == TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == TYPE_TEXT_VARIATION_WEB_PASSWORD
-            )) || (fieldClass == TYPE_CLASS_NUMBER && variation == TYPE_NUMBER_VARIATION_PASSWORD)
+            )) || isNumericPin
 
         val noPersonalized = (imeOptions and IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
 
@@ -110,13 +123,19 @@ internal object InputFieldPolicy {
                 allowSuggestions = false,
                 allowAutocomplete = false,
                 allowAutocorrect = false,
-                allowSessionLearning = false
+                allowSessionLearning = false,
+                numericFieldKind = if (isNumericPin) NumericFieldKind.PIN else NumericFieldKind.NONE
             )
         }
 
-        val isNonProseClass = fieldClass == TYPE_CLASS_NUMBER ||
-            fieldClass == TYPE_CLASS_PHONE ||
-            fieldClass == TYPE_CLASS_DATETIME
+        val numericKind = when (fieldClass) {
+            TYPE_CLASS_NUMBER -> NumericFieldKind.NUMBER
+            TYPE_CLASS_PHONE -> NumericFieldKind.PHONE
+            TYPE_CLASS_DATETIME -> NumericFieldKind.DATETIME
+            else -> NumericFieldKind.NONE
+        }
+
+        val isNonProseClass = numericKind != NumericFieldKind.NONE
 
         val isSpecializedText = fieldClass == TYPE_CLASS_TEXT && (
             variation == TYPE_TEXT_VARIATION_URI ||
@@ -138,7 +157,8 @@ internal object InputFieldPolicy {
             allowSuggestions = !disableIntelligence,
             allowAutocomplete = !disableIntelligence,
             allowAutocorrect = !disableIntelligence && !isPersonNameField,
-            allowSessionLearning = !disableIntelligence && !noPersonalized
+            allowSessionLearning = !disableIntelligence && !noPersonalized,
+            numericFieldKind = numericKind
         )
     }
 }

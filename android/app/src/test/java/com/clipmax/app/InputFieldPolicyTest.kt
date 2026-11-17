@@ -112,4 +112,35 @@ class InputFieldPolicyTest {
         assertTrue(filterAction.isFilterDismiss)
         assertNull(filterAction.editorActionId)
     }
+
+    @Test
+    fun testDedicatedNumericFieldClassificationAndFilterQwertyOverride() {
+        val num = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
+        assertEquals(InputFieldPolicy.NumericFieldKind.NUMBER, num.numericFieldKind)
+        assertFalse(num.isPasswordOrPin)
+        assertTrue(num.allowClipboard)
+        assertTrue(InputFieldPolicy.shouldUseDedicatedNumpad(num, isFilterMode = false))
+        assertFalse(InputFieldPolicy.shouldUseDedicatedNumpad(num, isFilterMode = true))
+
+        val phone = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_PHONE)
+        assertEquals(InputFieldPolicy.NumericFieldKind.PHONE, phone.numericFieldKind)
+        assertTrue(InputFieldPolicy.shouldUseDedicatedNumpad(phone, isFilterMode = false))
+
+        val datetime = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_DATETIME)
+        assertEquals(InputFieldPolicy.NumericFieldKind.DATETIME, datetime.numericFieldKind)
+        assertTrue(InputFieldPolicy.shouldUseDedicatedNumpad(datetime, isFilterMode = false))
+
+        val pin = InputFieldPolicy.evaluate(
+            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_VARIATION_PASSWORD
+        )
+        assertEquals(InputFieldPolicy.NumericFieldKind.PIN, pin.numericFieldKind)
+        assertTrue(pin.isPasswordOrPin)
+        assertFalse(pin.allowClipboard)
+        assertFalse(pin.allowSuggestions)
+        assertTrue(InputFieldPolicy.shouldUseDedicatedNumpad(pin, isFilterMode = false))
+
+        val textField = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT)
+        assertEquals(InputFieldPolicy.NumericFieldKind.NONE, textField.numericFieldKind)
+        assertFalse(InputFieldPolicy.shouldUseDedicatedNumpad(textField, isFilterMode = false))
+    }
 }

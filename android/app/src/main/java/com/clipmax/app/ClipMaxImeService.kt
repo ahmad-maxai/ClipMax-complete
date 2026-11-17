@@ -93,7 +93,7 @@ class ClipMaxImeService : InputMethodService() {
     private var items: List<ClipItem> = emptyList()
     @Volatile private var snippetCache: Map<String, String> = emptyMap()
 
-    // Keyboard Layout Mode: 0 = alpha (QWERTY), 1 = numeric (?123), 2 = symbols (=\<)
+    // Keyboard Layout Mode: 0 = alpha (QWERTY), 1 = numeric (?123), 2 = symbols (=\<), 3 = dedicated 3x4 numpad
     private var keyboardMode = 0
     // Shift State: 0 = off (lowercase), 1 = shifted (1-shot uppercase), 2 = caps lock
     private var shiftState = 0
@@ -961,10 +961,15 @@ class ClipMaxImeService : InputMethodService() {
             if (isFilterMode) colorActiveTabText else colorModText,
             if (isFilterMode) colorActiveTabBg else 0
         ) {
+            if (isPasswordTarget) {
+                setStatus("Password field: Search disabled for privacy.")
+                return@makeStateBAction
+            }
             if (isFilterMode) {
                 isFilterMode = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = emptyList()
+                syncKeyboardModeForActiveField()
             } else {
                 isFilterMode = true
                 isClipboardPanelOpen = false
@@ -974,6 +979,7 @@ class ClipMaxImeService : InputMethodService() {
                 pinnedOnly = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = items
+                keyboardMode = 0 // Allow temporary QWERTY typing inside Search Clips
             }
             renderFullImeView()
         }
@@ -1462,6 +1468,7 @@ class ClipMaxImeService : InputMethodService() {
                 isFilterMode = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = emptyList()
+                syncKeyboardModeForActiveField()
                 renderFullImeView()
             }
         }
@@ -2861,6 +2868,7 @@ class ClipMaxImeService : InputMethodService() {
             0 -> renderAlphaRows(container)
             1 -> renderNumericRows(container)
             2 -> renderSymbolRows(container)
+            3 -> renderNumpadRows(container)
         }
     }
 
@@ -2937,8 +2945,9 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row3)
 
         val row4 = createKeyRow(isBottomRow = true)
-        row4.addView(createModifierKey("ABC") {
-            keyboardMode = 0
+        val backToDedicatedNumpad = InputFieldPolicy.shouldUseDedicatedNumpad(fieldCapabilities, isFilterMode)
+        row4.addView(createModifierKey(if (backToDedicatedNumpad) "123" else "ABC") {
+            keyboardMode = if (backToDedicatedNumpad) 3 else 0
             renderKeyboardRows()
         }, keyLp(1.45f))
 
@@ -2987,6 +2996,188 @@ class ClipMaxImeService : InputMethodService() {
         row4.addView(createGlobeKey(), keyLp(0.9f))
         row4.addView(createSpaceKey(), keyLp(4.4f))
         row4.addView(createStandardKey("."), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
+        parent.addView(row4)
+    }
+
+    // 4D. DEDICATED 3x4 NUMERIC KEYPAD (NUMBER / PHONE / DATETIME / PIN)
+    private fun syncKeyboardModeForActiveField() {
+        keyboardMode = if (InputFieldPolicy.shouldUseDedicatedNumpad(fieldCapabilities, isFilterMode)) 3 else 0
+    }
+
+    private fun createNumpadDigitKey(digit: String): View = FrameLayout(this).apply {
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = digit
+            textSize = (currentLayoutGeometry.primaryTextSizeSp + 2.5f).coerceIn(18f, 24f)
+            typeface = Typeface.DEFAULT
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+        }
+        addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        attachKeyTouchFeedback(
+            keyView = this,
+            onCommit = { handleGenericCharPress(digit) },
+            previewChar = { digit }
+        )
+    }
+
+    private fun createNumpadSpaceKey(): View = FrameLayout(this).apply {
+        background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
+        contentDescription = "Space"
+
+        val iv = createIconView(IconDrawable(IconType.SPACE, colorModText, 18f))
+        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+        attachKeyTouchFeedback(this, { handleSpacePress() })
+    }
+
+    private fun createNumpadSideStack(symbols: List<String>): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedDrawable(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
+
+        symbols.forEach { sym ->
+            val cell = FrameLayout(this@ClipMaxImeService).apply {
+                background = roundedRipple(0x00000000, keyCornerRadiusPx(), 0)
+                val tv = TextView(this@ClipMaxImeService).apply {
+                    text = sym
+                    textSize = (currentLayoutGeometry.primaryTextSizeSp - 2.5f).coerceIn(13f, 18f)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorModText)
+                    gravity = Gravity.CENTER
+                }
+                addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                attachKeyTouchFeedback(this, { handleGenericCharPress(sym) }, previewChar = { sym })
+            }
+            addView(cell, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    private fun renderNumpadRows(parent: LinearLayout) {
+        val kind = if (fieldCapabilities.numericFieldKind == InputFieldPolicy.NumericFieldKind.NONE) {
+            InputFieldPolicy.NumericFieldKind.NUMBER
+        } else {
+            fieldCapabilities.numericFieldKind
+        }
+        val isPin = kind == InputFieldPolicy.NumericFieldKind.PIN
+        val rowH = getKeyRowHeight()
+        val gapPx = dp(currentLayoutGeometry.interRowGapDp).toInt()
+        val sideGap = (dp(currentLayoutGeometry.horizontalGapDp) / 2f).toInt().coerceAtLeast(1)
+
+        // Upper 3x3 block (left aux stack + 1-9 grid + right aux column)
+        val upperBlockH = rowH * 3 + gapPx * 2
+        val upperBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, upperBlockH).apply {
+                bottomMargin = gapPx
+            }
+        }
+
+        // Left vertical auxiliary column (hidden in PIN mode)
+        val leftView: View = when (kind) {
+            InputFieldPolicy.NumericFieldKind.PIN -> View(this)
+            InputFieldPolicy.NumericFieldKind.PHONE -> createNumpadSideStack(listOf("+", "(", ")", "-"))
+            InputFieldPolicy.NumericFieldKind.DATETIME -> createNumpadSideStack(listOf("/", ":", "-", "."))
+            else -> createNumpadSideStack(listOf("+", "-", "*", "/"))
+        }
+        upperBlock.addView(leftView, LinearLayout.LayoutParams(0, upperBlockH, 1.45f).apply {
+            leftMargin = sideGap
+            rightMargin = sideGap
+        })
+
+        // Center 3x3 digits + Right column (rows 1-3)
+        val centerAndRight = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, upperBlockH, 8.55f)
+        }
+
+        val digitRows = listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9")
+        )
+        digitRows.forEachIndexed { idx, digits ->
+            val r = createKeyRow(isBottomRow = (idx == 2))
+            val digitsRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, rowH, 7.10f)
+            }
+            digits.forEach { d ->
+                digitsRow.addView(createNumpadDigitKey(d), keyLp(1f))
+            }
+            r.addView(digitsRow)
+
+            val rightKey: View = when (idx) {
+                0 -> when (kind) {
+                    InputFieldPolicy.NumericFieldKind.PIN -> View(this)
+                    InputFieldPolicy.NumericFieldKind.PHONE -> createStandardKey(";")
+                    InputFieldPolicy.NumericFieldKind.DATETIME -> createStandardKey(",")
+                    else -> createStandardKey("%")
+                }
+                1 -> if (isPin) View(this) else createNumpadSpaceKey()
+                else -> createBackspaceKey()
+            }
+            r.addView(rightKey, keyLp(1.45f))
+            centerAndRight.addView(r)
+        }
+        upperBlock.addView(centerAndRight)
+        parent.addView(upperBlock)
+
+        // Row 4 (bottom row): matches exact 1.45f | 7.10f | 1.45f column alignment
+        val row4 = createKeyRow(isBottomRow = true)
+        if (isPin) {
+            // PIN mode strictly omits ABC and symbol switches
+            row4.addView(View(this), keyLp(1.45f))
+            val pinCenter = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, rowH, 7.10f)
+            }
+            pinCenter.addView(View(this), keyLp(2.3f))
+            pinCenter.addView(createNumpadDigitKey("0"), keyLp(2.5f))
+            pinCenter.addView(View(this), keyLp(2.3f))
+            row4.addView(pinCenter)
+        } else {
+            row4.addView(createModifierKey("ABC") {
+                keyboardMode = 0
+                renderKeyboardRows()
+            }, keyLp(1.45f))
+
+            val bottomCenter = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, rowH, 7.10f)
+            }
+            when (kind) {
+                InputFieldPolicy.NumericFieldKind.PHONE -> {
+                    bottomCenter.addView(createStandardKey(","), keyLp(1.1f))
+                    bottomCenter.addView(createStandardKey("*"), keyLp(1.1f))
+                    bottomCenter.addView(createNumpadDigitKey("0"), keyLp(2.7f))
+                    bottomCenter.addView(createStandardKey("#"), keyLp(1.1f))
+                    bottomCenter.addView(createStandardKey("."), keyLp(1.1f))
+                }
+                InputFieldPolicy.NumericFieldKind.DATETIME -> {
+                    bottomCenter.addView(createStandardKey("/"), keyLp(1.1f))
+                    bottomCenter.addView(createStandardKey(":"), keyLp(1.1f))
+                    bottomCenter.addView(createNumpadDigitKey("0"), keyLp(2.7f))
+                    bottomCenter.addView(createStandardKey("-"), keyLp(1.1f))
+                    bottomCenter.addView(createStandardKey("."), keyLp(1.1f))
+                }
+                else -> {
+                    bottomCenter.addView(createStandardKey(","), keyLp(1.1f))
+                    bottomCenter.addView(createModifierKey("!?#") {
+                        keyboardMode = 1
+                        renderKeyboardRows()
+                    }, keyLp(1.1f))
+                    bottomCenter.addView(createNumpadDigitKey("0"), keyLp(2.7f))
+                    bottomCenter.addView(createStandardKey("="), keyLp(1.1f))
+                    bottomCenter.addView(createStandardKey("."), keyLp(1.1f))
+                }
+            }
+            row4.addView(bottomCenter)
+        }
+
         row4.addView(createEnterKey(), keyLp(1.45f))
         parent.addView(row4)
     }
@@ -3438,6 +3629,7 @@ class ClipMaxImeService : InputMethodService() {
             isFilterMode = false
             keyboardSearchQuery = ""
             keyboardSearchResults = emptyList()
+            syncKeyboardModeForActiveField()
             renderFullImeView()
         } else {
             val conn = currentInputConnection ?: return
@@ -3790,6 +3982,12 @@ class ClipMaxImeService : InputMethodService() {
         isInserting = false
         fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
+        if (isPasswordTarget) {
+            isFilterMode = false
+            isClipboardPanelOpen = false
+            pinnedOnly = false
+        }
+        syncKeyboardModeForActiveField()
         autoCapMode = AutoCapitalizationPolicy.resolveCapMode(attribute.inputType, isFilterMode)
         manualShiftOverride = false
         shiftState = 0
@@ -3844,9 +4042,17 @@ class ClipMaxImeService : InputMethodService() {
             manualShiftOverride = false
         }
         toolbarStateACenterMode = 0
+        fieldCapabilities = InputFieldPolicy.evaluate(info.inputType, info.imeOptions)
+        isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(info.inputType)
+        if (isPasswordTarget && isFilterMode) {
+            isFilterMode = false
+        }
+        if (!restarting) {
+            syncKeyboardModeForActiveField()
+        }
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
-        updateEnterKeyUI()
+        renderKeyboardRows()
         syncAutoCapitalization(preserveManualShift = manualShiftOverride)
         updateCaptureMonitoring()
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
@@ -3934,6 +4140,7 @@ class ClipMaxImeService : InputMethodService() {
                     keyboardSearchQuery = ""
                     keyboardSearchResults = emptyList()
                     toolbarState = 0
+                    syncKeyboardModeForActiveField()
                     renderFullImeView()
                 }
                 return true
@@ -3956,6 +4163,7 @@ class ClipMaxImeService : InputMethodService() {
         keyboardSearchQuery = ""
         keyboardSearchResults = emptyList()
         toolbarState = 0
+        syncKeyboardModeForActiveField()
         if (needsReset && imeRootFrame != null) {
             renderFullImeView()
         }
@@ -4884,7 +5092,7 @@ class ClipMaxImeService : InputMethodService() {
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
-        SEND, GO, NEXT, DONE,
+        SEND, GO, NEXT, DONE, SPACE,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -5171,6 +5379,15 @@ class ClipMaxImeService : InputMethodService() {
                         moveTo(2.8f, 8.4f)
                         lineTo(6.4f, 12.0f)
                         lineTo(13.4f, 4.4f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.SPACE -> {
+                    val p = Path().apply {
+                        moveTo(2.6f, 8.2f)
+                        lineTo(2.6f, 11.4f)
+                        lineTo(13.4f, 11.4f)
+                        lineTo(13.4f, 8.2f)
                     }
                     canvas.drawPath(p, strokePaint)
                 }
