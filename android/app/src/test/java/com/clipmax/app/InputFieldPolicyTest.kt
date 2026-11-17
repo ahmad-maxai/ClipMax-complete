@@ -1,6 +1,7 @@
 package com.clipmax.app
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -71,5 +72,44 @@ class InputFieldPolicyTest {
         )
         assertTrue(incognitoText.allowAutocomplete)
         assertFalse(incognitoText.allowSessionLearning)
+    }
+
+    @Test
+    fun testDynamicActionKeyResolutionAndNoEnterActionPriority() {
+        val cases = listOf(
+            InputFieldPolicy.IME_ACTION_SEARCH to InputFieldPolicy.ActionKeyKind.SEARCH,
+            InputFieldPolicy.IME_ACTION_SEND to InputFieldPolicy.ActionKeyKind.SEND,
+            InputFieldPolicy.IME_ACTION_GO to InputFieldPolicy.ActionKeyKind.GO,
+            InputFieldPolicy.IME_ACTION_NEXT to InputFieldPolicy.ActionKeyKind.NEXT,
+            InputFieldPolicy.IME_ACTION_DONE to InputFieldPolicy.ActionKeyKind.DONE
+        )
+        for ((flag, expectedKind) in cases) {
+            val resolved = InputFieldPolicy.resolveActionKey(flag, isFilterMode = false)
+            assertEquals(expectedKind, resolved.kind)
+            assertEquals(flag, resolved.editorActionId)
+            assertFalse(resolved.isFilterDismiss)
+
+            // IME_FLAG_NO_ENTER_ACTION must take priority over any action bit (e.g. multiline chat)
+            val multiline = InputFieldPolicy.resolveActionKey(
+                flag or InputFieldPolicy.IME_FLAG_NO_ENTER_ACTION,
+                isFilterMode = false
+            )
+            assertEquals(InputFieldPolicy.ActionKeyKind.ENTER, multiline.kind)
+            assertNull(multiline.editorActionId)
+            assertFalse(multiline.isFilterDismiss)
+        }
+
+        val noneAction = InputFieldPolicy.resolveActionKey(InputFieldPolicy.IME_ACTION_NONE)
+        assertEquals(InputFieldPolicy.ActionKeyKind.ENTER, noneAction.kind)
+        assertNull(noneAction.editorActionId)
+
+        // Search Clips overrides host action with internal filter dismissal
+        val filterAction = InputFieldPolicy.resolveActionKey(
+            InputFieldPolicy.IME_ACTION_SEND,
+            isFilterMode = true
+        )
+        assertEquals(InputFieldPolicy.ActionKeyKind.DONE, filterAction.kind)
+        assertTrue(filterAction.isFilterDismiss)
+        assertNull(filterAction.editorActionId)
     }
 }

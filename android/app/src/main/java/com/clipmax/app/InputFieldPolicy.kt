@@ -34,6 +34,53 @@ internal object InputFieldPolicy {
     const val TYPE_NUMBER_VARIATION_PASSWORD = 0x00000010
 
     const val IME_FLAG_NO_PERSONALIZED_LEARNING = 0x01000000
+    const val IME_MASK_ACTION = 0x000000ff
+    const val IME_ACTION_UNSPECIFIED = 0x00000000
+    const val IME_ACTION_NONE = 0x00000001
+    const val IME_ACTION_GO = 0x00000002
+    const val IME_ACTION_SEARCH = 0x00000003
+    const val IME_ACTION_SEND = 0x00000004
+    const val IME_ACTION_NEXT = 0x00000005
+    const val IME_ACTION_DONE = 0x00000006
+    const val IME_ACTION_PREVIOUS = 0x00000007
+    const val IME_FLAG_NO_ENTER_ACTION = 0x40000000
+
+    enum class ActionKeyKind {
+        ENTER,
+        SEARCH,
+        SEND,
+        GO,
+        NEXT,
+        DONE
+    }
+
+    data class ActionKeyResolution(
+        val kind: ActionKeyKind,
+        val editorActionId: Int?,
+        val isFilterDismiss: Boolean = false
+    )
+
+    fun resolveActionKey(imeOptions: Int, isFilterMode: Boolean = false): ActionKeyResolution {
+        if (isFilterMode) {
+            return ActionKeyResolution(
+                kind = ActionKeyKind.DONE,
+                editorActionId = null,
+                isFilterDismiss = true
+            )
+        }
+        if ((imeOptions and IME_FLAG_NO_ENTER_ACTION) != 0) {
+            return ActionKeyResolution(kind = ActionKeyKind.ENTER, editorActionId = null)
+        }
+        return when (imeOptions and IME_MASK_ACTION) {
+            IME_ACTION_SEARCH -> ActionKeyResolution(ActionKeyKind.SEARCH, IME_ACTION_SEARCH)
+            IME_ACTION_SEND -> ActionKeyResolution(ActionKeyKind.SEND, IME_ACTION_SEND)
+            IME_ACTION_GO -> ActionKeyResolution(ActionKeyKind.GO, IME_ACTION_GO)
+            IME_ACTION_NEXT -> ActionKeyResolution(ActionKeyKind.NEXT, IME_ACTION_NEXT)
+            IME_ACTION_DONE -> ActionKeyResolution(ActionKeyKind.DONE, IME_ACTION_DONE)
+            IME_ACTION_PREVIOUS -> ActionKeyResolution(ActionKeyKind.ENTER, IME_ACTION_PREVIOUS)
+            else -> ActionKeyResolution(ActionKeyKind.ENTER, null)
+        }
+    }
 
     data class FieldCapabilities(
         val isPasswordOrPin: Boolean,

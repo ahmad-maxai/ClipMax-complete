@@ -132,6 +132,8 @@ class ClipMaxImeService : InputMethodService() {
     private var modeButton: Button? = null
     private var shiftButton: View? = null
     private var shiftImageView: ImageView? = null
+    private var enterKeyView: View? = null
+    private var enterKeyImageView: ImageView? = null
     private val letterKeyViews = mutableListOf<Pair<TextView, String>>()
 
     // Host Insertion History & Offline Typing Intelligence (strictly separate from Merge/Split undoStack)
@@ -522,6 +524,8 @@ class ClipMaxImeService : InputMethodService() {
         letterKeyViews.clear()
         shiftButton = null
         shiftImageView = null
+        enterKeyView = null
+        enterKeyImageView = null
         searchResultsContainer = null
         searchInputText = null
         searchPillView = null
@@ -2843,6 +2847,8 @@ class ClipMaxImeService : InputMethodService() {
         val container = keyboardRowsContainer ?: return
         container.removeAllViews()
         letterKeyViews.clear()
+        enterKeyView = null
+        enterKeyImageView = null
         val geom = refreshKeyboardGeometry()
         container.setPadding(
             dp(geom.sidePaddingDp).toInt(),
@@ -3266,12 +3272,48 @@ class ClipMaxImeService : InputMethodService() {
         attachKeyTouchFeedback(this, { handleSpacePress() })
     }
 
+    private fun resolveCurrentActionKey(): InputFieldPolicy.ActionKeyResolution {
+        val imeOpts = currentInputEditorInfo?.imeOptions ?: 0
+        return InputFieldPolicy.resolveActionKey(imeOpts, isFilterMode = isFilterMode)
+    }
+
+    private fun iconTypeForAction(kind: InputFieldPolicy.ActionKeyKind): IconType = when (kind) {
+        InputFieldPolicy.ActionKeyKind.SEARCH -> IconType.SEARCH
+        InputFieldPolicy.ActionKeyKind.SEND -> IconType.SEND
+        InputFieldPolicy.ActionKeyKind.GO -> IconType.GO
+        InputFieldPolicy.ActionKeyKind.NEXT -> IconType.NEXT
+        InputFieldPolicy.ActionKeyKind.DONE -> IconType.DONE
+        InputFieldPolicy.ActionKeyKind.ENTER -> IconType.ENTER
+    }
+
+    private fun contentDescriptionForAction(kind: InputFieldPolicy.ActionKeyKind): String = when (kind) {
+        InputFieldPolicy.ActionKeyKind.SEARCH -> "Search"
+        InputFieldPolicy.ActionKeyKind.SEND -> "Send"
+        InputFieldPolicy.ActionKeyKind.GO -> "Go"
+        InputFieldPolicy.ActionKeyKind.NEXT -> "Next"
+        InputFieldPolicy.ActionKeyKind.DONE -> "Done"
+        InputFieldPolicy.ActionKeyKind.ENTER -> "Enter"
+    }
+
+    private fun updateEnterKeyUI() {
+        val btn = enterKeyView ?: return
+        val iv = enterKeyImageView ?: return
+        val resolution = resolveCurrentActionKey()
+        val fgCol = if (isClassicTheme) colorAccentText else colorKeyText
+        iv.setImageDrawable(IconDrawable(iconTypeForAction(resolution.kind), fgCol, 18f))
+        btn.contentDescription = contentDescriptionForAction(resolution.kind)
+    }
+
     private fun createEnterKey(): View = FrameLayout(this).apply {
         val bgCol = if (isClassicTheme) colorAccent else colorKeyBg
         val fgCol = if (isClassicTheme) colorAccentText else colorKeyText
+        val resolution = resolveCurrentActionKey()
         background = roundedRipple(bgCol, keyCornerRadiusPx(), colorKeyBorder)
+        contentDescription = contentDescriptionForAction(resolution.kind)
 
-        val iv = createIconView(IconDrawable(IconType.ENTER, fgCol, 18f))
+        val iv = createIconView(IconDrawable(iconTypeForAction(resolution.kind), fgCol, 18f))
+        enterKeyView = this
+        enterKeyImageView = iv
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
         attachKeyTouchFeedback(this, { handleEnterPress() })
@@ -3391,7 +3433,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleEnterPress() {
-        if (isFilterMode) {
+        val resolution = resolveCurrentActionKey()
+        if (resolution.isFilterDismiss || isFilterMode) {
             isFilterMode = false
             keyboardSearchQuery = ""
             keyboardSearchResults = emptyList()
@@ -3399,12 +3442,11 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             val conn = currentInputConnection ?: return
             manualShiftOverride = false
-            val info = currentInputEditorInfo
-            val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
-            if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+            val actionId = resolution.editorActionId
+            if (actionId != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 clearTypingSuggestionsView()
-                conn.performEditorAction(action)
+                conn.performEditorAction(actionId)
                 syncAutoCapitalization(preserveManualShift = false)
             } else {
                 commitWordBoundaryWithIntelligence(conn, "\n")
@@ -3804,6 +3846,7 @@ class ClipMaxImeService : InputMethodService() {
         toolbarStateACenterMode = 0
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
+        updateEnterKeyUI()
         syncAutoCapitalization(preserveManualShift = manualShiftOverride)
         updateCaptureMonitoring()
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
@@ -4841,6 +4884,7 @@ class ClipMaxImeService : InputMethodService() {
     enum class IconType {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
+        SEND, GO, NEXT, DONE,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -5086,6 +5130,47 @@ class ClipMaxImeService : InputMethodService() {
                         moveTo(6.4f, 6.4f)
                         lineTo(3.6f, 9.2f)
                         lineTo(6.4f, 12f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.SEND -> {
+                    val p = Path().apply {
+                        moveTo(2.4f, 7.8f)
+                        lineTo(13.8f, 2.8f)
+                        lineTo(10.8f, 13.4f)
+                        lineTo(8.0f, 9.2f)
+                        close()
+                    }
+                    canvas.drawPath(p, strokePaint)
+                    canvas.drawLine(13.8f, 2.8f, 8.0f, 9.2f, strokePaint)
+                }
+                IconType.GO -> {
+                    val p = Path().apply {
+                        moveTo(2.8f, 8.0f)
+                        lineTo(13.2f, 8.0f)
+                        moveTo(9.0f, 3.8f)
+                        lineTo(13.2f, 8.0f)
+                        lineTo(9.0f, 12.2f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.NEXT -> {
+                    val p = Path().apply {
+                        moveTo(2.4f, 8.0f)
+                        lineTo(10.8f, 8.0f)
+                        moveTo(7.2f, 4.2f)
+                        lineTo(10.8f, 8.0f)
+                        lineTo(7.2f, 11.8f)
+                        moveTo(13.2f, 4.0f)
+                        lineTo(13.2f, 12.0f)
+                    }
+                    canvas.drawPath(p, strokePaint)
+                }
+                IconType.DONE -> {
+                    val p = Path().apply {
+                        moveTo(2.8f, 8.4f)
+                        lineTo(6.4f, 12.0f)
+                        lineTo(13.4f, 4.4f)
                     }
                     canvas.drawPath(p, strokePaint)
                 }
