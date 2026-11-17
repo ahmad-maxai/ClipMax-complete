@@ -100,8 +100,20 @@ internal object InputFieldPolicy {
         val numericFieldKind: NumericFieldKind = NumericFieldKind.NONE
     )
 
+    fun isNumericField(capabilities: FieldCapabilities): Boolean =
+        capabilities.numericFieldKind != NumericFieldKind.NONE
+
+    /**
+     * Phase 2A corrective navigation policy: NUMPAD is never auto-activated when a numeric
+     * EditorInfo field receives focus; users enter it via ALPHA -> SYMBOLS (?123) -> NUMPAD (12 34).
+     */
+    fun shouldAutoActivateNumpad(
+        @Suppress("UNUSED_PARAMETER") capabilities: FieldCapabilities,
+        @Suppress("UNUSED_PARAMETER") isFilterMode: Boolean = false
+    ): Boolean = false
+
     fun shouldUseDedicatedNumpad(capabilities: FieldCapabilities, isFilterMode: Boolean = false): Boolean =
-        !isFilterMode && capabilities.numericFieldKind != NumericFieldKind.NONE
+        shouldAutoActivateNumpad(capabilities, isFilterMode)
 
     fun evaluate(inputType: Int, imeOptions: Int = 0): FieldCapabilities {
         val fieldClass = inputType and TYPE_MASK_CLASS

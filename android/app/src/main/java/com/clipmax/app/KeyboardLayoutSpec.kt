@@ -2,6 +2,8 @@ package com.clipmax.app
 
 /**
  * Ergonomic keyboard layout geometry, embedded top-row number mappings (Q-P -> 1-0),
+ * Gboard-style three-mode navigation controller (ALPHA -> SYMBOLS -> NUMPAD),
+ * 4x5 calculator numeric keypad specification, IME theme palette resolver,
  * and deterministic long-press touch state machine. Pure JVM helper.
  */
 internal object KeyboardLayoutSpec {
@@ -26,6 +28,216 @@ internal object KeyboardLayoutSpec {
 
     const val TOOLBAR_HEIGHT_DP = 38f
     const val STATUS_BANNER_HEIGHT_DP = 24f
+
+    enum class KeyboardMode(val modeIndex: Int) {
+        ALPHA(0),
+        SYMBOLS(1),
+        SYMBOLS_EXT(2),
+        NUMPAD(3)
+    }
+
+    /**
+     * Pure JVM state machine governing ClipMax three-mode keyboard navigation:
+     * - ALPHA (?123) -> SYMBOLS
+     * - SYMBOLS (12 34) -> NUMPAD
+     * - SYMBOLS (ABC) -> ALPHA
+     * - SYMBOLS (=\<) <-> SYMBOLS_EXT (?123 / ABC)
+     * - NUMPAD (ABC) -> ALPHA
+     *
+     * Never auto-activates NUMPAD on numeric EditorInfo focus.
+     * Supports temporary QWERTY entry during Search Clips and restores prior mode on exit.
+     */
+    class KeyboardModeController {
+        var currentMode: KeyboardMode = KeyboardMode.ALPHA
+            private set
+
+        private var preSearchMode: KeyboardMode? = null
+
+        fun toAlpha() {
+            currentMode = KeyboardMode.ALPHA
+        }
+
+        fun toSymbols() {
+            currentMode = KeyboardMode.SYMBOLS
+        }
+
+        fun toSymbolsExt() {
+            currentMode = KeyboardMode.SYMBOLS_EXT
+        }
+
+        fun toNumpad() {
+            currentMode = KeyboardMode.NUMPAD
+        }
+
+        fun enterSearchClips() {
+            if (preSearchMode == null) {
+                preSearchMode = currentMode
+            }
+            currentMode = KeyboardMode.ALPHA
+        }
+
+        fun exitSearchClips() {
+            val restore = preSearchMode
+            preSearchMode = null
+            if (restore != null) {
+                currentMode = restore
+            }
+        }
+
+        fun onFieldFocused(
+            @Suppress("UNUSED_PARAMETER") capabilities: InputFieldPolicy.FieldCapabilities,
+            restarting: Boolean = false
+        ) {
+            if (!restarting) {
+                preSearchMode = null
+                currentMode = KeyboardMode.ALPHA
+            }
+        }
+
+        fun onWindowHiddenReset() {
+            preSearchMode = null
+            currentMode = KeyboardMode.ALPHA
+        }
+    }
+
+    enum class NumpadKeyRole {
+        OPERATOR,
+        DIGIT,
+        BACKSPACE,
+        RETURN_ALPHA,
+        ACTION_ENTER
+    }
+
+    data class NumpadKeySpec(
+        val label: String,
+        val commitChar: String?,
+        val role: NumpadKeyRole,
+        val weight: Float,
+        val contentDescription: String
+    )
+
+    /**
+     * Canonical 4x5 calculator-style numeric keypad layout:
+     * Row 1: +   | 1 | 2 | 3 | %
+     * Row 2: −   | 4 | 5 | 6 | )
+     * Row 3: ×   | 7 | 8 | 9 | ⌫
+     * Row 4: ABC | , | 0 | = | ↵
+     *
+     * Row weights sum cleanly to 10.0f to align left/right columns flush with QWERTY/SYMBOLS
+     * while giving row 4 a visually wider centered '0' key and uncrowded 'ABC', ',', '=', '↵'.
+     */
+    object NumpadLayoutSpec {
+        const val MINUS_CHAR = "\u2212"
+        const val MULTIPLY_CHAR = "\u00D7"
+        const val TOGGLE_KEY_LABEL = "12\n34"
+
+        val ROWS: List<List<NumpadKeySpec>> = listOf(
+            listOf(
+                NumpadKeySpec("+", "+", NumpadKeyRole.OPERATOR, 1.45f, "Plus"),
+                NumpadKeySpec("1", "1", NumpadKeyRole.DIGIT, 2.366f, "1"),
+                NumpadKeySpec("2", "2", NumpadKeyRole.DIGIT, 2.368f, "2"),
+                NumpadKeySpec("3", "3", NumpadKeyRole.DIGIT, 2.366f, "3"),
+                NumpadKeySpec("%", "%", NumpadKeyRole.OPERATOR, 1.45f, "Percent")
+            ),
+            listOf(
+                NumpadKeySpec(MINUS_CHAR, MINUS_CHAR, NumpadKeyRole.OPERATOR, 1.45f, "Minus"),
+                NumpadKeySpec("4", "4", NumpadKeyRole.DIGIT, 2.366f, "4"),
+                NumpadKeySpec("5", "5", NumpadKeyRole.DIGIT, 2.368f, "5"),
+                NumpadKeySpec("6", "6", NumpadKeyRole.DIGIT, 2.366f, "6"),
+                NumpadKeySpec(")", ")", NumpadKeyRole.OPERATOR, 1.45f, "Right parenthesis")
+            ),
+            listOf(
+                NumpadKeySpec(MULTIPLY_CHAR, MULTIPLY_CHAR, NumpadKeyRole.OPERATOR, 1.45f, "Multiply"),
+                NumpadKeySpec("7", "7", NumpadKeyRole.DIGIT, 2.366f, "7"),
+                NumpadKeySpec("8", "8", NumpadKeyRole.DIGIT, 2.368f, "8"),
+                NumpadKeySpec("9", "9", NumpadKeyRole.DIGIT, 2.366f, "9"),
+                NumpadKeySpec("\u232B", null, NumpadKeyRole.BACKSPACE, 1.45f, "Backspace")
+            ),
+            listOf(
+                NumpadKeySpec("ABC", null, NumpadKeyRole.RETURN_ALPHA, 1.45f, "Return to letters"),
+                NumpadKeySpec(",", ",", NumpadKeyRole.OPERATOR, 1.40f, "Comma"),
+                NumpadKeySpec("0", "0", NumpadKeyRole.DIGIT, 4.30f, "0"),
+                NumpadKeySpec("=", "=", NumpadKeyRole.OPERATOR, 1.40f, "Equals"),
+                NumpadKeySpec("\u21B5", null, NumpadKeyRole.ACTION_ENTER, 1.45f, "Enter")
+            )
+        )
+    }
+
+    data class ImeThemePalette(
+        val isClassicTheme: Boolean,
+        val isNightMode: Boolean,
+        val colorBg: Int,
+        val colorKeyBg: Int,
+        val colorKeyBorder: Int,
+        val colorKeyText: Int,
+        val colorModBg: Int,
+        val colorModText: Int,
+        val colorAccent: Int,
+        val colorAccentText: Int,
+        val colorHintText: Int,
+        val colorChipBg: Int,
+        val colorChipBorder: Int,
+        val colorSnippetBg: Int,
+        val colorSnippetBorder: Int,
+        val colorActiveTabBg: Int,
+        val colorActiveTabText: Int,
+        val colorDangerText: Int
+    ) {
+        val enterKeyBg: Int get() = if (isClassicTheme) colorAccent else colorKeyBg
+        val enterKeyFg: Int get() = if (isClassicTheme) colorAccentText else colorKeyText
+    }
+
+    fun resolveThemePalette(savedTheme: String?, systemNightMode: Boolean): ImeThemePalette {
+        val isClassic = savedTheme == "classic"
+        val isNight = when (savedTheme) {
+            "dark", "graphite" -> true
+            "light", "classic_light" -> false
+            "classic" -> systemNightMode
+            else -> true
+        }
+        return ImeThemePalette(
+            isClassicTheme = isClassic,
+            isNightMode = isNight,
+            colorBg = if (isClassic && !isNight) 0xFFECEFF1.toInt()
+                      else if (isClassic) 0xFF151C18.toInt()
+                      else 0xFF0E0E10.toInt(),
+            colorKeyBg = if (isClassic && !isNight) 0xFFFFFFFF.toInt()
+                         else if (isClassic) 0xFF223029.toInt()
+                         else 0xFF252528.toInt(),
+            colorKeyBorder = if (isClassic && !isNight) 0xFFD1D9D4.toInt()
+                             else if (isClassic) 0xFF2C3D35.toInt()
+                             else 0xFF333338.toInt(),
+            colorKeyText = if (isClassic && !isNight) 0xFF111827.toInt()
+                           else if (isClassic) 0xFFEAF1ED.toInt()
+                           else 0xFFFFFFFF.toInt(),
+            colorModBg = if (isClassic && !isNight) 0xFFDFE5E1.toInt()
+                         else if (isClassic) 0xFF1A2520.toInt()
+                         else 0xFF1C1C1F.toInt(),
+            colorModText = if (isClassic && !isNight) 0xFF374151.toInt()
+                           else if (isClassic) 0xFF9CB3A9.toInt()
+                           else 0xFFA0A0A8.toInt(),
+            colorAccent = if (isClassic) (if (isNight) 0xFF2DD4BF.toInt() else 0xFF0D9488.toInt())
+                          else 0xFFFFFFFF.toInt(),
+            colorAccentText = if (isClassic) (if (isNight) 0xFF0A1F18.toInt() else 0xFFFFFFFF.toInt())
+                              else 0xFF111111.toInt(),
+            colorHintText = if (isClassic) (if (isNight) 0xFF7A8E85.toInt() else 0xFF8A9992.toInt())
+                            else 0xFF8E8E93.toInt(),
+            colorChipBg = if (isClassic) (if (isNight) 0xFF1E2C26.toInt() else 0xFFFFFFFF.toInt())
+                          else 0xFF242428.toInt(),
+            colorChipBorder = if (isClassic) (if (isNight) 0xFF2C3D35.toInt() else 0xFFD1D9D4.toInt())
+                              else 0xFF36363C.toInt(),
+            colorSnippetBg = if (isClassic) (if (isNight) 0xFF141C18.toInt() else 0xFFF3F6F4.toInt())
+                             else 0xFF1A1A1E.toInt(),
+            colorSnippetBorder = if (isClassic) (if (isNight) 0xFF23322B.toInt() else 0xFFE2E8E4.toInt())
+                                 else 0xFF2C2C32.toInt(),
+            colorActiveTabBg = if (isClassic) (if (isNight) 0xFF1A3A32.toInt() else 0xFFCCFBF1.toInt())
+                               else 0xFF32333A.toInt(),
+            colorActiveTabText = if (isClassic) (if (isNight) 0xFF2DD4BF.toInt() else 0xFF0F766E.toInt())
+                                 else 0xFFFFFFFF.toInt(),
+            colorDangerText = if (isClassic) (if (isNight) 0xFFF87171.toInt() else 0xFFDC2626.toInt())
+                              else 0xFFF87171.toInt()
+        )
+    }
 
     data class ViewportSpecDp(
         val toolbarHeightDp: Float,
