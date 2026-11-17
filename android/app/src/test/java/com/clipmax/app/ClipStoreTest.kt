@@ -226,4 +226,94 @@ class ClipStoreTest {
         assertEquals("Clip B", updatedItems[3].title)
         assertEquals("Clip A", updatedItems[4].title)
     }
+
+    @Test
+    fun testAtomicHistoryTransactionForMergeAndSplitUndoRedo() {
+        val listenerEvents = mutableListOf<Int>()
+        val listener: () -> Unit = { listenerEvents.add(store.listItems().size) }
+        ClipStore.addChangeListener(listener)
+        try {
+            val t0 = 2_000_000L
+            val card1 = store.save(null, "First Card", "Alpha line", pinned = false, savedAt = t0)
+            val card2 = store.save(null, "Second Card", "Beta line", pinned = true, savedAt = t0 + 500L)
+            listenerEvents.clear()
+
+            // 1. Merge -> Undo -> Redo
+            val mergeRes = store.merge(card1.id, card2.id)
+            assertEquals(1, listenerEvents.size)
+            assertEquals(1, store.listItems().size)
+
+            // Undo Merge via atomic transaction
+            store.applyHistoryTransaction(
+                deleteIds = listOf(mergeRes.mergedItem.id),
+                restoreRecords = listOf(
+                    RestoreRecord(card1.id, card1.title, mergeRes.sourceText, card1.pinned, card1.createdAt),
+                    RestoreRecord(card2.id, card2.title, mergeRes.targetText, card2.pinned, card2.createdAt)
+                )
+            )
+            // Single notification fired after transaction completed
+            assertEquals(2, listenerEvents.size)
+            assertEquals(2, store.listItems().size)
+            assertNull(store.getItem(mergeRes.mergedItem.id))
+            assertEquals("Alpha line", store.readContent(store.getItem(card1.id)!!))
+            assertEquals("Beta line", store.readContent(store.getItem(card2.id)!!))
+
+            // Redo Merge via atomic transaction
+            store.applyHistoryTransaction(
+                deleteIds = listOf(card1.id, card2.id),
+                restoreRecords = listOf(
+                    RestoreRecord(
+                        mergeRes.mergedItem.id,
+                        mergeRes.mergedItem.title,
+                        "${mergeRes.sourceText}\n${mergeRes.targetText}",
+                        mergeRes.mergedItem.pinned,
+                        mergeRes.mergedItem.createdAt
+                    )
+                )
+            )
+            assertEquals(3, listenerEvents.size)
+            assertEquals(1, store.listItems().size)
+            val reMerged = store.getItem(mergeRes.mergedItem.id)!!
+            assertEquals("Alpha line\nBeta line", store.readContent(reMerged))
+            assertTrue(reMerged.pinned)
+
+            // 2. Split -> Undo -> Redo
+            val splitRes = store.split(reMerged.id)!!
+            assertEquals(4, listenerEvents.size)
+            assertEquals(2, store.listItems().size)
+
+            store.applyHistoryTransaction(
+                deleteIds = listOf(splitRes.part1Item.id, splitRes.part2Item.id),
+                restoreRecords = listOf(
+                    RestoreRecord(
+                        splitRes.originalItem.id,
+                        splitRes.originalItem.title,
+                        splitRes.originalText,
+                        splitRes.originalItem.pinned,
+                        splitRes.originalItem.createdAt
+                    )
+                )
+            )
+            assertEquals(5, listenerEvents.size)
+            assertEquals(1, store.listItems().size)
+            assertEquals("Alpha line\nBeta line", store.readContent(store.getItem(reMerged.id)!!))
+
+            store.applyHistoryTransaction(
+                deleteIds = listOf(splitRes.originalItem.id),
+                restoreRecords = listOf(
+                    RestoreRecord(splitRes.part1Item.id, splitRes.part1Item.title, splitRes.part1Text, splitRes.part1Item.pinned, splitRes.part1Item.createdAt),
+                    RestoreRecord(splitRes.part2Item.id, splitRes.part2Item.title, splitRes.part2Text, splitRes.part2Item.pinned, splitRes.part2Item.createdAt)
+                )
+            )
+            assertEquals(6, listenerEvents.size)
+            assertEquals(2, store.listItems().size)
+            assertEquals(
+                "Alpha line\nBeta line",
+                store.readContent(store.getItem(splitRes.part1Item.id)!!) +
+                    store.readContent(store.getItem(splitRes.part2Item.id)!!)
+            )
+        } finally {
+            ClipStore.removeChangeListener(listener)
+        }
+    }
 }

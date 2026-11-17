@@ -58,6 +58,14 @@ data class SplitResult(
     val part2Text: String
 )
 
+data class RestoreRecord(
+    val id: String,
+    val title: String,
+    val content: String,
+    val pinned: Boolean,
+    val createdAt: Long
+)
+
 /**
  * Local-only storage. Content versions are written first, then a small metadata record is
  * atomically replaced. A crash before metadata commit leaves an unreferenced file, not a
@@ -138,47 +146,51 @@ class ClipStore(root: File) {
     /** Saves a selected text Reader incrementally, without assembling a second full String in ClipMax. */
     fun saveFromReader(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
         val saved = synchronized(storeLock) {
-            val cleanTitle = title.trim().ifEmpty { "Untitled" }
-            require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
-            val prior = id?.let { getItem(it) }
-            val stableId = prior?.id ?: (if (id != null && safeId(id)) id else UUID.randomUUID().toString())
-            val now = savedAt ?: System.currentTimeMillis()
-            val contentName = "$stableId-$now-${UUID.randomUUID().toString().take(8)}.txt"
-            val finalContent = File(contentDir, contentName)
-            val tempContent = File(contentDir, ".$contentName.tmp")
-            var characterCount = 0
-            var byteCount = 0L
-            try {
-                FileOutputStream(tempContent).use { raw ->
-                    val limited = LimitedOutputStream(raw, MAX_ITEM_BYTES)
-                    BufferedWriter(OutputStreamWriter(limited, StandardCharsets.UTF_8), 32 * 1024).use { writer ->
-                        characterCount = reader.use { source -> writeReaderContent(source, writer) }
-                        writer.flush()
-                        byteCount = limited.bytesWritten
-                        raw.fd.sync()
-                    }
-                }
-                moveReplace(tempContent, finalContent)
-            } catch (e: Exception) {
-                tempContent.delete()
-                throw e
-            }
-            val item = ClipItem(
-                id = stableId,
-                title = cleanTitle,
-                createdAt = prior?.createdAt ?: now,
-                modifiedAt = now,
-                characterCount = characterCount,
-                sizeBytes = byteCount,
-                pinned = pinned ?: prior?.pinned ?: false,
-                contentFile = contentName
-            )
-            writeMetadataAtomic(item)
-            prior?.let { old -> if (old.contentFile != contentName) File(contentDir, old.contentFile).delete() }
-            item
+            saveInternal(id, title, reader, pinned, savedAt)
         }
         notifyChanged()
         return saved
+    }
+
+    private fun saveInternal(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
+        val cleanTitle = title.trim().ifEmpty { "Untitled" }
+        require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
+        val prior = id?.let { getItem(it) }
+        val stableId = prior?.id ?: (if (id != null && safeId(id)) id else UUID.randomUUID().toString())
+        val now = savedAt ?: System.currentTimeMillis()
+        val contentName = "$stableId-$now-${UUID.randomUUID().toString().take(8)}.txt"
+        val finalContent = File(contentDir, contentName)
+        val tempContent = File(contentDir, ".$contentName.tmp")
+        var characterCount = 0
+        var byteCount = 0L
+        try {
+            FileOutputStream(tempContent).use { raw ->
+                val limited = LimitedOutputStream(raw, MAX_ITEM_BYTES)
+                BufferedWriter(OutputStreamWriter(limited, StandardCharsets.UTF_8), 32 * 1024).use { writer ->
+                    characterCount = reader.use { source -> writeReaderContent(source, writer) }
+                    writer.flush()
+                    byteCount = limited.bytesWritten
+                    raw.fd.sync()
+                }
+            }
+            moveReplace(tempContent, finalContent)
+        } catch (e: Exception) {
+            tempContent.delete()
+            throw e
+        }
+        val item = ClipItem(
+            id = stableId,
+            title = cleanTitle,
+            createdAt = prior?.createdAt ?: now,
+            modifiedAt = now,
+            characterCount = characterCount,
+            sizeBytes = byteCount,
+            pinned = pinned ?: prior?.pinned ?: false,
+            contentFile = contentName
+        )
+        writeMetadataAtomic(item)
+        prior?.let { old -> if (old.contentFile != contentName) File(contentDir, old.contentFile).delete() }
+        return item
     }
 
     private fun writeReaderContent(reader: Reader, writer: BufferedWriter): Int {
@@ -275,14 +287,18 @@ class ClipStore(root: File) {
 
     fun delete(id: String): Boolean {
         val removed = synchronized(storeLock) {
-            val item = getItem(id) ?: return@synchronized false
-            val metaFile = File(metadataDir, "$id.bin")
-            if (!metaFile.delete()) throw IllegalStateException("Could not delete item metadata.")
-            File(contentDir, item.contentFile).delete()
-            true
+            deleteInternal(id)
         }
         if (removed) notifyChanged()
         return removed
+    }
+
+    private fun deleteInternal(id: String): Boolean {
+        val item = getItem(id) ?: return false
+        val metaFile = File(metadataDir, "$id.bin")
+        if (!metaFile.delete()) throw IllegalStateException("Could not delete item metadata.")
+        File(contentDir, item.contentFile).delete()
+        return true
     }
 
     fun deleteAll() {
@@ -311,23 +327,27 @@ class ClipStore(root: File) {
         }
     }
 
-    fun merge(sourceId: String, targetId: String): MergeResult = synchronized(storeLock) {
-        require(sourceId != targetId) { "Cannot merge a card with itself." }
-        val source = getItem(sourceId) ?: throw IllegalArgumentException("Source item not found: $sourceId")
-        val target = getItem(targetId) ?: throw IllegalArgumentException("Target item not found: $targetId")
-        val sourceText = readContent(source)
-        val targetText = readContent(target)
-        val mergedText = "$sourceText\n$targetText"
-        val mergedTitle = source.title.take(180)
-        val mergedItem = save(
-            id = null,
-            title = mergedTitle,
-            content = mergedText,
-            pinned = source.pinned || target.pinned
-        )
-        delete(sourceId)
-        delete(targetId)
-        MergeResult(mergedItem, source, sourceText, target, targetText)
+    fun merge(sourceId: String, targetId: String): MergeResult {
+        val result = synchronized(storeLock) {
+            require(sourceId != targetId) { "Cannot merge a card with itself." }
+            val source = getItem(sourceId) ?: throw IllegalArgumentException("Source item not found: $sourceId")
+            val target = getItem(targetId) ?: throw IllegalArgumentException("Target item not found: $targetId")
+            val sourceText = readContent(source)
+            val targetText = readContent(target)
+            val mergedText = "$sourceText\n$targetText"
+            val mergedTitle = source.title.take(180)
+            val mergedItem = saveInternal(
+                id = null,
+                title = mergedTitle,
+                reader = StringReader(mergedText),
+                pinned = source.pinned || target.pinned
+            )
+            deleteInternal(sourceId)
+            deleteInternal(targetId)
+            MergeResult(mergedItem, source, sourceText, target, targetText)
+        }
+        notifyChanged()
+        return result
     }
 
     fun findSafeMidpoint(text: String): Int {
@@ -377,25 +397,51 @@ class ClipStore(root: File) {
         return chosen.coerceIn(1, text.length - 1)
     }
 
-    fun split(id: String): SplitResult? = synchronized(storeLock) {
-        val original = getItem(id) ?: return@synchronized null
-        val fullText = readContent(original)
-        if (fullText.length < 2) return@synchronized null
-        val splitIndex = findSafeMidpoint(fullText)
-        if (splitIndex <= 0 || splitIndex >= fullText.length) return@synchronized null
+    fun split(id: String): SplitResult? {
+        val result = synchronized(storeLock) {
+            val original = getItem(id) ?: return@synchronized null
+            val fullText = readContent(original)
+            if (fullText.length < 2) return@synchronized null
+            val splitIndex = findSafeMidpoint(fullText)
+            if (splitIndex <= 0 || splitIndex >= fullText.length) return@synchronized null
 
-        val part1Text = fullText.substring(0, splitIndex)
-        val part2Text = fullText.substring(splitIndex)
-        if (part1Text.isEmpty() || part2Text.isEmpty()) return@synchronized null
+            val part1Text = fullText.substring(0, splitIndex)
+            val part2Text = fullText.substring(splitIndex)
+            if (part1Text.isEmpty() || part2Text.isEmpty()) return@synchronized null
 
-        val baseTitle = original.title.replace(Regex("\\s*\\(Part \\d+\\)$"), "")
-        val title1 = "$baseTitle (Part 1)".take(180)
-        val title2 = "$baseTitle (Part 2)".take(180)
+            val baseTitle = original.title.replace(Regex("\\s*\\(Part \\d+\\)$"), "")
+            val title1 = "$baseTitle (Part 1)".take(180)
+            val title2 = "$baseTitle (Part 2)".take(180)
 
-        val item1 = save(null, title1, part1Text, pinned = original.pinned, savedAt = original.createdAt)
-        val item2 = save(null, title2, part2Text, pinned = original.pinned, savedAt = original.createdAt + 1L)
-        delete(id)
-        SplitResult(original, fullText, item1, part1Text, item2, part2Text)
+            val item1 = saveInternal(null, title1, StringReader(part1Text), pinned = original.pinned, savedAt = original.createdAt)
+            val item2 = saveInternal(null, title2, StringReader(part2Text), pinned = original.pinned, savedAt = original.createdAt + 1L)
+            deleteInternal(id)
+            SplitResult(original, fullText, item1, part1Text, item2, part2Text)
+        }
+        if (result != null) notifyChanged()
+        return result
+    }
+
+    /**
+     * Atomically applies an Undo or Redo snapshot transaction under [storeLock]
+     * with a single change notification so listeners never observe partial state.
+     */
+    fun applyHistoryTransaction(deleteIds: List<String>, restoreRecords: List<RestoreRecord>) {
+        synchronized(storeLock) {
+            for (delId in deleteIds) {
+                deleteInternal(delId)
+            }
+            for (rec in restoreRecords) {
+                saveInternal(
+                    id = rec.id,
+                    title = rec.title,
+                    reader = StringReader(rec.content),
+                    pinned = rec.pinned,
+                    savedAt = rec.createdAt
+                )
+            }
+        }
+        notifyChanged()
     }
 
     fun search(query: String): List<ClipItem> {

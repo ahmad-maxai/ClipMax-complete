@@ -195,4 +195,66 @@ class InsertionHistoryManagerTest {
             tempDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun testComposeRestartInputCompatibilityAcrossDynamicFlags() {
+        val history = InsertionHistoryManager()
+        // Jetpack Compose apps like ChatGPT often restart input with dynamic fieldId/inputType flags
+        val initialTarget = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 0, 0x20001, sessionId = 7L)
+        val restartedTarget = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 0, 0x24001, sessionId = 7L)
+        val switchedFieldSameApp = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 0, 0x20001, sessionId = 8L)
+
+        val editor = FakeHostEditorGateway(initialText = "Prompt: ", target = initialTarget)
+        val clip = "Summarize this paragraph."
+        val beforeAnchor = editor.textBeforeCursor(48).orEmpty()
+        val afterAnchor = editor.textAfterCursor(48).orEmpty()
+        assertTrue(editor.commitText(clip))
+        assertTrue(history.recordClipInsertion(initialTarget, clip, beforeAnchor, afterAnchor))
+
+        // Same session restart preserves undo/redo eligibility
+        editor.target = restartedTarget
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        assertTrue(history.undo(editor).success)
+        assertEquals("Prompt: ", editor.buffer.toString())
+        assertTrue(history.canSafelyRedo(editor).allowed)
+        assertTrue(history.redo(editor).success)
+        assertEquals("Prompt: Summarize this paragraph.", editor.buffer.toString())
+
+        // Focusing a different field (new sessionId) blocks cross-field undo
+        editor.target = switchedFieldSameApp
+        assertFalse(history.canSafelyUndo(editor).allowed)
+    }
+
+    @Test
+    fun testHostLineEndingNormalizationAndRollbackOnOptimisticRejection() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 1, 1, sessionId = 3L)
+        val editor = FakeHostEditorGateway(initialText = "Intro\n", target = target)
+
+        // Saved clip contains CRLF, but host editor normalizes newlines to LF
+        val clipWithCrlf = "Line 1\r\nLine 2"
+        val normalizedClip = "Line 1\nLine 2"
+        assertTrue(editor.commitText(normalizedClip))
+        assertTrue(history.recordClipInsertion(target, clipWithCrlf, "Intro\r\n", ""))
+
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoRes = history.undo(editor)
+        assertTrue(undoRes.success)
+        // Must delete exact 13 normalized chars ("Line 1\nLine 2"), not 14, preserving "Intro\n"
+        assertEquals("Intro\n", editor.buffer.toString())
+
+        // Rollback when an optimistic IPC InputConnection returns true but silently ignores edit
+        val entry = undoRes.entry!!
+        assertTrue(history.rollbackLastUndo(entry))
+        assertFalse(history.hasAnyRedoEntries())
+        assertEquals(entry, history.peekUndo())
+
+        // Perform undo again and simulate redo + rollback on silent rejection
+        assertTrue(history.undo(editor).success)
+        val redoRes = history.redo(editor)
+        assertTrue(redoRes.success)
+        assertTrue(history.rollbackLastRedo(redoRes.entry!!))
+        assertFalse(history.hasAnyUndoEntries())
+        assertTrue(history.hasAnyRedoEntries())
+    }
 }

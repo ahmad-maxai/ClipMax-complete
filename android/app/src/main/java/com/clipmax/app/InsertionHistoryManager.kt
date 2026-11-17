@@ -28,8 +28,21 @@ internal class InsertionHistoryManager(
     data class EditorTarget(
         val packageName: String?,
         val fieldId: Int,
-        val inputType: Int
-    )
+        val inputType: Int,
+        val sessionId: Long = 0L
+    ) {
+        fun isCompatibleWith(other: EditorTarget): Boolean {
+            if (packageName != other.packageName) return false
+            if (sessionId != other.sessionId) return false
+            if ((inputType and InputFieldPolicy.TYPE_MASK_CLASS) != (other.inputType and InputFieldPolicy.TYPE_MASK_CLASS)) {
+                return false
+            }
+            if (fieldId != 0 && other.fieldId != 0 && fieldId != other.fieldId) {
+                return false
+            }
+            return true
+        }
+    }
 
     data class HistoryEntry(
         val kind: ActionKind,
@@ -80,8 +93,8 @@ internal class InsertionHistoryManager(
     fun clearForTargetChangeIfNeeded(newTarget: EditorTarget) {
         val topUndo = undoStack.peekFirst()
         val topRedo = redoStack.peekFirst()
-        if ((topUndo != null && topUndo.target != newTarget) ||
-            (topRedo != null && topRedo.target != newTarget)
+        if ((topUndo != null && !topUndo.target.isCompatibleWith(newTarget)) ||
+            (topRedo != null && !topRedo.target.isCompatibleWith(newTarget))
         ) {
             immediateBackspaceAutocorrectActive = false
         }
@@ -141,12 +154,76 @@ internal class InsertionHistoryManager(
         return true
     }
 
+    private fun normalizeLineEndings(text: String): String {
+        if (!text.contains('\r')) return text
+        return text.replace("\r\n", "\n").replace('\r', '\n')
+    }
+
+    private fun suffixMatchesAnchor(prefix: String, anchor: String): Boolean {
+        if (anchor.isEmpty()) return true
+        val rawExpected = if (prefix.length >= anchor.length) anchor else anchor.takeLast(prefix.length)
+        if (rawExpected.isEmpty() || prefix.endsWith(rawExpected)) return true
+        val normAnchor = normalizeLineEndings(anchor)
+        if (normAnchor != anchor) {
+            val normExpected = if (prefix.length >= normAnchor.length) normAnchor else normAnchor.takeLast(prefix.length)
+            if (normExpected.isEmpty() || prefix.endsWith(normExpected)) return true
+        }
+        return false
+    }
+
+    private fun resolveUndoMatchedText(before: String, entry: HistoryEntry): String? {
+        if (before.length >= entry.insertedText.length && before.endsWith(entry.insertedText)) {
+            val prefix = before.substring(0, before.length - entry.insertedText.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return entry.insertedText
+            }
+        }
+        val normInserted = normalizeLineEndings(entry.insertedText)
+        if (normInserted != entry.insertedText && before.length >= normInserted.length && before.endsWith(normInserted)) {
+            val prefix = before.substring(0, before.length - normInserted.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return normInserted
+            }
+        }
+        return null
+    }
+
+    private fun resolveRedoMatchedOriginal(before: String, entry: HistoryEntry): String? {
+        if (entry.originalText.isEmpty()) {
+            return if (suffixMatchesAnchor(before, entry.beforeAnchor)) "" else null
+        }
+        if (before.length >= entry.originalText.length && before.endsWith(entry.originalText)) {
+            val prefix = before.substring(0, before.length - entry.originalText.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return entry.originalText
+            }
+        }
+        val normOrig = normalizeLineEndings(entry.originalText)
+        if (normOrig != entry.originalText && before.length >= normOrig.length && before.endsWith(normOrig)) {
+            val prefix = before.substring(0, before.length - normOrig.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return normOrig
+            }
+        }
+        return null
+    }
+
+    private fun checkAfterAnchor(gateway: HostEditorGateway, afterAnchor: String): Availability? {
+        if (afterAnchor.isEmpty()) return null
+        val after = gateway.textAfterCursor(afterAnchor.length)
+            ?: return Availability(false, "App did not expose trailing text.")
+        if (after.startsWith(afterAnchor)) return null
+        val normAnchor = normalizeLineEndings(afterAnchor)
+        if (normAnchor != afterAnchor && after.startsWith(normAnchor)) return null
+        return Availability(false, "Trailing text changed; cannot safely modify.")
+    }
+
     fun canSafelyUndo(gateway: HostEditorGateway): Availability {
         val entry = undoStack.peekFirst() ?: return Availability(false, "Nothing to undo.")
         if (gateway.isPasswordField()) {
             return Availability(false, "Insertion undo disabled in password fields.")
         }
-        if (entry.target != gateway.currentTarget()) {
+        if (!entry.target.isCompatibleWith(gateway.currentTarget())) {
             return Availability(false, "Input field changed; cannot safely undo.")
         }
         if (gateway.hasActiveSelection()) {
@@ -157,30 +234,12 @@ internal class InsertionHistoryManager(
         val before = gateway.textBeforeCursor(requestLen)
             ?: return Availability(false, "App did not expose surrounding text.")
 
-        if (before.length < entry.insertedText.length || !before.endsWith(entry.insertedText)) {
+        val matched = resolveUndoMatchedText(before, entry)
+        if (matched == null) {
             return Availability(false, "Inserted text or cursor position changed.")
         }
 
-        if (entry.beforeAnchor.isNotEmpty()) {
-            val prefixEnd = before.length - entry.insertedText.length
-            val prefix = before.substring(0, prefixEnd)
-            val expectedAnchor = if (prefix.length >= entry.beforeAnchor.length) {
-                entry.beforeAnchor
-            } else {
-                entry.beforeAnchor.takeLast(prefix.length)
-            }
-            if (expectedAnchor.isNotEmpty() && !prefix.endsWith(expectedAnchor)) {
-                return Availability(false, "Text before insertion changed.")
-            }
-        }
-
-        if (entry.afterAnchor.isNotEmpty()) {
-            val after = gateway.textAfterCursor(entry.afterAnchor.length)
-                ?: return Availability(false, "App did not expose trailing text.")
-            if (!after.startsWith(entry.afterAnchor)) {
-                return Availability(false, "Trailing text changed; cannot safely undo.")
-            }
-        }
+        checkAfterAnchor(gateway, entry.afterAnchor)?.let { return it }
 
         return Availability(true, null)
     }
@@ -190,32 +249,19 @@ internal class InsertionHistoryManager(
         if (gateway.isPasswordField()) {
             return Availability(false, "Insertion redo disabled in password fields.")
         }
-        if (entry.target != gateway.currentTarget()) {
+        if (!entry.target.isCompatibleWith(gateway.currentTarget())) {
             return Availability(false, "Input field changed; cannot safely redo.")
         }
         if (gateway.hasActiveSelection()) {
             return Availability(false, "Text is selected; cannot safely redo.")
         }
 
-        val expectedTail = entry.beforeAnchor + entry.originalText
-        if (expectedTail.isNotEmpty()) {
-            val before = gateway.textBeforeCursor(expectedTail.length)
+        val expectedTailLen = entry.beforeAnchor.length + entry.originalText.length
+        if (expectedTailLen > 0) {
+            val before = gateway.textBeforeCursor(expectedTailLen)
                 ?: return Availability(false, "App did not expose surrounding text.")
-            if (entry.originalText.isNotEmpty() &&
-                (before.length < entry.originalText.length || !before.endsWith(entry.originalText))
-            ) {
-                return Availability(false, "Word changed; cannot safely redo.")
-            }
-            val beforeWithoutOriginal = before.dropLast(entry.originalText.length)
-            if (entry.beforeAnchor.isNotEmpty()) {
-                val expectedAnchor = if (beforeWithoutOriginal.length >= entry.beforeAnchor.length) {
-                    entry.beforeAnchor
-                } else {
-                    entry.beforeAnchor.takeLast(beforeWithoutOriginal.length)
-                }
-                if (expectedAnchor.isNotEmpty() && !beforeWithoutOriginal.endsWith(expectedAnchor)) {
-                    return Availability(false, "Cursor moved or text changed; cannot safely redo.")
-                }
+            if (resolveRedoMatchedOriginal(before, entry) == null) {
+                return Availability(false, "Cursor moved or text changed; cannot safely redo.")
             }
         } else {
             // Confirm host still supports reading surrounding text cleanly
@@ -223,13 +269,7 @@ internal class InsertionHistoryManager(
                 ?: return Availability(false, "App did not expose surrounding text.")
         }
 
-        if (entry.afterAnchor.isNotEmpty()) {
-            val after = gateway.textAfterCursor(entry.afterAnchor.length)
-                ?: return Availability(false, "App did not expose trailing text.")
-            if (!after.startsWith(entry.afterAnchor)) {
-                return Availability(false, "Trailing text changed; cannot safely redo.")
-            }
-        }
+        checkAfterAnchor(gateway, entry.afterAnchor)?.let { return it }
 
         return Availability(true, null)
     }
@@ -240,8 +280,14 @@ internal class InsertionHistoryManager(
             return OperationResult(false, check.reason ?: "Undo unavailable.")
         }
         val entry = undoStack.peekFirst() ?: return OperationResult(false, "Nothing to undo.")
+        val requestLen = entry.insertedText.length + entry.beforeAnchor.length
+        val before = gateway.textBeforeCursor(requestLen)
+            ?: return OperationResult(false, "App did not expose surrounding text.")
+        val matchedInserted = resolveUndoMatchedText(before, entry)
+            ?: return OperationResult(false, "Inserted text or cursor position changed.")
+
         val ok = gateway.runBatchEdit {
-            val deleted = gateway.deleteBeforeCursor(entry.insertedText.length)
+            val deleted = gateway.deleteBeforeCursor(matchedInserted.length)
             if (!deleted) return@runBatchEdit false
             if (entry.originalText.isNotEmpty()) {
                 gateway.commitText(entry.originalText)
@@ -258,7 +304,7 @@ internal class InsertionHistoryManager(
         val label = if (entry.kind == ActionKind.AUTOCORRECT) {
             "Reverted correction to \"${entry.rawOriginalWord}\""
         } else {
-            "Undid clip insertion (${entry.insertedText.length} chars)"
+            "Undid clip insertion (${matchedInserted.length} chars)"
         }
         return OperationResult(true, label, entry)
     }
@@ -269,9 +315,17 @@ internal class InsertionHistoryManager(
             return OperationResult(false, check.reason ?: "Redo unavailable.")
         }
         val entry = redoStack.peekFirst() ?: return OperationResult(false, "Nothing to redo.")
+        val expectedTailLen = entry.beforeAnchor.length + entry.originalText.length
+        val matchedOriginal = if (expectedTailLen > 0) {
+            val before = gateway.textBeforeCursor(expectedTailLen)
+                ?: return OperationResult(false, "App did not expose surrounding text.")
+            resolveRedoMatchedOriginal(before, entry)
+                ?: return OperationResult(false, "Cursor moved or text changed; cannot safely redo.")
+        } else ""
+
         val ok = gateway.runBatchEdit {
-            if (entry.originalText.isNotEmpty()) {
-                if (!gateway.deleteBeforeCursor(entry.originalText.length)) return@runBatchEdit false
+            if (matchedOriginal.isNotEmpty()) {
+                if (!gateway.deleteBeforeCursor(matchedOriginal.length)) return@runBatchEdit false
             }
             gateway.commitText(entry.insertedText)
         }
@@ -287,6 +341,28 @@ internal class InsertionHistoryManager(
             "Redid clip insertion (${entry.insertedText.length} chars)"
         }
         return OperationResult(true, label, entry)
+    }
+
+    /**
+     * Rolls back the most recent undo transition if an optimistic asynchronous InputConnection
+     * silently ignored or rejected the deletion in the host editor.
+     */
+    fun rollbackLastUndo(entry: HistoryEntry): Boolean {
+        if (redoStack.peekFirst() !== entry) return false
+        redoStack.removeFirst()
+        pushUndo(entry)
+        return true
+    }
+
+    /**
+     * Rolls back the most recent redo transition if an optimistic asynchronous InputConnection
+     * silently ignored or rejected the re-insertion in the host editor.
+     */
+    fun rollbackLastRedo(entry: HistoryEntry): Boolean {
+        if (undoStack.peekFirst() !== entry) return false
+        undoStack.removeFirst()
+        pushRedo(entry)
+        return true
     }
 
     /**
@@ -309,8 +385,16 @@ internal class InsertionHistoryManager(
             immediateBackspaceAutocorrectActive = false
             return null
         }
+        val before = gateway.textBeforeCursor(entry.insertedText.length + entry.beforeAnchor.length) ?: run {
+            immediateBackspaceAutocorrectActive = false
+            return null
+        }
+        val matched = resolveUndoMatchedText(before, entry) ?: run {
+            immediateBackspaceAutocorrectActive = false
+            return null
+        }
         val ok = gateway.runBatchEdit {
-            if (!gateway.deleteBeforeCursor(entry.insertedText.length)) return@runBatchEdit false
+            if (!gateway.deleteBeforeCursor(matched.length)) return@runBatchEdit false
             gateway.commitText(entry.rawOriginalWord)
         }
         immediateBackspaceAutocorrectActive = false
