@@ -100,6 +100,41 @@ internal object KeyboardLayoutSpec {
         }
     }
 
+    data class ToolbarStripState(
+        val showClipboardStrip: Boolean,
+        val showSuggestionsStrip: Boolean
+    )
+
+    /**
+     * Resolves center toolbar strip visibility.
+     * In NUMPAD mode, both the horizontal clipboard snippet strip and suggestions strip
+     * are completely hidden so nothing crowds or expands the numpad viewport.
+     */
+    fun resolveToolbarStripState(
+        mode: KeyboardMode,
+        centerMode: Int,
+        isPasswordTarget: Boolean,
+        isFilterMode: Boolean,
+        isSuggestionsEnabled: Boolean,
+        allowSuggestions: Boolean
+    ): ToolbarStripState {
+        if (mode == KeyboardMode.NUMPAD) {
+            return ToolbarStripState(
+                showClipboardStrip = false,
+                showSuggestionsStrip = false
+            )
+        }
+        val showSuggest = centerMode == 1 &&
+            !isPasswordTarget &&
+            !isFilterMode &&
+            isSuggestionsEnabled &&
+            allowSuggestions
+        return ToolbarStripState(
+            showClipboardStrip = !showSuggest,
+            showSuggestionsStrip = showSuggest
+        )
+    }
+
     enum class NumpadKeyRole {
         OPERATOR,
         DIGIT,

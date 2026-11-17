@@ -704,7 +704,11 @@ class ClipMaxImeService : InputMethodService() {
             val iv = createIconView(IconDrawable(IconType.CLIPBOARD, colorKeyText, 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
-                if (toolbarStateACenterMode == 1 && !isClipboardPanelOpen && !isSettingsOpen) {
+                if (toolbarStateACenterMode == 1 &&
+                    keyboardMode != KeyboardLayoutSpec.KeyboardMode.NUMPAD &&
+                    !isClipboardPanelOpen &&
+                    !isSettingsOpen
+                ) {
                     showClipboardPillsInToolbar()
                 } else {
                     pinnedOnly = false
@@ -762,6 +766,7 @@ class ClipMaxImeService : InputMethodService() {
         suggestionScrollView = suggestScroll
         centerFrame.addView(suggestScroll)
         renderSuggestionStrip()
+        updateToolbarCenterVisibility()
 
         addView(centerFrame)
 
@@ -2845,6 +2850,7 @@ class ClipMaxImeService : InputMethodService() {
             KeyboardLayoutSpec.KeyboardMode.SYMBOLS_EXT -> renderSymbolRows(container)
             KeyboardLayoutSpec.KeyboardMode.NUMPAD -> renderNumpadRows(container)
         }
+        updateToolbarCenterVisibility()
     }
 
     // 4A. ALPHA (QWERTY with embedded long-press 1-0 on top row, matching Gboard 4-row ergonomics)
@@ -4668,13 +4674,16 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun updateToolbarCenterVisibility() {
-        val showSuggest = toolbarStateACenterMode == 1 &&
-            !isPasswordTarget &&
-            !isFilterMode &&
-            isSuggestionsEnabled &&
-            fieldCapabilities.allowSuggestions
-        toolbarChipsScroll?.visibility = if (showSuggest) View.GONE else View.VISIBLE
-        suggestionScrollView?.visibility = if (showSuggest) View.VISIBLE else View.GONE
+        val stripState = KeyboardLayoutSpec.resolveToolbarStripState(
+            mode = keyboardMode,
+            centerMode = toolbarStateACenterMode,
+            isPasswordTarget = isPasswordTarget,
+            isFilterMode = isFilterMode,
+            isSuggestionsEnabled = isSuggestionsEnabled,
+            allowSuggestions = fieldCapabilities.allowSuggestions
+        )
+        toolbarChipsScroll?.visibility = if (stripState.showClipboardStrip) View.VISIBLE else View.GONE
+        suggestionScrollView?.visibility = if (stripState.showSuggestionsStrip) View.VISIBLE else View.GONE
     }
 
     private data class ComposingContext(

@@ -168,6 +168,52 @@ class KeyboardLayoutSpecTest {
     }
 
     @Test
+    fun testClipboardAndSuggestionStripsHiddenInNumpadModeOnly() {
+        // In NUMPAD, both horizontal clipboard snippet strip and suggestions strip must be hidden
+        for (centerMode in listOf(0, 1)) {
+            val state = KeyboardLayoutSpec.resolveToolbarStripState(
+                mode = KeyboardLayoutSpec.KeyboardMode.NUMPAD,
+                centerMode = centerMode,
+                isPasswordTarget = false,
+                isFilterMode = false,
+                isSuggestionsEnabled = true,
+                allowSuggestions = true
+            )
+            assertFalse(state.showClipboardStrip)
+            assertFalse(state.showSuggestionsStrip)
+        }
+
+        // In ALPHA and SYMBOLS, clipboard snippet strip is visible by default (centerMode = 0)
+        for (mode in listOf(
+            KeyboardLayoutSpec.KeyboardMode.ALPHA,
+            KeyboardLayoutSpec.KeyboardMode.SYMBOLS,
+            KeyboardLayoutSpec.KeyboardMode.SYMBOLS_EXT
+        )) {
+            val clipState = KeyboardLayoutSpec.resolveToolbarStripState(
+                mode = mode,
+                centerMode = 0,
+                isPasswordTarget = false,
+                isFilterMode = false,
+                isSuggestionsEnabled = true,
+                allowSuggestions = true
+            )
+            assertTrue(clipState.showClipboardStrip)
+            assertFalse(clipState.showSuggestionsStrip)
+
+            val suggestState = KeyboardLayoutSpec.resolveToolbarStripState(
+                mode = mode,
+                centerMode = 1,
+                isPasswordTarget = false,
+                isFilterMode = false,
+                isSuggestionsEnabled = true,
+                allowSuggestions = true
+            )
+            assertFalse(suggestState.showClipboardStrip)
+            assertTrue(suggestState.showSuggestionsStrip)
+        }
+    }
+
+    @Test
     fun testSearchClipsTemporaryQwertyAndReturnToNumpad() {
         val controller = KeyboardLayoutSpec.KeyboardModeController()
 
