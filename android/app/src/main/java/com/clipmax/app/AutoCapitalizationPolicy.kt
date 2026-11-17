@@ -115,4 +115,93 @@ internal object AutoCapitalizationPolicy {
 
         return ch == '.' || ch == '!' || ch == '?'
     }
+
+    /**
+     * Pure JVM state machine governing Shift (0 = off, 1 = shifted, 2 = Caps Lock)
+     * and platform double-tap timeout transitions, preserving manual Caps Lock even when
+     * automatic capitalization is disabled and resetting double-tap windows on non-shift events.
+     */
+    class ShiftKeyStateMachine {
+        var shiftState: Int = 0
+            private set
+
+        var manualShiftOverride: Boolean = false
+            private set
+
+        private var lastShiftTapTimeMs: Long = 0L
+
+        fun onShiftPress(nowMs: Long, doubleTapTimeoutMs: Long): Int {
+            val timeout = doubleTapTimeoutMs.coerceAtLeast(1L)
+            if (shiftState == 2) {
+                // Single tap exits Caps Lock cleanly and clears timer so next tap enters 1-shot Shift
+                shiftState = 0
+                manualShiftOverride = true
+                lastShiftTapTimeMs = 0L
+                return shiftState
+            }
+
+            val isDoubleTap = lastShiftTapTimeMs > 0L && (nowMs - lastShiftTapTimeMs) in 0L..timeout
+            if (isDoubleTap) {
+                shiftState = 2
+                manualShiftOverride = true
+                lastShiftTapTimeMs = 0L
+            } else {
+                shiftState = if (shiftState == 0) 1 else 0
+                manualShiftOverride = true
+                lastShiftTapTimeMs = nowMs
+            }
+            return shiftState
+        }
+
+        fun onLetterCommitted(capMode: CapMode) {
+            lastShiftTapTimeMs = 0L
+            manualShiftOverride = false
+            if (shiftState == 1 && capMode != CapMode.CHARACTERS) {
+                shiftState = 0
+            }
+        }
+
+        fun onNonLetterInput() {
+            lastShiftTapTimeMs = 0L
+            manualShiftOverride = false
+        }
+
+        fun resetDoubleTapTimer() {
+            lastShiftTapTimeMs = 0L
+        }
+
+        fun clearManualOverride() {
+            manualShiftOverride = false
+            lastShiftTapTimeMs = 0L
+        }
+
+        fun onInputSessionReset() {
+            shiftState = 0
+            manualShiftOverride = false
+            lastShiftTapTimeMs = 0L
+        }
+
+        fun syncWithAutoCap(
+            capMode: CapMode,
+            preserveManualShift: Boolean,
+            computeAutoShift: () -> Boolean
+        ): Boolean {
+            val prev = shiftState
+            if (shiftState == 2) {
+                // Manual Caps Lock persists even in CapMode.NONE fields (URLs/filter/no-suggestions)
+                return false
+            }
+            if (preserveManualShift && manualShiftOverride) {
+                return false
+            }
+            shiftState = if (capMode == CapMode.NONE) {
+                0
+            } else if (computeAutoShift()) {
+                1
+            } else {
+                0
+            }
+            return shiftState != prev
+        }
+    }
 }

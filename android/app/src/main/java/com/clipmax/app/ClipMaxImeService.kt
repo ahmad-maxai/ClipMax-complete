@@ -96,10 +96,12 @@ class ClipMaxImeService : InputMethodService() {
     // Keyboard Layout Mode: 0 = alpha (QWERTY), 1 = numeric (?123), 2 = symbols (=\<), 3 = dedicated 3x4 numpad
     private var keyboardMode = 0
     // Shift State: 0 = off (lowercase), 1 = shifted (1-shot uppercase), 2 = caps lock
-    private var shiftState = 0
-    private var lastShiftTapTime = 0L
+    private val shiftStateMachine = AutoCapitalizationPolicy.ShiftKeyStateMachine()
+    private val shiftState: Int
+        get() = shiftStateMachine.shiftState
+    private val manualShiftOverride: Boolean
+        get() = shiftStateMachine.manualShiftOverride
     private var autoCapMode = AutoCapitalizationPolicy.CapMode.SENTENCES
-    private var manualShiftOverride = false
     private var currentLayoutGeometry: KeyboardLayoutSpec.GeometryDp =
         KeyboardLayoutSpec.computeGeometryDp("normal", 800f, false, false)
 
@@ -3524,27 +3526,26 @@ class ClipMaxImeService : InputMethodService() {
             if (conn != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 lastRevertOriginalWord = null
-                manualShiftOverride = false
                 conn.commitText(letter, 1)
                 updateInsertionHistoryButtons()
                 refreshTypingSuggestionsAsync()
             }
         }
-        if (shiftState == 1 && autoCapMode != AutoCapitalizationPolicy.CapMode.CHARACTERS) {
-            // 1-shot shifted -> return to normal lowercase typing after first letter
-            shiftState = 0
+        val prevShift = shiftState
+        shiftStateMachine.onLetterCommitted(autoCapMode)
+        if (shiftState != prevShift) {
             updateShiftUI()
         }
     }
 
     private fun handleGenericCharPress(char: String) {
+        shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += char
             updateSearchUI()
             runKeyboardSearch()
         } else {
             val conn = currentInputConnection ?: return
-            manualShiftOverride = false
             if (isWordBoundaryDelimiter(char)) {
                 commitWordBoundaryWithIntelligence(conn, char)
             } else {
@@ -3567,18 +3568,19 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleSpacePress() {
+        shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += " "
             updateSearchUI()
             runKeyboardSearch()
         } else {
             val conn = currentInputConnection ?: return
-            manualShiftOverride = false
             commitWordBoundaryWithIntelligence(conn, " ")
         }
     }
 
     private fun handleBackspace() {
+        shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             if (keyboardSearchQuery.isNotEmpty()) {
                 keyboardSearchQuery = keyboardSearchQuery.dropLast(1)
@@ -3587,7 +3589,6 @@ class ClipMaxImeService : InputMethodService() {
             }
         } else {
             val conn = currentInputConnection ?: return
-            manualShiftOverride = false
             val gateway = buildEditorGateway(conn)
             if (gateway != null && !isPasswordTarget) {
                 val reverted = insertionHistory.tryImmediateBackspaceRevertAutocorrect(gateway)
@@ -3625,6 +3626,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun handleEnterPress() {
         val resolution = resolveCurrentActionKey()
+        shiftStateMachine.onNonLetterInput()
         if (resolution.isFilterDismiss || isFilterMode) {
             isFilterMode = false
             keyboardSearchQuery = ""
@@ -3633,7 +3635,6 @@ class ClipMaxImeService : InputMethodService() {
             renderFullImeView()
         } else {
             val conn = currentInputConnection ?: return
-            manualShiftOverride = false
             val actionId = resolution.editorActionId
             if (actionId != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
@@ -3648,13 +3649,8 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun handleShiftPress() {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastShiftTapTime < 300) {
-            shiftState = if (shiftState == 2) 0 else 2 // Double tap -> Caps Lock
-        } else {
-            shiftState = if (shiftState == 0) 1 else 0 // Single tap -> Toggle Shifted
-        }
-        manualShiftOverride = true
-        lastShiftTapTime = now
+        val timeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+        shiftStateMachine.onShiftPress(now, timeout)
         updateShiftUI()
     }
 
@@ -3875,7 +3871,7 @@ class ClipMaxImeService : InputMethodService() {
                             }, 220L)
                         }
                         if (complete) {
-                            manualShiftOverride = false
+                            shiftStateMachine.onNonLetterInput()
                             syncAutoCapitalization(preserveManualShift = false)
                         }
                         setStatus(if (complete) "Inserted ${insertedCodePoints.grouped()} chars." else "Insertion paused.")
@@ -3989,8 +3985,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         syncKeyboardModeForActiveField()
         autoCapMode = AutoCapitalizationPolicy.resolveCapMode(attribute.inputType, isFilterMode)
-        manualShiftOverride = false
-        shiftState = 0
+        shiftStateMachine.onInputSessionReset()
         val pkgChanged = attribute.packageName != lastEditorPackage
         val fieldChanged = attribute.fieldId != 0 && lastEditorFieldId != 0 && attribute.fieldId != lastEditorFieldId
         if (!restarting || pkgChanged || fieldChanged) {
@@ -4039,7 +4034,9 @@ class ClipMaxImeService : InputMethodService() {
         inputViewActive = true
         autoCapMode = AutoCapitalizationPolicy.resolveCapMode(info.inputType, isFilterMode)
         if (!restarting) {
-            manualShiftOverride = false
+            shiftStateMachine.clearManualOverride()
+        } else {
+            shiftStateMachine.resetDoubleTapTimer()
         }
         toolbarStateACenterMode = 0
         fieldCapabilities = InputFieldPolicy.evaluate(info.inputType, info.imeOptions)
@@ -4081,7 +4078,7 @@ class ClipMaxImeService : InputMethodService() {
         // If cursor jumped outside 1-char typing flow, clear manual shift override & re-sync context
         val delta = kotlin.math.abs(newSelStart - oldSelStart)
         if (delta > 1) {
-            manualShiftOverride = false
+            shiftStateMachine.onNonLetterInput()
             insertionHistory.invalidateImmediateBackspaceRevert()
             lastRevertOriginalWord = null
             if (!isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled) {
@@ -4153,6 +4150,7 @@ class ClipMaxImeService : InputMethodService() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
+        shiftStateMachine.resetDoubleTapTimer()
         val needsReset = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
         isSettingsOpen = false
         settingsSavedScrollY = 0
@@ -4379,7 +4377,7 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             clearTypingSuggestionsView()
         }
-        manualShiftOverride = false
+        shiftStateMachine.onNonLetterInput()
         setStatus(result.message)
 
         if (!result.success || entry == null) {
@@ -4437,7 +4435,7 @@ class ClipMaxImeService : InputMethodService() {
         val result = insertionHistory.redo(gateway)
         val entry = result.entry
         clearTypingSuggestionsView()
-        manualShiftOverride = false
+        shiftStateMachine.onNonLetterInput()
         setStatus(result.message)
 
         if (!result.success || entry == null) {
@@ -4661,60 +4659,37 @@ class ClipMaxImeService : InputMethodService() {
         preserveManualShift: Boolean = false,
         predictedBeforeText: String? = null
     ) {
-        if (isFilterMode) {
-            autoCapMode = AutoCapitalizationPolicy.CapMode.NONE
-            if (shiftState == 1 && !preserveManualShift) {
-                shiftState = 0
-                updateShiftUI()
-            }
-            return
-        }
         val info = currentInputEditorInfo
-        val resolved = if (info != null) {
+        val resolved = if (isFilterMode) {
+            AutoCapitalizationPolicy.CapMode.NONE
+        } else if (info != null) {
             AutoCapitalizationPolicy.resolveCapMode(info.inputType, isFilterMode = false)
         } else {
             AutoCapitalizationPolicy.CapMode.NONE
         }
         autoCapMode = resolved
 
-        if (shiftState == 2) {
-            if (resolved == AutoCapitalizationPolicy.CapMode.NONE) {
-                shiftState = 0
-                updateShiftUI()
-            }
-            return
-        }
-
-        if (preserveManualShift && manualShiftOverride) {
-            return
-        }
-
-        if (resolved == AutoCapitalizationPolicy.CapMode.NONE) {
-            if (shiftState != 0) {
-                shiftState = 0
-                updateShiftUI()
-            }
-            return
-        }
-
-        val conn = currentInputConnection
-        val before = predictedBeforeText ?: runCatching { conn?.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
-        val after = runCatching { conn?.getTextAfterCursor(16, 0)?.toString() }.getOrNull()
-        val hasSel = !runCatching { conn?.getSelectedText(0) }.getOrNull().isNullOrEmpty()
-        val androidCaps = if (info != null && conn != null) {
-            runCatching { conn.getCursorCapsMode(info.inputType) }.getOrDefault(0)
-        } else 0
-
-        val wantShift = AutoCapitalizationPolicy.shouldAutoShift(
+        val changed = shiftStateMachine.syncWithAutoCap(
             capMode = resolved,
-            textBeforeCursor = before,
-            textAfterCursor = after,
-            hasSelection = hasSel,
-            androidCursorCapsMode = androidCaps
-        )
-        val nextState = if (wantShift) 1 else 0
-        if (shiftState != nextState) {
-            shiftState = nextState
+            preserveManualShift = preserveManualShift
+        ) {
+            val conn = currentInputConnection
+            val before = predictedBeforeText ?: runCatching { conn?.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
+            val after = runCatching { conn?.getTextAfterCursor(16, 0)?.toString() }.getOrNull()
+            val hasSel = !runCatching { conn?.getSelectedText(0) }.getOrNull().isNullOrEmpty()
+            val androidCaps = if (info != null && conn != null) {
+                runCatching { conn.getCursorCapsMode(info.inputType) }.getOrDefault(0)
+            } else 0
+
+            AutoCapitalizationPolicy.shouldAutoShift(
+                capMode = resolved,
+                textBeforeCursor = before,
+                textAfterCursor = after,
+                hasSelection = hasSel,
+                androidCursorCapsMode = androidCaps
+            )
+        }
+        if (changed) {
             updateShiftUI()
         }
     }
@@ -4918,7 +4893,7 @@ class ClipMaxImeService : InputMethodService() {
         if (after.isEmpty() || !after[0].isWhitespace()) {
             conn.commitText(" ", 1)
         }
-        manualShiftOverride = false
+        shiftStateMachine.onNonLetterInput()
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
         syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = ctx.beforeAnchor + word + " ")
@@ -4939,7 +4914,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         if (committed) {
             lastRevertOriginalWord = null
-            manualShiftOverride = false
+            shiftStateMachine.onNonLetterInput()
             insertionHistory.invalidateImmediateBackspaceRevert()
             updateInsertionHistoryButtons()
             currentWordAnalysis = null
@@ -4965,7 +4940,7 @@ class ClipMaxImeService : InputMethodService() {
         val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
         conn.commitText(nextWord + trailingSpace, 1)
         lastRevertOriginalWord = null
-        manualShiftOverride = false
+        shiftStateMachine.onNonLetterInput()
         insertionHistory.invalidateImmediateBackspaceRevert()
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()

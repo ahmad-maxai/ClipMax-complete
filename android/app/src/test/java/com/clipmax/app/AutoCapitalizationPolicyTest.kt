@@ -108,4 +108,48 @@ class AutoCapitalizationPolicyTest {
         assertEquals(AutoCapitalizationPolicy.CapMode.CHARACTERS, charsMode)
         assertTrue(AutoCapitalizationPolicy.shouldAutoShift(charsMode, "AB", ""))
     }
+
+    @Test
+    fun testCapsLockDoubleTapTimeoutResetAndNoneFieldPersistence() {
+        val sm = AutoCapitalizationPolicy.ShiftKeyStateMachine()
+        val timeoutMs = 300L
+
+        // 1. Slow taps outside platform timeout toggle 0 -> 1 -> 0 without entering Caps Lock
+        assertEquals(1, sm.onShiftPress(nowMs = 1000L, doubleTapTimeoutMs = timeoutMs))
+        assertEquals(0, sm.onShiftPress(nowMs = 1400L, doubleTapTimeoutMs = timeoutMs))
+
+        // 2. Rapid double-tap within timeout enters Caps Lock (2)
+        assertEquals(1, sm.onShiftPress(nowMs = 2000L, doubleTapTimeoutMs = timeoutMs))
+        assertEquals(2, sm.onShiftPress(nowMs = 2180L, doubleTapTimeoutMs = timeoutMs))
+
+        // 3. Typing letters and non-letters keeps Caps Lock active
+        sm.onLetterCommitted(AutoCapitalizationPolicy.CapMode.SENTENCES)
+        assertEquals(2, sm.shiftState)
+        sm.onNonLetterInput()
+        assertEquals(2, sm.shiftState)
+
+        // 4. Manual Caps Lock remains available even when autoCapMode is NONE (e.g., URL/Search Clips)
+        assertFalse(sm.syncWithAutoCap(AutoCapitalizationPolicy.CapMode.NONE, preserveManualShift = false) { false })
+        assertEquals(2, sm.shiftState)
+
+        // 5. Exiting Caps Lock clears double-tap timer so an immediate tap enters 1-shot Shift (not Caps Lock)
+        assertEquals(0, sm.onShiftPress(nowMs = 3000L, doubleTapTimeoutMs = timeoutMs))
+        assertEquals(1, sm.onShiftPress(nowMs = 3100L, doubleTapTimeoutMs = timeoutMs))
+
+        // 6. Typing a letter resets double-tap timer, so tapping Shift right after enters 1-shot Shift (1), not Caps Lock
+        sm.onLetterCommitted(AutoCapitalizationPolicy.CapMode.SENTENCES)
+        assertEquals(0, sm.shiftState)
+        assertEquals(1, sm.onShiftPress(nowMs = 3150L, doubleTapTimeoutMs = timeoutMs))
+
+        // 7. Non-letter input (space/backspace) resets double-tap timer
+        sm.onNonLetterInput()
+        assertEquals(0, sm.onShiftPress(nowMs = 3200L, doubleTapTimeoutMs = timeoutMs)) // toggled 1 -> 0, not 2!
+
+        // 8. Focus change / session reset clears Caps Lock and timer cleanly
+        assertEquals(1, sm.onShiftPress(nowMs = 4000L, doubleTapTimeoutMs = timeoutMs))
+        assertEquals(2, sm.onShiftPress(nowMs = 4150L, doubleTapTimeoutMs = timeoutMs))
+        sm.onInputSessionReset()
+        assertEquals(0, sm.shiftState)
+        assertFalse(sm.manualShiftOverride)
+    }
 }
