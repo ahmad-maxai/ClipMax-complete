@@ -121,6 +121,12 @@ class ClipMaxImeService : InputMethodService() {
     private var clipboardCaptureLabelRef: TextView? = null
     private var clipboardMergeBanner: TextView? = null
     private var clipboardSavedScrollY: Int = 0
+    private var pasteUndoCapsuleHost: FrameLayout? = null
+    private var pasteUndoCapsuleBtn: LinearLayout? = null
+    private var pasteUndoCapsuleIcon: ImageView? = null
+    private var pasteUndoCapsuleText: TextView? = null
+    private var isPasteCapsuleActive = false
+    private var pasteCapsuleIsRedoMode = false
 
     private var settingsScrollView: android.widget.ScrollView? = null
     private var settingsSavedScrollY: Int = 0
@@ -154,13 +160,7 @@ class ClipMaxImeService : InputMethodService() {
     private var lastRevertOriginalWord: String? = null
     private val suppressedAutocorrectWords = HashSet<String>()
 
-    // State B Undo/Redo Button Refs
-    private var stateBUndoBtn: LinearLayout? = null
-    private var stateBUndoIcon: ImageView? = null
-    private var stateBUndoText: TextView? = null
-    private var stateBRedoBtn: LinearLayout? = null
-    private var stateBRedoIcon: ImageView? = null
-    private var stateBRedoText: TextView? = null
+
 
     private val parenChunkRegex = Regex("^(.*?)\\s*\\((Chunk\\s+(\\d+)/(\\d+))\\)$", RegexOption.IGNORE_CASE)
     private val dotChunkTimeRegex = Regex("^(.*?)\\s*[·•]\\s*(Chunk\\s+(\\d+)/(\\d+))(?:\\s*[·•]\\s*\\d{1,2}:\\d{2}(?::\\d{2})?(?:\\s*[AP]M)?)?$", RegexOption.IGNORE_CASE)
@@ -478,6 +478,10 @@ class ClipMaxImeService : InputMethodService() {
         clipboardCaptureThumbRef = null
         clipboardCaptureLabelRef = null
         clipboardMergeBanner = null
+        pasteUndoCapsuleHost = null
+        pasteUndoCapsuleBtn = null
+        pasteUndoCapsuleIcon = null
+        pasteUndoCapsuleText = null
         settingsScrollView = null
         emojiScrollView = null
         emojiGridContainer = null
@@ -501,12 +505,7 @@ class ClipMaxImeService : InputMethodService() {
         toolbarChipsScroll = null
         suggestionScrollView = null
         suggestionsContainer = null
-        stateBUndoBtn = null
-        stateBUndoIcon = null
-        stateBUndoText = null
-        stateBRedoBtn = null
-        stateBRedoIcon = null
-        stateBRedoText = null
+
 
         // Apply One-Handed Mode padding
         applyOneHandedPadding()
@@ -629,10 +628,16 @@ class ClipMaxImeService : InputMethodService() {
         rootFrame.addView(viewA)
         rootFrame.addView(viewB)
 
+        // Contextual Floating Paste Undo/Redo Capsule (Phase 2B)
+        val capsule = buildPasteUndoCapsule()
+        rootFrame.addView(capsule)
+        updatePasteUndoCapsuleUI()
+
         return rootFrame
     }
 
     private fun switchToolbarState(targetState: Int) {
+        dismissPasteUndoCapsule()
         toolbarState = targetState
         if (targetState == 1) {
             updateInsertionHistoryButtons()
@@ -804,10 +809,13 @@ class ClipMaxImeService : InputMethodService() {
         setBackgroundColor(colorToolbarBg)
 
         // 1. Navigation Back Button (Left side, ALWAYS pinned & visible while State B is active)
+        // Solid white circle in dark mode with dark left chevron (matching Reference Image 1)
+        val backBg = if (isNightMode) 0xFFFFFFFF.toInt() else 0xFF222222.toInt()
+        val backFg = if (isNightMode) 0xFF111111.toInt() else 0xFFFFFFFF.toInt()
         val backBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(0xFFFFFFFF.toInt(), dp(15f), 0)
+            background = roundedRipple(backBg, dp(16f), 0)
             contentDescription = "Back to clipboard snippets"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 13.5f))
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, backFg, 13.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen
@@ -832,21 +840,16 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
-        addView(backBtn, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+        addView(backBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
             rightMargin = dp(4)
         })
 
-        // Scrollable / fill-viewport row holding: Undo, Redo, Pinned, Search Clips, Settings
-        val actionsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
-            isHorizontalScrollBarEnabled = false
-            isFillViewport = true
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-        }
-
-        val actionsRow = LinearLayout(this@ClipMaxImeService).apply {
+        // Central actions container: 3 actions (Pinned, Search Clips, Settings) evenly distributing width
+        val actionsContainer = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             isBaselineAligned = false
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         }
 
         fun makeStateBAction(
@@ -855,69 +858,36 @@ class ClipMaxImeService : InputMethodService() {
             fgColor: Int,
             bgColor: Int,
             onClick: () -> Unit
-        ): Triple<LinearLayout, ImageView, TextView> {
-            var ivRef: ImageView? = null
-            var tvRef: TextView? = null
-            val btn = LinearLayout(this@ClipMaxImeService).apply {
+        ): LinearLayout {
+            return LinearLayout(this@ClipMaxImeService).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                minimumWidth = dp(46)
-                setPadding(dp(6), dp(2), dp(6), dp(2))
-                val iv = createIconView(IconDrawable(iconType, fgColor, 13f))
-                ivRef = iv
+                setPadding(dp(4), dp(2), dp(4), dp(2))
+                val iv = createIconView(IconDrawable(iconType, fgColor, 14f))
                 addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
                 val tv = TextView(this@ClipMaxImeService).apply {
                     text = label
-                    textSize = 8.8f
+                    textSize = 9.5f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(fgColor)
                     gravity = Gravity.CENTER
                     setSingleLine(true)
                     maxLines = 1
                 }
-                tvRef = tv
-                addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                val tvLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(1)
+                }
+                addView(tv, tvLp)
 
                 background = roundedRipple(bgColor, dp(6f), 0)
                 setOnClickListener { onClick() }
             }
-            return Triple(btn, ivRef!!, tvRef!!)
         }
 
-        // 2. Host Insertion Undo
-        val (undoBtn, undoIv, undoTv) = makeStateBAction(IconType.UNDO, "Undo", colorModText, 0) {
-            performInsertionUndo()
-        }
-        undoBtn.contentDescription = "Undo pasted clip or autocorrect"
-        stateBUndoBtn = undoBtn
-        stateBUndoIcon = undoIv
-        stateBUndoText = undoTv
-        actionsRow.addView(undoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-
-        // 3. Host Insertion Redo
-        val (redoBtn, redoIv, redoTv) = makeStateBAction(IconType.REDO, "Redo", colorModText, 0) {
-            performInsertionRedo()
-        }
-        redoBtn.contentDescription = "Redo pasted clip or autocorrect"
-        stateBRedoBtn = redoBtn
-        stateBRedoIcon = redoIv
-        stateBRedoText = redoTv
-        actionsRow.addView(redoBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-
-        // Subtle Separator between History actions and Navigation panels
-        val separator = View(this@ClipMaxImeService).apply {
-            setBackgroundColor(colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(dp(1), dp(20)).apply {
-                leftMargin = dp(2)
-                rightMargin = dp(2)
-            }
-        }
-        actionsRow.addView(separator)
-
-        // 4. Pinned
+        // 2. Pinned
         val pinActive = isClipboardPanelOpen && pinnedOnly
-        val (pinBtn, _, _) = makeStateBAction(
+        val pinBtn = makeStateBAction(
             if (pinActive) IconType.PIN_FILLED else IconType.PIN,
             "Pinned",
             if (pinActive) colorActiveTabText else colorModText,
@@ -940,10 +910,10 @@ class ClipMaxImeService : InputMethodService() {
             }
             renderFullImeView()
         }
-        actionsRow.addView(pinBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        actionsContainer.addView(pinBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        // 5. Search Clips
-        val (searchBtn, _, _) = makeStateBAction(
+        // 3. Search Clips
+        val searchBtn = makeStateBAction(
             IconType.SEARCH,
             "Search Clips",
             if (isFilterMode) colorActiveTabText else colorModText,
@@ -968,15 +938,15 @@ class ClipMaxImeService : InputMethodService() {
                 pinnedOnly = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = items
-                modeController.enterSearchClips() // Allow temporary QWERTY typing inside Search Clips
+                modeController.enterSearchClips()
             }
             renderFullImeView()
         }
         searchBtn.contentDescription = "Search Clips"
-        actionsRow.addView(searchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        actionsContainer.addView(searchBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        // 6. Settings
-        val (settingsBtn, _, _) = makeStateBAction(
+        // 4. Settings
+        val settingsBtn = makeStateBAction(
             IconType.SETTINGS,
             "Settings",
             if (isSettingsOpen) colorActiveTabText else colorModText,
@@ -991,26 +961,116 @@ class ClipMaxImeService : InputMethodService() {
             pinnedOnly = false
             renderFullImeView()
         }
-        actionsRow.addView(settingsBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        actionsContainer.addView(settingsBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
-        actionsScroll.addView(actionsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        addView(actionsScroll)
+        addView(actionsContainer)
 
-        // System Keyboard Switcher pinned far right
+        // 5. Circular Globe/Language button (far right, 32dp diameter circle with IconType.IME_SWITCH)
+        val globeBg = if (isNightMode) 0xFF2C2C2E.toInt() else 0xFFE0E0E2.toInt()
+        val globeBorder = if (isNightMode) colorKeyBorder else 0x22000000.toInt()
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorKeyBg, dp(14f), colorKeyBorder)
+            background = roundedRipple(globeBg, dp(16f), globeBorder)
             contentDescription = "Switch keyboard"
-            val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 12.5f))
+            val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 showSystemImePicker()
             }
         }
-        addView(imeSwitchBtn, LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+        addView(imeSwitchBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
             leftMargin = dp(4)
         })
+    }
 
-        updateInsertionHistoryButtons()
+    // =========================================================================
+    // 1B. CONTEXTUAL FLOATING PASTE UNDO/REDO CAPSULE (Phase 2B)
+    // =========================================================================
+    private fun buildPasteUndoCapsule(): FrameLayout {
+        val host = FrameLayout(this).apply {
+            val lp = FrameLayout.LayoutParams(
+                dp(PasteUndoCapsuleSpec.WIDTH_DP),
+                dp(PasteUndoCapsuleSpec.HEIGHT_DP)
+            ).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                rightMargin = dp(PasteUndoCapsuleSpec.RIGHT_MARGIN_DP)
+            }
+            layoutParams = lp
+            visibility = View.GONE
+            clipChildren = false
+        }
+        pasteUndoCapsuleHost = host
+
+        val btn = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            val capsuleBg = if (isNightMode) 0xFF2A2B2E.toInt() else 0xFFE0E0E2.toInt()
+            val capsuleBorder = if (isNightMode) 0x33FFFFFF.toInt() else 0x22000000.toInt()
+            background = roundedRipple(capsuleBg, dp(PasteUndoCapsuleSpec.CORNER_RADIUS_DP), capsuleBorder)
+
+            val iv = ImageView(this@ClipMaxImeService).apply {
+                setImageDrawable(IconDrawable(IconType.UNDO, colorKeyText, PasteUndoCapsuleSpec.ICON_SIZE_DP))
+            }
+            pasteUndoCapsuleIcon = iv
+            addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val tv = TextView(this@ClipMaxImeService).apply {
+                text = "Undo"
+                textSize = PasteUndoCapsuleSpec.TEXT_SIZE_SP
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                setSingleLine(true)
+            }
+            pasteUndoCapsuleText = tv
+            val tvLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = dp(5)
+            }
+            addView(tv, tvLp)
+
+            setOnClickListener {
+                if (pasteCapsuleIsRedoMode) {
+                    performInsertionRedo()
+                } else {
+                    performInsertionUndo()
+                }
+            }
+        }
+        pasteUndoCapsuleBtn = btn
+        host.addView(btn)
+
+        return host
+    }
+
+    private fun updatePasteUndoCapsuleUI() {
+        val host = pasteUndoCapsuleHost ?: return
+        val config = PasteUndoCapsuleSpec.resolveConfig(isPasteCapsuleActive, pasteCapsuleIsRedoMode)
+        if (config.state == PasteUndoCapsuleSpec.CapsuleState.HIDDEN) {
+            host.visibility = View.GONE
+            return
+        }
+
+        host.visibility = View.VISIBLE
+        host.bringToFront()
+
+        val iconType = if (config.action == PasteUndoCapsuleSpec.CapsuleAction.REDO) IconType.REDO else IconType.UNDO
+        pasteUndoCapsuleIcon?.setImageDrawable(IconDrawable(iconType, colorKeyText, PasteUndoCapsuleSpec.ICON_SIZE_DP))
+        pasteUndoCapsuleText?.text = config.label
+        pasteUndoCapsuleBtn?.contentDescription = if (config.action == PasteUndoCapsuleSpec.CapsuleAction.REDO) {
+            "Redo pasted clip"
+        } else {
+            "Undo pasted clip"
+        }
+    }
+
+    private fun dismissPasteUndoCapsule() {
+        if (!isPasteCapsuleActive && !pasteCapsuleIsRedoMode) return
+        val (isActive, isRedo) = PasteUndoCapsuleSpec.onUnrelatedAction()
+        isPasteCapsuleActive = isActive
+        pasteCapsuleIsRedoMode = isRedo
+        updatePasteUndoCapsuleUI()
     }
 
     private fun buildSettingsPanel(): View = LinearLayout(this).apply {
@@ -2885,6 +2945,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun renderKeyboardRows() {
+        dismissPasteUndoCapsule()
         val container = keyboardRowsContainer ?: return
         container.removeAllViews()
         letterKeyViews.clear()
@@ -3431,6 +3492,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleEmojiPress(emoji: String) {
+        dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += emoji
@@ -3858,6 +3920,7 @@ class ClipMaxImeService : InputMethodService() {
     // INPUT CONNECTION HANDLING
     // =========================================================================
     private fun handleLetterPress(char: String) {
+        dismissPasteUndoCapsule()
         val letter = if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT)
         if (isFilterMode) {
             keyboardSearchQuery += letter
@@ -3881,6 +3944,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleGenericCharPress(char: String) {
+        dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += char
@@ -3910,6 +3974,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleSpacePress() {
+        dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += " "
@@ -3922,6 +3987,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun handleBackspace() {
+        dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             if (keyboardSearchQuery.isNotEmpty()) {
@@ -4197,18 +4263,21 @@ class ClipMaxImeService : InputMethodService() {
                                 beforeAnchor = beforeAnchor,
                                 afterAnchor = afterAnchor
                             )
+                            val (act, redo) = PasteUndoCapsuleSpec.onPasteSuccess()
+                            isPasteCapsuleActive = act
+                            pasteCapsuleIsRedoMode = redo
                             clearTypingSuggestionsView()
-                            updateInsertionHistoryButtons()
+                            updatePasteUndoCapsuleUI()
                             // Compose / WebView hosts often apply commitText asynchronously on the next frame
-                            // or trigger restartInput; re-sync button state once host context settles.
+                            // or trigger restartInput; re-sync capsule state once host context settles.
                             main.postDelayed({
                                 if (!serviceDestroyed && inputViewActive && currentEditorTarget.isCompatibleWith(startTarget)) {
-                                    updateInsertionHistoryButtons()
+                                    updatePasteUndoCapsuleUI()
                                 }
                             }, 80L)
                             main.postDelayed({
                                 if (!serviceDestroyed && inputViewActive && currentEditorTarget.isCompatibleWith(startTarget)) {
-                                    updateInsertionHistoryButtons()
+                                    updatePasteUndoCapsuleUI()
                                 }
                             }, 220L)
                         }
@@ -4538,6 +4607,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
+        dismissPasteUndoCapsule()
         exitMergeMode(refresh = false)
         inputViewActive = false
         updateCaptureMonitoring()
@@ -4547,6 +4617,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInput() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
+        dismissPasteUndoCapsule()
         exitMergeMode(refresh = false)
         generation++
         inputSessionActive = false
@@ -4690,34 +4761,14 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun updateInsertionHistoryButtons() {
-        val undoBtn = stateBUndoBtn
-        val redoBtn = stateBRedoBtn
-        if (undoBtn == null || redoBtn == null) return
-
-        val gateway = buildEditorGateway()
-        val canUndo = gateway != null && insertionHistory.canSafelyUndo(gateway).allowed
-        val canRedo = gateway != null && insertionHistory.canSafelyRedo(gateway).allowed
-
-        val undoFg = if (canUndo) colorKeyText else colorHintText
-        undoBtn.isEnabled = canUndo
-        undoBtn.isClickable = canUndo
-        undoBtn.alpha = if (canUndo) 1f else 0.38f
-        stateBUndoIcon?.setImageDrawable(IconDrawable(IconType.UNDO, undoFg, 13f))
-        stateBUndoText?.setTextColor(undoFg)
-
-        val redoFg = if (canRedo) colorKeyText else colorHintText
-        redoBtn.isEnabled = canRedo
-        redoBtn.isClickable = canRedo
-        redoBtn.alpha = if (canRedo) 1f else 0.38f
-        stateBRedoIcon?.setImageDrawable(IconDrawable(IconType.REDO, redoFg, 13f))
-        stateBRedoText?.setTextColor(redoFg)
+        updatePasteUndoCapsuleUI()
     }
 
     private fun performInsertionUndo() {
         val gateway = buildEditorGateway()
         if (gateway == null) {
             setStatus("Undo unavailable: no active input field.")
-            updateInsertionHistoryButtons()
+            dismissPasteUndoCapsule()
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
@@ -4738,16 +4789,20 @@ class ClipMaxImeService : InputMethodService() {
         setStatus(result.message)
 
         if (!result.success || entry == null) {
-            updateInsertionHistoryButtons()
+            dismissPasteUndoCapsule()
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
+
+        val (act, redo) = PasteUndoCapsuleSpec.onUndoSuccess()
+        isPasteCapsuleActive = act
+        pasteCapsuleIsRedoMode = redo
+        updatePasteUndoCapsuleUI()
 
         val immediateBefore = gateway.textBeforeCursor(checkLen)
         val immediateMutated = (preBefore != null && immediateBefore != preBefore) ||
             insertionHistory.canSafelyRedo(gateway).allowed
         if (immediateMutated) {
-            updateInsertionHistoryButtons()
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
@@ -4758,7 +4813,6 @@ class ClipMaxImeService : InputMethodService() {
             val g1 = buildEditorGateway()
             val after1 = g1?.textBeforeCursor(checkLen)
             if (g1 != null && ((preBefore != null && after1 != preBefore) || insertionHistory.canSafelyRedo(g1).allowed)) {
-                updateInsertionHistoryButtons()
                 syncAutoCapitalization(preserveManualShift = false)
                 return@postDelayed
             }
@@ -4767,11 +4821,10 @@ class ClipMaxImeService : InputMethodService() {
                 val g2 = buildEditorGateway()
                 val after2 = g2?.textBeforeCursor(checkLen)
                 if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyRedo(g2).allowed)) {
-                    updateInsertionHistoryButtons()
                     syncAutoCapitalization(preserveManualShift = false)
                 } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
                     insertionHistory.rollbackLastUndo(entry)
-                    updateInsertionHistoryButtons()
+                    dismissPasteUndoCapsule()
                     syncAutoCapitalization(preserveManualShift = false)
                     setStatus("Destination editor rejected undo.")
                 }
@@ -4783,7 +4836,7 @@ class ClipMaxImeService : InputMethodService() {
         val gateway = buildEditorGateway()
         if (gateway == null) {
             setStatus("Redo unavailable: no active input field.")
-            updateInsertionHistoryButtons()
+            dismissPasteUndoCapsule()
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
@@ -4796,16 +4849,21 @@ class ClipMaxImeService : InputMethodService() {
         setStatus(result.message)
 
         if (!result.success || entry == null) {
-            updateInsertionHistoryButtons()
+            dismissPasteUndoCapsule()
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
+
+        val canUndoRemaining = insertionHistory.canSafelyUndo(gateway).allowed
+        val (act, redo) = PasteUndoCapsuleSpec.onRedoSuccess(canUndoRemaining)
+        isPasteCapsuleActive = act
+        pasteCapsuleIsRedoMode = redo
+        updatePasteUndoCapsuleUI()
 
         val immediateBefore = gateway.textBeforeCursor(checkLen)
         val immediateMutated = (preBefore != null && immediateBefore != preBefore) ||
             insertionHistory.canSafelyUndo(gateway).allowed
         if (immediateMutated) {
-            updateInsertionHistoryButtons()
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
@@ -4815,7 +4873,6 @@ class ClipMaxImeService : InputMethodService() {
             val g1 = buildEditorGateway()
             val after1 = g1?.textBeforeCursor(checkLen)
             if (g1 != null && ((preBefore != null && after1 != preBefore) || insertionHistory.canSafelyUndo(g1).allowed)) {
-                updateInsertionHistoryButtons()
                 syncAutoCapitalization(preserveManualShift = false)
                 return@postDelayed
             }
@@ -4824,11 +4881,10 @@ class ClipMaxImeService : InputMethodService() {
                 val g2 = buildEditorGateway()
                 val after2 = g2?.textBeforeCursor(checkLen)
                 if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyUndo(g2).allowed)) {
-                    updateInsertionHistoryButtons()
                     syncAutoCapitalization(preserveManualShift = false)
                 } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
                     insertionHistory.rollbackLastRedo(entry)
-                    updateInsertionHistoryButtons()
+                    dismissPasteUndoCapsule()
                     syncAutoCapitalization(preserveManualShift = false)
                     setStatus("Destination editor rejected redo.")
                 }
