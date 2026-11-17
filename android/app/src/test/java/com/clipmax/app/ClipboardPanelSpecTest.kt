@@ -29,12 +29,11 @@ class ClipboardPanelSpecTest {
     @Test
     fun testSerialNumberingUpdatesImmediatelyAfterDeleteSplitMergeAndUndoRedo() {
         val store = ClipStore(tempFolder.newFolder("clipstore_phase2b"))
-        // Create 3 distinct clips (ordered top-to-bottom in store.listItems() as newest -> oldest)
-        val oldest = store.saveClip("Bottom alpha clip with enough words to split cleanly across halves", "Copy")
+        val oldest = store.save(null, "Copy", "Bottom alpha clip with enough words to split cleanly across halves", false)
         Thread.sleep(5)
-        val middle = store.saveClip("Middle beta clip content for deletion and merge verification", "Copy")
+        val middle = store.save(null, "Copy", "Middle beta clip content for deletion and merge verification", false)
         Thread.sleep(5)
-        val newest = store.saveClip("Top gamma clip content", "Copy")
+        val newest = store.save(null, "Copy", "Top gamma clip content", false)
 
         fun visibleSerials(): List<Pair<String, String>> {
             val list = store.listItems()
@@ -58,19 +57,17 @@ class ClipboardPanelSpecTest {
         val splitRes = store.split(oldest.id)!!
         val afterSplit = visibleSerials()
         assertEquals(listOf("#3", "#2", "#1"), afterSplit.map { it.first })
-        // Persistent IDs remain distinct UUIDs, never positional numbers
         assertNotEquals("#1", splitRes.part1Item.id)
         assertNotEquals("#2", splitRes.part2Item.id)
 
         // Undo Split (delete split parts, restore original) -> back to 2 cards (#2, #1)
         assertTrue(store.delete(splitRes.part1Item.id))
         assertTrue(store.delete(splitRes.part2Item.id))
-        val restoredFromUndo = store.saveClip(
-            content = splitRes.originalText,
+        val restoredFromUndo = store.save(
+            id = splitRes.originalItem.id,
             title = splitRes.originalItem.title,
-            pinned = splitRes.originalItem.pinned,
-            explicitId = splitRes.originalItem.id,
-            explicitCreatedAt = splitRes.originalItem.createdAt
+            content = splitRes.originalText,
+            pinned = splitRes.originalItem.pinned
         )
         assertEquals(oldest.id, restoredFromUndo.id)
         val afterUndoSplit = visibleSerials()
@@ -79,8 +76,8 @@ class ClipboardPanelSpecTest {
 
         // Redo Split -> back to 3 cards (#3, #2, #1)
         assertTrue(store.delete(oldest.id))
-        store.saveClip(splitRes.part1Text, splitRes.part1Item.title, explicitId = splitRes.part1Item.id, explicitCreatedAt = splitRes.part1Item.createdAt)
-        store.saveClip(splitRes.part2Text, splitRes.part2Item.title, explicitId = splitRes.part2Item.id, explicitCreatedAt = splitRes.part2Item.createdAt)
+        store.save(splitRes.part1Item.id, splitRes.part1Item.title, splitRes.part1Text, splitRes.part1Item.pinned)
+        store.save(splitRes.part2Item.id, splitRes.part2Item.title, splitRes.part2Text, splitRes.part2Item.pinned)
         assertEquals(listOf("#3", "#2", "#1"), visibleSerials().map { it.first })
 
         // 3. Merge 2 cards -> count drops from 3 to 2; remaining immediately become #2 and #1
@@ -100,7 +97,6 @@ class ClipboardPanelSpecTest {
         assertFalse(preview.contains("Chunk 001"))
         assertFalse(preview.contains("KB"))
 
-        // Leading newlines/whitespace collapse cleanly while preserving original beginning
         val multiline = "\n\n  First real line of clip\nSecond line of clip  "
         assertEquals(
             "First real line of clip Second line of clip",
@@ -120,7 +116,6 @@ class ClipboardPanelSpecTest {
         )
         assertEquals(9f, ClipboardPanelSpec.CARD_SPACING_DP, 0.001f)
 
-        // Previous nested cards averaged ~67dp tall; +10-15% targets ~73.7dp..77.1dp
         assertTrue(ClipboardPanelSpec.CARD_MIN_HEIGHT_PORTRAIT_DP in 74f..78f)
         assertTrue(ClipboardPanelSpec.CARD_MIN_HEIGHT_LANDSCAPE_DP < ClipboardPanelSpec.CARD_MIN_HEIGHT_PORTRAIT_DP)
     }
@@ -128,9 +123,8 @@ class ClipboardPanelSpecTest {
     @Test
     fun testCaptureToggleTransitionsPreserveRetentionPreferenceWithoutClearingSavedClips() {
         val store = ClipStore(tempFolder.newFolder("clipstore_capture_toggle"))
-        val saved = store.saveClip("Existing saved clip must stay intact when capture turns off", "Copy")
+        val saved = store.save(null, "Copy", "Existing saved clip must stay intact when capture turns off", false)
 
-        // Turn OFF from custom retention "72h" -> becomes "off" and remembers "72h"
         val off = ClipboardPanelSpec.resolveCaptureToggleTransition(
             currentMode = "72h",
             rememberedEnabledMode = null,
@@ -140,11 +134,9 @@ class ClipboardPanelSpecTest {
         assertFalse(CapturePreferences.isEnabled(off.nextMode))
         assertEquals("72h", off.rememberedEnabledMode)
 
-        // Existing saved clips remain accessible while capture is OFF
         assertEquals(1, store.listItems().size)
         assertEquals(saved.id, store.getItem(saved.id)?.id)
 
-        // Turn ON from "off" -> restores remembered "72h"
         val on = ClipboardPanelSpec.resolveCaptureToggleTransition(
             currentMode = off.nextMode,
             rememberedEnabledMode = off.rememberedEnabledMode,
@@ -153,7 +145,6 @@ class ClipboardPanelSpecTest {
         assertEquals("72h", on.nextMode)
         assertTrue(CapturePreferences.isEnabled(on.nextMode))
 
-        // Turn ON from "off" with no prior remembered mode -> falls back to "24h"
         val fallbackOn = ClipboardPanelSpec.resolveCaptureToggleTransition(
             currentMode = "off",
             rememberedEnabledMode = null,
