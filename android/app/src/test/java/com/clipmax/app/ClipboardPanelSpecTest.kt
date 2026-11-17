@@ -68,13 +68,13 @@ class ClipboardPanelSpecTest {
         assertEquals(2, afterUndoSplit.size)
         assertEquals(listOf("#2", "#1"), afterUndoSplit.map { it.first })
 
-        // 3. Merge 2 cards -> count drops from 2 to 1 or 3 to 2; test merging available items
+        // 3. Merge 2 cards -> count drops from 2 to 1; remaining card is #1
         val currentItems = store.listItems()
         val mergeRes = store.merge(currentItems[0].id, currentItems[1].id)
         val afterMerge = visibleSerials()
-        assertEquals(listOf("#2", "#1"), afterMerge.map { it.first })
-        assertTrue(newest.id in afterMerge.map { it.second })
-        assertTrue(mergeRes.mergedItem.id in afterMerge.map { it.second })
+        assertEquals(1, afterMerge.size)
+        assertEquals(listOf("#1"), afterMerge.map { it.first })
+        assertEquals(mergeRes.mergedItem.id, afterMerge.last().second)
     }
 
     @Test
