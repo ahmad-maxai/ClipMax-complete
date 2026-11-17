@@ -2980,7 +2980,7 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row4)
     }
 
-    // 4D. GBOARD-STYLE 4x5 CALCULATOR NUMERIC KEYPAD (Reached via SYMBOLS -> "12 34")
+    // 4D. EXACT GBOARD-STYLE NUMERIC KEYPAD (Reached via SYMBOLS -> "12 34")
     private fun createNumpadToggleKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
         contentDescription = "Switch to numeric keypad"
@@ -3003,13 +3003,77 @@ class ClipMaxImeService : InputMethodService() {
         })
     }
 
+    private fun createNumpadSpaceKey(): View = FrameLayout(this).apply {
+        background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
+        contentDescription = "Space"
+
+        val iv = createIconView(IconDrawable(IconType.SPACE, colorModText, 18f))
+        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+        attachKeyTouchFeedback(this, { handleSpacePress() })
+    }
+
+    private fun createNumpadOperatorRail(operators: List<KeyboardLayoutSpec.NumpadKeySpec>): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = roundedDrawable(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
+        clipToOutline = true
+
+        val railCorner = (keyCornerRadiusPx() * 0.72f).coerceAtLeast(dp(4f))
+        operators.forEach { spec ->
+            val segment = FrameLayout(this@ClipMaxImeService).apply {
+                background = roundedRipple(0x00000000, railCorner, 0)
+                contentDescription = spec.contentDescription
+
+                val tv = TextView(this@ClipMaxImeService).apply {
+                    text = spec.label
+                    textSize = (currentLayoutGeometry.primaryTextSizeSp - 1.5f).coerceIn(14.5f, 19f)
+                    typeface = Typeface.DEFAULT
+                    setTextColor(colorModText)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }
+                addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+                val ch = spec.commitChar ?: spec.label
+                attachKeyTouchFeedback(
+                    keyView = this,
+                    onCommit = { handleGenericCharPress(ch) },
+                    previewChar = { spec.label }
+                )
+            }
+            addView(segment, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
     private fun createNumpadKey(spec: KeyboardLayoutSpec.NumpadKeySpec): View = when (spec.role) {
+        KeyboardLayoutSpec.NumpadKeyRole.SPACE -> createNumpadSpaceKey()
         KeyboardLayoutSpec.NumpadKeyRole.BACKSPACE -> createBackspaceKey()
         KeyboardLayoutSpec.NumpadKeyRole.RETURN_ALPHA -> createModifierKey(spec.label) {
             modeController.toAlpha()
             renderKeyboardRows()
         }.apply {
             contentDescription = spec.contentDescription
+        }
+        KeyboardLayoutSpec.NumpadKeyRole.TO_SYMBOLS -> FrameLayout(this).apply {
+            background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
+            contentDescription = spec.contentDescription
+
+            val tv = TextView(this@ClipMaxImeService).apply {
+                text = spec.label
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorModText)
+                gravity = Gravity.CENTER
+                maxLines = 1
+                isSingleLine = true
+                letterSpacing = -0.02f
+            }
+            addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+            attachKeyTouchFeedback(this, {
+                modeController.toSymbols()
+                renderKeyboardRows()
+            })
         }
         KeyboardLayoutSpec.NumpadKeyRole.ACTION_ENTER -> createEnterKey()
         KeyboardLayoutSpec.NumpadKeyRole.DIGIT -> FrameLayout(this).apply {
@@ -3036,11 +3100,10 @@ class ClipMaxImeService : InputMethodService() {
             background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
             contentDescription = spec.contentDescription
 
-            val isBoldSymbol = spec.label != "," && spec.label != ")"
             val tv = TextView(this@ClipMaxImeService).apply {
                 text = spec.label
                 textSize = (currentLayoutGeometry.primaryTextSizeSp - 0.5f).coerceIn(15.5f, 20f)
-                typeface = if (isBoldSymbol) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                typeface = Typeface.DEFAULT
                 setTextColor(colorModText)
                 gravity = Gravity.CENTER
             }
@@ -3056,14 +3119,86 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun renderNumpadRows(parent: LinearLayout) {
-        val rows = KeyboardLayoutSpec.NumpadLayoutSpec.ROWS
-        rows.forEachIndexed { rowIndex, rowSpecs ->
-            val row = createKeyRow(isBottomRow = (rowIndex == rows.lastIndex))
+        val rowH = getKeyRowHeight()
+        val gapPx = dp(currentLayoutGeometry.interRowGapDp).toInt()
+        val sideGap = (dp(currentLayoutGeometry.horizontalGapDp) / 2f).toInt().coerceAtLeast(1)
+        val upperBlockH = rowH * 3 + gapPx * 2
+
+        // Upper 3-row block: Left elongated operator rail (1.40f) | Center 3x3 digits (7.20f) | Right modifiers (1.40f)
+        val upperBlock = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, upperBlockH).apply {
+                bottomMargin = gapPx
+            }
+        }
+
+        val leftRail = createNumpadOperatorRail(KeyboardLayoutSpec.NumpadLayoutSpec.OPERATOR_RAIL)
+        upperBlock.addView(
+            leftRail,
+            LinearLayout.LayoutParams(0, upperBlockH, KeyboardLayoutSpec.NumpadLayoutSpec.LEFT_RAIL_WEIGHT).apply {
+                leftMargin = sideGap
+                rightMargin = sideGap
+            }
+        )
+
+        val centerGrid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, upperBlockH, KeyboardLayoutSpec.NumpadLayoutSpec.CENTER_BLOCK_WEIGHT)
+        }
+        val numRows = KeyboardLayoutSpec.NumpadLayoutSpec.NUMBER_ROWS
+        numRows.forEachIndexed { idx, rowSpecs ->
+            val row = createKeyRow(isBottomRow = (idx == numRows.lastIndex))
             rowSpecs.forEach { spec ->
                 row.addView(createNumpadKey(spec), keyLp(spec.weight))
             }
-            parent.addView(row)
+            centerGrid.addView(row)
         }
+        upperBlock.addView(centerGrid)
+
+        val rightCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, upperBlockH, KeyboardLayoutSpec.NumpadLayoutSpec.RIGHT_COLUMN_WEIGHT).apply {
+                leftMargin = sideGap
+                rightMargin = sideGap
+            }
+        }
+        val rightKeys = KeyboardLayoutSpec.NumpadLayoutSpec.RIGHT_COLUMN
+        rightKeys.forEachIndexed { idx, spec ->
+            val keyView = createNumpadKey(spec)
+            rightCol.addView(
+                keyView,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowH).apply {
+                    bottomMargin = if (idx == rightKeys.lastIndex) 0 else gapPx
+                }
+            )
+        }
+        upperBlock.addView(rightCol)
+        parent.addView(upperBlock)
+
+        // Bottom row: matching 1.40f | 7.20f | 1.40f outer alignment with 7 controls in exact order:
+        // ABC | , | !?# | 0 | = | . | Dynamic Action (↵)
+        val row4 = createKeyRow(isBottomRow = true)
+        row4.addView(
+            createNumpadKey(KeyboardLayoutSpec.NumpadLayoutSpec.BOTTOM_LEFT),
+            keyLp(KeyboardLayoutSpec.NumpadLayoutSpec.BOTTOM_LEFT.weight)
+        )
+
+        val bottomCenter = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, rowH, KeyboardLayoutSpec.NumpadLayoutSpec.CENTER_BLOCK_WEIGHT)
+        }
+        KeyboardLayoutSpec.NumpadLayoutSpec.BOTTOM_CENTER_KEYS.forEach { spec ->
+            bottomCenter.addView(createNumpadKey(spec), keyLp(spec.weight))
+        }
+        row4.addView(bottomCenter)
+
+        row4.addView(
+            createNumpadKey(KeyboardLayoutSpec.NumpadLayoutSpec.BOTTOM_RIGHT),
+            keyLp(KeyboardLayoutSpec.NumpadLayoutSpec.BOTTOM_RIGHT.weight)
+        )
+        parent.addView(row4)
     }
 
     // 4E. NATIVE OFFLINE EMOJI PICKER (Fits Task 1 fixed viewport)

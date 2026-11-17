@@ -3,7 +3,7 @@ package com.clipmax.app
 /**
  * Ergonomic keyboard layout geometry, embedded top-row number mappings (Q-P -> 1-0),
  * Gboard-style three-mode navigation controller (ALPHA -> SYMBOLS -> NUMPAD),
- * 4x5 calculator numeric keypad specification, IME theme palette resolver,
+ * exact Gboard numeric keypad specification, IME theme palette resolver,
  * and deterministic long-press touch state machine. Pure JVM helper.
  */
 internal object KeyboardLayoutSpec {
@@ -43,6 +43,7 @@ internal object KeyboardLayoutSpec {
      * - SYMBOLS (ABC) -> ALPHA
      * - SYMBOLS (=\<) <-> SYMBOLS_EXT (?123 / ABC)
      * - NUMPAD (ABC) -> ALPHA
+     * - NUMPAD (!?#) -> SYMBOLS
      *
      * Never auto-activates NUMPAD on numeric EditorInfo focus.
      * Supports temporary QWERTY entry during Search Clips and restores prior mode on exit.
@@ -138,8 +139,10 @@ internal object KeyboardLayoutSpec {
     enum class NumpadKeyRole {
         OPERATOR,
         DIGIT,
+        SPACE,
         BACKSPACE,
         RETURN_ALPHA,
+        TO_SYMBOLS,
         ACTION_ENTER
     }
 
@@ -152,50 +155,77 @@ internal object KeyboardLayoutSpec {
     )
 
     /**
-     * Canonical 4x5 calculator-style numeric keypad layout:
-     * Row 1: +   | 1 | 2 | 3 | %
-     * Row 2: −   | 4 | 5 | 6 | )
-     * Row 3: ×   | 7 | 8 | 9 | ⌫
-     * Row 4: ABC | , | 0 | = | ↵
+     * Exact Gboard-style numeric keypad hierarchy matching reference "185765.png":
      *
-     * Row weights sum cleanly to 10.0f to align left/right columns flush with QWERTY/SYMBOLS
-     * while giving row 4 a visually wider centered '0' key and uncrowded 'ABC', ',', '=', '↵'.
+     * Upper 3-row block (1.40f left rail | 7.20f center 3x3 digits | 1.40f right column):
+     * - Left elongated operator rail (single rounded vertical pill spanning 3 number rows):
+     *     + , − , * , / (individually tappable)
+     * - Central 3x3 number grid:
+     *     1 | 2 | 3
+     *     4 | 5 | 6
+     *     7 | 8 | 9
+     * - Right modifier/action column (3 separate keys aligned with the 3 number rows):
+     *     %
+     *     Space (⊔)
+     *     Backspace (⌫)
+     *
+     * Bottom action row (exact 7 controls in order, flush 1.40f | 7.20f | 1.40f alignment):
+     *     ABC | , | !?# | 0 (wide centered, 2.80f) | = | . | Dynamic Action (↵)
      */
     object NumpadLayoutSpec {
-        const val MINUS_CHAR = "\u2212"
-        const val MULTIPLY_CHAR = "\u00D7"
+        const val MINUS_LABEL = "\u2212"
         const val TOGGLE_KEY_LABEL = "12\n34"
 
-        val ROWS: List<List<NumpadKeySpec>> = listOf(
+        const val LEFT_RAIL_WEIGHT = 1.40f
+        const val CENTER_BLOCK_WEIGHT = 7.20f
+        const val RIGHT_COLUMN_WEIGHT = 1.40f
+
+        val OPERATOR_RAIL: List<NumpadKeySpec> = listOf(
+            NumpadKeySpec("+", "+", NumpadKeyRole.OPERATOR, 1f, "Plus"),
+            NumpadKeySpec(MINUS_LABEL, "-", NumpadKeyRole.OPERATOR, 1f, "Minus"),
+            NumpadKeySpec("*", "*", NumpadKeyRole.OPERATOR, 1f, "Multiply"),
+            NumpadKeySpec("/", "/", NumpadKeyRole.OPERATOR, 1f, "Divide")
+        )
+
+        val NUMBER_ROWS: List<List<NumpadKeySpec>> = listOf(
             listOf(
-                NumpadKeySpec("+", "+", NumpadKeyRole.OPERATOR, 1.45f, "Plus"),
-                NumpadKeySpec("1", "1", NumpadKeyRole.DIGIT, 2.366f, "1"),
-                NumpadKeySpec("2", "2", NumpadKeyRole.DIGIT, 2.368f, "2"),
-                NumpadKeySpec("3", "3", NumpadKeyRole.DIGIT, 2.366f, "3"),
-                NumpadKeySpec("%", "%", NumpadKeyRole.OPERATOR, 1.45f, "Percent")
+                NumpadKeySpec("1", "1", NumpadKeyRole.DIGIT, 1f, "1"),
+                NumpadKeySpec("2", "2", NumpadKeyRole.DIGIT, 1f, "2"),
+                NumpadKeySpec("3", "3", NumpadKeyRole.DIGIT, 1f, "3")
             ),
             listOf(
-                NumpadKeySpec(MINUS_CHAR, MINUS_CHAR, NumpadKeyRole.OPERATOR, 1.45f, "Minus"),
-                NumpadKeySpec("4", "4", NumpadKeyRole.DIGIT, 2.366f, "4"),
-                NumpadKeySpec("5", "5", NumpadKeyRole.DIGIT, 2.368f, "5"),
-                NumpadKeySpec("6", "6", NumpadKeyRole.DIGIT, 2.366f, "6"),
-                NumpadKeySpec(")", ")", NumpadKeyRole.OPERATOR, 1.45f, "Right parenthesis")
+                NumpadKeySpec("4", "4", NumpadKeyRole.DIGIT, 1f, "4"),
+                NumpadKeySpec("5", "5", NumpadKeyRole.DIGIT, 1f, "5"),
+                NumpadKeySpec("6", "6", NumpadKeyRole.DIGIT, 1f, "6")
             ),
             listOf(
-                NumpadKeySpec(MULTIPLY_CHAR, MULTIPLY_CHAR, NumpadKeyRole.OPERATOR, 1.45f, "Multiply"),
-                NumpadKeySpec("7", "7", NumpadKeyRole.DIGIT, 2.366f, "7"),
-                NumpadKeySpec("8", "8", NumpadKeyRole.DIGIT, 2.368f, "8"),
-                NumpadKeySpec("9", "9", NumpadKeyRole.DIGIT, 2.366f, "9"),
-                NumpadKeySpec("\u232B", null, NumpadKeyRole.BACKSPACE, 1.45f, "Backspace")
-            ),
-            listOf(
-                NumpadKeySpec("ABC", null, NumpadKeyRole.RETURN_ALPHA, 1.45f, "Return to letters"),
-                NumpadKeySpec(",", ",", NumpadKeyRole.OPERATOR, 1.40f, "Comma"),
-                NumpadKeySpec("0", "0", NumpadKeyRole.DIGIT, 4.30f, "0"),
-                NumpadKeySpec("=", "=", NumpadKeyRole.OPERATOR, 1.40f, "Equals"),
-                NumpadKeySpec("\u21B5", null, NumpadKeyRole.ACTION_ENTER, 1.45f, "Enter")
+                NumpadKeySpec("7", "7", NumpadKeyRole.DIGIT, 1f, "7"),
+                NumpadKeySpec("8", "8", NumpadKeyRole.DIGIT, 1f, "8"),
+                NumpadKeySpec("9", "9", NumpadKeyRole.DIGIT, 1f, "9")
             )
         )
+
+        val RIGHT_COLUMN: List<NumpadKeySpec> = listOf(
+            NumpadKeySpec("%", "%", NumpadKeyRole.OPERATOR, 1f, "Percent"),
+            NumpadKeySpec(" ", " ", NumpadKeyRole.SPACE, 1f, "Space"),
+            NumpadKeySpec("\u232B", null, NumpadKeyRole.BACKSPACE, 1f, "Backspace")
+        )
+
+        val BOTTOM_LEFT: NumpadKeySpec =
+            NumpadKeySpec("ABC", null, NumpadKeyRole.RETURN_ALPHA, LEFT_RAIL_WEIGHT, "Return to letters")
+
+        val BOTTOM_CENTER_KEYS: List<NumpadKeySpec> = listOf(
+            NumpadKeySpec(",", ",", NumpadKeyRole.OPERATOR, 1.10f, "Comma"),
+            NumpadKeySpec("!?#", null, NumpadKeyRole.TO_SYMBOLS, 1.10f, "Symbols"),
+            NumpadKeySpec("0", "0", NumpadKeyRole.DIGIT, 2.80f, "0"),
+            NumpadKeySpec("=", "=", NumpadKeyRole.OPERATOR, 1.10f, "Equals"),
+            NumpadKeySpec(".", ".", NumpadKeyRole.OPERATOR, 1.10f, "Period")
+        )
+
+        val BOTTOM_RIGHT: NumpadKeySpec =
+            NumpadKeySpec("\u21B5", null, NumpadKeyRole.ACTION_ENTER, RIGHT_COLUMN_WEIGHT, "Enter")
+
+        val BOTTOM_ROW: List<NumpadKeySpec> = listOf(BOTTOM_LEFT) + BOTTOM_CENTER_KEYS + listOf(BOTTOM_RIGHT)
     }
 
     data class ImeThemePalette(
