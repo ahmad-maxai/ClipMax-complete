@@ -107,6 +107,7 @@ class ClipMaxImeService : InputMethodService() {
     private var imeRootFrame: FrameLayout? = null
     private var imeSurfaceFrame: FrameLayout? = null
     private var contentContainer: LinearLayout? = null
+    private var mainViewportFrame: LinearLayout? = null
     private var clipboardPanelRoot: LinearLayout? = null
     private var clipboardScrollView: android.widget.ScrollView? = null
     private var clipboardCardsContainer: LinearLayout? = null
@@ -514,6 +515,7 @@ class ClipMaxImeService : InputMethodService() {
         clipboardHeaderCountTv = null
         clipboardMergeBanner = null
         settingsScrollView = null
+        mainViewportFrame = null
         imeRootFrame?.setBackgroundColor(colorBg)
         content.removeAllViews()
         content.setBackgroundColor(colorBg)
@@ -538,22 +540,38 @@ class ClipMaxImeService : InputMethodService() {
         // Apply One-Handed Mode padding
         applyOneHandedPadding()
 
-        // 1. ClipMax Compact Toolbar
+        val viewport = computeCurrentViewportSpec()
+
+        // 1. ClipMax Compact Toolbar (fixed 38dp)
         content.addView(buildToolbar())
 
-        // 2. Status / In-Flight Banner (Hidden unless inserting or in password field)
-        content.addView(buildStatusBanner())
+        // 2. Canonical Fixed-Height Main Viewport across all IME panels & overlays
+        val viewportContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            setBackgroundColor(colorBg)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(viewport.mainPanelHeightDp).toInt()
+            )
+        }
+        mainViewportFrame = viewportContainer
+        content.addView(viewportContainer)
+
+        // Status / In-Flight Banner inside fixed viewport (shrinks flexible panel/rows cleanly without height shift)
+        viewportContainer.addView(buildStatusBanner())
 
         if (isSettingsOpen) {
             // 3. Settings Interface Panel
-            content.addView(buildSettingsPanel())
+            viewportContainer.addView(buildSettingsPanel())
         } else if (isClipboardPanelOpen) {
             // 3B. Compact Expandable Saved-Clipboard / Pinned Panel
-            content.addView(buildClipboardPanel())
+            viewportContainer.addView(buildClipboardPanel())
         } else {
             // 3C. Live Search Clips Bar & Results Strip (above QWERTY when Search Clips is active)
             if (isFilterMode) {
-                content.addView(buildSearchInterface())
+                viewportContainer.addView(buildSearchInterface(viewport))
             }
 
             // 4. Approved 4-row Ergonomic QWERTY / Numeric Keyboard Container
@@ -565,7 +583,8 @@ class ClipMaxImeService : InputMethodService() {
                 clipToPadding = false
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
+                    0,
+                    1f
                 )
             }
             keyboardWrapper = wrapper
@@ -583,14 +602,14 @@ class ClipMaxImeService : InputMethodService() {
                 )
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
+                    ViewGroup.LayoutParams.MATCH_PARENT
                 )
             }
             keyboardRowsContainer = kbContainer
             renderKeyboardRows()
             wrapper.addView(kbContainer)
 
-            content.addView(wrapper)
+            viewportContainer.addView(wrapper)
             if (isFilterMode) {
                 renderSearchResults()
             }
@@ -606,7 +625,7 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     private fun buildToolbar(): View {
         val rootFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(KeyboardLayoutSpec.TOOLBAR_HEIGHT_DP).toInt())
             setBackgroundColor(colorToolbarBg)
             clipChildren = true
         }
@@ -997,14 +1016,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun buildSettingsPanel(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(colorBg)
-        val screenH = resources.displayMetrics.heightPixels
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val targetHeight = if (isLandscape) {
-            dp(180)
-        } else {
-            minOf(dp(258), (screenH * 0.36f).toInt()).coerceAtLeast(dp(228))
-        }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, targetHeight)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
 
         // Header (36dp)
         val header = LinearLayout(this@ClipMaxImeService).apply {
@@ -1170,6 +1182,7 @@ class ClipMaxImeService : InputMethodService() {
                     setOnClickListener {
                         themePreferences.edit().putString("keyboard_height", key).apply()
                         styleHeightButtons(key)
+                        applyCanonicalViewportHeightInPlace()
                     }
                 }
                 heightButtons.add(key to btn)
@@ -1371,16 +1384,23 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    private fun buildSearchInterface(): View = LinearLayout(this).apply {
+    private fun buildSearchInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(colorBg)
-        setPadding(dp(6), dp(2), dp(6), dp(4))
+        setPadding(dp(6), dp(viewport.searchTopPaddingDp).toInt(), dp(6), dp(viewport.searchBottomPaddingDp).toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(viewport.searchInterfaceHeightDp).toInt()
+        )
 
-        // Row 1: Search Input Bar (32dp)
+        val barH = dp(viewport.searchBarHeightDp).toInt()
+        val pillH = (barH - dp(2)).coerceAtLeast(dp(20))
+
+        // Row 1: Search Input Bar (exact measured height from ViewportSpecDp)
         val barRow = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, barH)
         }
 
         val pill = LinearLayout(this@ClipMaxImeService).apply {
@@ -1388,7 +1408,7 @@ class ClipMaxImeService : InputMethodService() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(6), 0)
             background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
-            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, pillH, 1f).apply {
                 rightMargin = dp(6)
             }
         }
@@ -1441,14 +1461,14 @@ class ClipMaxImeService : InputMethodService() {
                 renderFullImeView()
             }
         }
-        barRow.addView(closeSearchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30)))
+        barRow.addView(closeSearchBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, pillH))
         addView(barRow)
 
-        // Row 2: Live Filtered Clip Results Strip (44dp)
+        // Row 2: Live Filtered Clip Results Strip (exact measured height from ViewportSpecDp)
         val resultsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
             isHorizontalScrollBarEnabled = false
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-                topMargin = dp(4)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(viewport.searchResultsHeightDp).toInt()).apply {
+                topMargin = dp(viewport.searchResultsTopMarginDp).toInt()
             }
         }
         val resultsRow = LinearLayout(this@ClipMaxImeService).apply {
@@ -1492,7 +1512,8 @@ class ClipMaxImeService : InputMethodService() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(10), dp(4), dp(10), dp(4))
                 background = roundedRipple(colorChipBg, dp(10f), colorChipBorder)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
+                val chipH = (dp(computeCurrentViewportSpec().searchResultsHeightDp).toInt() - dp(4)).coerceAtLeast(dp(26))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply {
                     rightMargin = dp(6)
                 }
 
@@ -1644,14 +1665,7 @@ class ClipMaxImeService : InputMethodService() {
         clipboardPanelRoot = this
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(colorBg)
-        val screenH = resources.displayMetrics.heightPixels
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val targetHeight = if (isLandscape) {
-            dp(170)
-        } else {
-            minOf(dp(276), (screenH * 0.38f).toInt()).coerceAtLeast(dp(236))
-        }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, targetHeight)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
 
         val visible = getVisibleClipboardItems()
 
@@ -2740,8 +2754,8 @@ class ClipMaxImeService : InputMethodService() {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(10), dp(2), dp(10), dp(2))
         setBackgroundColor(if (isNightMode) 0xFF0E1512.toInt() else 0xFFE0E5E2.toInt())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24))
-        visibility = if (isInserting) View.VISIBLE else View.GONE
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(KeyboardLayoutSpec.STATUS_BANNER_HEIGHT_DP).toInt())
+        visibility = if (isInserting || isPasswordTarget) View.VISIBLE else View.GONE
         statusBannerView = this
 
         val lbl = TextView(this@ClipMaxImeService).apply {
@@ -2774,6 +2788,27 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     // 4. ERGONOMIC 4-ROW QWERTY / NUMERIC / SYMBOL KEYBOARD
     // =========================================================================
+    private fun computeCurrentViewportSpec(): KeyboardLayoutSpec.ViewportSpecDp {
+        val dm = resources.displayMetrics
+        val density = dm.density.coerceAtLeast(1f)
+        val screenHeightDp = dm.heightPixels / density
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val heightPref = themePreferences.getString("keyboard_height", "normal") ?: "normal"
+        return KeyboardLayoutSpec.computeViewportSpecDp(
+            heightPref = heightPref,
+            screenHeightDp = screenHeightDp,
+            isLandscape = isLandscape
+        )
+    }
+
+    private fun applyCanonicalViewportHeightInPlace() {
+        val viewport = computeCurrentViewportSpec()
+        val host = mainViewportFrame ?: return
+        val lp = host.layoutParams ?: return
+        lp.height = dp(viewport.mainPanelHeightDp).toInt()
+        host.layoutParams = lp
+    }
+
     private fun refreshKeyboardGeometry(): KeyboardLayoutSpec.GeometryDp {
         val dm = resources.displayMetrics
         val density = dm.density.coerceAtLeast(1f)
@@ -2784,7 +2819,8 @@ class ClipMaxImeService : InputMethodService() {
             heightPref = heightPref,
             screenHeightDp = screenHeightDp,
             isLandscape = isLandscape,
-            hasFilterBar = isFilterMode
+            hasFilterBar = isFilterMode,
+            hasStatusBanner = isInserting || isPasswordTarget
         )
         currentLayoutGeometry = geom
         return geom
@@ -2807,7 +2843,13 @@ class ClipMaxImeService : InputMethodService() {
         val container = keyboardRowsContainer ?: return
         container.removeAllViews()
         letterKeyViews.clear()
-        refreshKeyboardGeometry()
+        val geom = refreshKeyboardGeometry()
+        container.setPadding(
+            dp(geom.sidePaddingDp).toInt(),
+            dp(geom.topPaddingDp).toInt(),
+            dp(geom.sidePaddingDp).toInt(),
+            dp(geom.bottomPaddingDp).toInt()
+        )
 
         when (keyboardMode) {
             0 -> renderAlphaRows(container)
@@ -3660,8 +3702,14 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun setStatus(msg: String) {
         statusLabel?.text = msg
-        statusBannerView?.visibility = if (isInserting || isPasswordTarget) View.VISIBLE else View.GONE
+        val targetVis = if (isInserting || isPasswordTarget) View.VISIBLE else View.GONE
+        val banner = statusBannerView
+        val visChanged = banner != null && banner.visibility != targetVis
+        banner?.visibility = targetVis
         statusCancelBtn?.visibility = if (isInserting) View.VISIBLE else View.GONE
+        if (visChanged && !isSettingsOpen && !isClipboardPanelOpen && keyboardRowsContainer != null) {
+            renderKeyboardRows()
+        }
     }
 
     private fun getRawSnippetPrefix(item: ClipItem, maxChars: Int = 180): String {

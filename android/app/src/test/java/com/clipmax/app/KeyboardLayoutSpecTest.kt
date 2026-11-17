@@ -80,4 +80,28 @@ class KeyboardLayoutSpecTest {
         ctrl.onDown()
         assertTrue(ctrl.onUp())
     }
+
+    @Test
+    fun testCanonicalFixedViewportHeightConsistencyAcrossOverlaysAndPresets() {
+        for (preset in listOf("compact", "normal", "tall")) {
+            for ((screenH, isLand) in listOf(840f to false, 390f to true)) {
+                val viewport = KeyboardLayoutSpec.computeViewportSpecDp(preset, screenH, isLand)
+                val base = KeyboardLayoutSpec.computeGeometryDp(preset, screenH, isLand, hasFilterBar = false, hasStatusBanner = false)
+                val withSearch = KeyboardLayoutSpec.computeGeometryDp(preset, screenH, isLand, hasFilterBar = true, hasStatusBanner = false)
+                val withBanner = KeyboardLayoutSpec.computeGeometryDp(preset, screenH, isLand, hasFilterBar = false, hasStatusBanner = true)
+                val withBoth = KeyboardLayoutSpec.computeGeometryDp(preset, screenH, isLand, hasFilterBar = true, hasStatusBanner = true)
+
+                fun rowsHeight(g: KeyboardLayoutSpec.GeometryDp): Float =
+                    g.keyHeightDp * 4f + g.interRowGapDp * 3f + g.topPaddingDp + g.bottomPaddingDp
+
+                assertEquals(viewport.mainPanelHeightDp, rowsHeight(base), 0.1f)
+                assertTrue(rowsHeight(withSearch) + viewport.searchInterfaceHeightDp <= viewport.mainPanelHeightDp + 0.1f)
+                assertTrue(rowsHeight(withBanner) + viewport.statusBannerHeightDp <= viewport.mainPanelHeightDp + 0.1f)
+                assertTrue(
+                    rowsHeight(withBoth) + viewport.searchInterfaceHeightDp + viewport.statusBannerHeightDp <=
+                        viewport.mainPanelHeightDp + 0.1f
+                )
+            }
+        }
+    }
 }

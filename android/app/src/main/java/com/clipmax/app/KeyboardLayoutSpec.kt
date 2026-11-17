@@ -24,6 +24,25 @@ internal object KeyboardLayoutSpec {
     fun embeddedNumberFor(letter: String): String? =
         ALPHA_TO_NUMBER_MAP[letter.uppercase()]
 
+    const val TOOLBAR_HEIGHT_DP = 38f
+    const val STATUS_BANNER_HEIGHT_DP = 24f
+
+    data class ViewportSpecDp(
+        val toolbarHeightDp: Float,
+        val mainPanelHeightDp: Float,
+        val totalContentHeightDp: Float,
+        val statusBannerHeightDp: Float,
+        val searchTopPaddingDp: Float,
+        val searchBottomPaddingDp: Float,
+        val searchBarHeightDp: Float,
+        val searchResultsTopMarginDp: Float,
+        val searchResultsHeightDp: Float
+    ) {
+        val searchInterfaceHeightDp: Float
+            get() = searchTopPaddingDp + searchBarHeightDp + searchResultsTopMarginDp +
+                searchResultsHeightDp + searchBottomPaddingDp
+    }
+
     data class GeometryDp(
         val keyHeightDp: Float,
         val interRowGapDp: Float,
@@ -36,71 +55,122 @@ internal object KeyboardLayoutSpec {
         val numberLegendSizeSp: Float
     )
 
+    private fun baseGeometryFor(heightPref: String): GeometryDp = when (heightPref) {
+        "compact" -> GeometryDp(
+            keyHeightDp = 40f,
+            interRowGapDp = 6f,
+            horizontalGapDp = 4f,
+            cornerRadiusDp = 8f,
+            topPaddingDp = 6f,
+            bottomPaddingDp = 6f,
+            sidePaddingDp = 4f,
+            primaryTextSizeSp = 18.5f,
+            numberLegendSizeSp = 9.5f
+        )
+        "tall" -> GeometryDp(
+            keyHeightDp = 48f,
+            interRowGapDp = 8f,
+            horizontalGapDp = 4.5f,
+            cornerRadiusDp = 9.5f,
+            topPaddingDp = 9f,
+            bottomPaddingDp = 9f,
+            sidePaddingDp = 4f,
+            primaryTextSizeSp = 21f,
+            numberLegendSizeSp = 10.5f
+        )
+        else -> GeometryDp(
+            keyHeightDp = 45f,
+            interRowGapDp = 7f,
+            horizontalGapDp = 4.5f,
+            cornerRadiusDp = 8.5f,
+            topPaddingDp = 8f,
+            bottomPaddingDp = 8f,
+            sidePaddingDp = 4f,
+            primaryTextSizeSp = 20f,
+            numberLegendSizeSp = 10f
+        )
+    }
+
     /**
-     * Computes scaled ergonomic dimensions in dp for the 4-row keyboard (matching Gboard
-     * reference proportions ~42-46dp keys, ~6-8dp vertical gaps, ~4-5dp horizontal gaps,
-     * ~8-10dp corner radii, ~8dp top/bottom breathing room) while respecting available height.
+     * Computes one canonical IME content viewport height for each preset (compact/normal/tall)
+     * and orientation so QWERTY, numeric keypad, emoji picker, clipboard, settings, Search Clips,
+     * and status banner states maintain an identical window height.
+     */
+    fun computeViewportSpecDp(
+        heightPref: String,
+        screenHeightDp: Float,
+        isLandscape: Boolean
+    ): ViewportSpecDp {
+        val base = baseGeometryFor(heightPref)
+        val naturalPanelHeightDp =
+            (base.keyHeightDp * 4f) + (base.interRowGapDp * 3f) + base.topPaddingDp + base.bottomPaddingDp
+        val maxKeyboardFraction = if (isLandscape) 0.56f else 0.44f
+        val maxPanelBudgetDp = (screenHeightDp * maxKeyboardFraction - TOOLBAR_HEIGHT_DP).coerceAtLeast(145f)
+        val mainPanelHeightDp = minOf(naturalPanelHeightDp, maxPanelBudgetDp)
+
+        return if (isLandscape) {
+            ViewportSpecDp(
+                toolbarHeightDp = TOOLBAR_HEIGHT_DP,
+                mainPanelHeightDp = mainPanelHeightDp,
+                totalContentHeightDp = TOOLBAR_HEIGHT_DP + mainPanelHeightDp,
+                statusBannerHeightDp = STATUS_BANNER_HEIGHT_DP,
+                searchTopPaddingDp = 2f,
+                searchBottomPaddingDp = 2f,
+                searchBarHeightDp = 24f,
+                searchResultsTopMarginDp = 2f,
+                searchResultsHeightDp = 32f
+            )
+        } else {
+            ViewportSpecDp(
+                toolbarHeightDp = TOOLBAR_HEIGHT_DP,
+                mainPanelHeightDp = mainPanelHeightDp,
+                totalContentHeightDp = TOOLBAR_HEIGHT_DP + mainPanelHeightDp,
+                statusBannerHeightDp = STATUS_BANNER_HEIGHT_DP,
+                searchTopPaddingDp = 2f,
+                searchBottomPaddingDp = 2f,
+                searchBarHeightDp = 28f,
+                searchResultsTopMarginDp = 3f,
+                searchResultsHeightDp = 38f
+            )
+        }
+    }
+
+    /**
+     * Computes scaled ergonomic dimensions in dp for the 4-row keyboard inside the canonical
+     * fixed viewport, subtracting exact measured dimensions of any active Search Clips or
+     * status banner so total IME height never shifts.
      */
     fun computeGeometryDp(
         heightPref: String,
         screenHeightDp: Float,
         isLandscape: Boolean,
-        hasFilterBar: Boolean = false
+        hasFilterBar: Boolean = false,
+        hasStatusBanner: Boolean = false
     ): GeometryDp {
-        val base = when (heightPref) {
-            "compact" -> GeometryDp(
-                keyHeightDp = 40f,
-                interRowGapDp = 6f,
-                horizontalGapDp = 4f,
-                cornerRadiusDp = 8f,
-                topPaddingDp = 6f,
-                bottomPaddingDp = 6f,
-                sidePaddingDp = 4f,
-                primaryTextSizeSp = 18.5f,
-                numberLegendSizeSp = 9.5f
-            )
-            "tall" -> GeometryDp(
-                keyHeightDp = 48f,
-                interRowGapDp = 8f,
-                horizontalGapDp = 4.5f,
-                cornerRadiusDp = 9.5f,
-                topPaddingDp = 9f,
-                bottomPaddingDp = 9f,
-                sidePaddingDp = 4f,
-                primaryTextSizeSp = 21f,
-                numberLegendSizeSp = 10.5f
-            )
-            else -> GeometryDp(
-                keyHeightDp = 45f,
-                interRowGapDp = 7f,
-                horizontalGapDp = 4.5f,
-                cornerRadiusDp = 8.5f,
-                topPaddingDp = 8f,
-                bottomPaddingDp = 8f,
-                sidePaddingDp = 4f,
-                primaryTextSizeSp = 20f,
-                numberLegendSizeSp = 10f
-            )
-        }
-
-        // Guard against overflowing compact viewports, split-screen, or landscape screens
-        val reservedAboveDp = 38f + (if (hasFilterBar) 66f else 0f)
-        val maxKeyboardFraction = if (isLandscape) 0.56f else 0.44f
-        val maxRowsBudgetDp = (screenHeightDp * maxKeyboardFraction - reservedAboveDp).coerceAtLeast(145f)
+        val base = baseGeometryFor(heightPref)
+        val viewport = computeViewportSpecDp(heightPref, screenHeightDp, isLandscape)
+        val reservedInsidePanelDp =
+            (if (hasFilterBar) viewport.searchInterfaceHeightDp else 0f) +
+            (if (hasStatusBanner) viewport.statusBannerHeightDp else 0f)
+        val rowsBudgetDp = (viewport.mainPanelHeightDp - reservedInsidePanelDp).coerceAtLeast(60f)
 
         val naturalRowsTotalDp = (base.keyHeightDp * 4f) + (base.interRowGapDp * 3f) + base.topPaddingDp + base.bottomPaddingDp
-        if (naturalRowsTotalDp <= maxRowsBudgetDp) {
+        if (naturalRowsTotalDp <= rowsBudgetDp) {
             return base
         }
 
-        val scale = (maxRowsBudgetDp / naturalRowsTotalDp).coerceIn(0.62f, 1f)
+        val scale = (rowsBudgetDp / naturalRowsTotalDp).coerceIn(0.42f, 1f)
+        val topPad = (base.topPaddingDp * scale).coerceAtLeast(2f)
+        val bottomPad = (base.bottomPaddingDp * scale).coerceAtLeast(2f)
+        val gap = (base.interRowGapDp * scale).coerceAtLeast(2.5f)
+        val keyH = ((rowsBudgetDp - topPad - bottomPad - gap * 3f) / 4f).coerceAtLeast(14f)
         return base.copy(
-            keyHeightDp = (base.keyHeightDp * scale).coerceAtLeast(30f),
-            interRowGapDp = (base.interRowGapDp * scale).coerceAtLeast(4f),
-            cornerRadiusDp = (base.cornerRadiusDp * scale).coerceAtLeast(6.5f),
-            topPaddingDp = (base.topPaddingDp * scale).coerceAtLeast(4f),
-            bottomPaddingDp = (base.bottomPaddingDp * scale).coerceAtLeast(4f),
-            primaryTextSizeSp = (base.primaryTextSizeSp * scale.coerceAtLeast(0.84f))
+            keyHeightDp = keyH,
+            interRowGapDp = gap,
+            cornerRadiusDp = (base.cornerRadiusDp * scale).coerceAtLeast(5.5f),
+            topPaddingDp = topPad,
+            bottomPaddingDp = bottomPad,
+            primaryTextSizeSp = (base.primaryTextSizeSp * scale.coerceAtLeast(0.78f))
         )
     }
 
