@@ -187,6 +187,11 @@ class ClipMaxImeService : InputMethodService() {
     private var toolbarStateAView: View? = null
     private var toolbarStateBView: View? = null
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
+    private var isEmojiPickerOpen = false
+    private var selectedEmojiCategoryIdx = 0
+    private var emojiScrollView: android.widget.ScrollView? = null
+    private var emojiGridContainer: LinearLayout? = null
+    private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
     private var isMergeMode = false
     private var mergeSourceId: String? = null
     private data class OperationSnapshot(
@@ -519,6 +524,11 @@ class ClipMaxImeService : InputMethodService() {
         clipboardHeaderCountTv = null
         clipboardMergeBanner = null
         settingsScrollView = null
+        emojiScrollView = null
+        emojiGridContainer = null
+        emojiTabViews.clear()
+        keyboardWrapper = null
+        keyboardRowsContainer = null
         mainViewportFrame = null
         imeRootFrame?.setBackgroundColor(colorBg)
         content.removeAllViews()
@@ -575,12 +585,20 @@ class ClipMaxImeService : InputMethodService() {
             // 3B. Compact Expandable Saved-Clipboard / Pinned Panel
             viewportContainer.addView(buildClipboardPanel())
         } else {
-            // 3C. Live Search Clips Bar & Results Strip (above QWERTY when Search Clips is active)
+            // 3C. Live Search Clips Bar & Results Strip (above keyboard or emoji picker when active)
             if (isFilterMode) {
                 viewportContainer.addView(buildSearchInterface(viewport))
             }
 
-            // 4. Approved 4-row Ergonomic QWERTY / Numeric Keyboard Container
+            if (isEmojiPickerOpen) {
+                // 3D. Native Offline Emoji Picker inside fixed viewport
+                viewportContainer.addView(buildEmojiPickerPanel())
+                if (isFilterMode) {
+                    renderSearchResults()
+                }
+                renderClipChips()
+            } else {
+                // 4. Approved 4-row Ergonomic QWERTY / Numeric Keyboard Container
             val geom = refreshKeyboardGeometry()
             syncAutoCapitalization(preserveManualShift = true)
 
@@ -616,10 +634,11 @@ class ClipMaxImeService : InputMethodService() {
             wrapper.addView(kbContainer)
 
             viewportContainer.addView(wrapper)
-            if (isFilterMode) {
-                renderSearchResults()
+                if (isFilterMode) {
+                    renderSearchResults()
+                }
+                renderClipChips()
             }
-            renderClipChips()
         }
 
         // Preserve any active Split/Merge floating Undo/Redo overlay above rebuilt content
@@ -745,6 +764,7 @@ class ClipMaxImeService : InputMethodService() {
                 } else {
                     pinnedOnly = false
                     isFilterMode = false
+                    isEmojiPickerOpen = false
                     isSettingsOpen = false
                     settingsSavedScrollY = 0
                     isClipboardPanelOpen = !isClipboardPanelOpen
@@ -830,16 +850,18 @@ class ClipMaxImeService : InputMethodService() {
             val iv = createIconView(IconDrawable(IconType.CHEVRON_LEFT, 0xFF111111.toInt(), 13.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
-                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly
+                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen
                 toolbarState = 0
                 isSettingsOpen = false
                 isClipboardPanelOpen = false
+                isEmojiPickerOpen = false
                 clipboardSavedScrollY = 0
                 settingsSavedScrollY = 0
                 isFilterMode = false
                 pinnedOnly = false
                 keyboardSearchQuery = ""
                 keyboardSearchResults = emptyList()
+                syncKeyboardModeForActiveField()
                 if (wasPanelOpen) {
                     renderFullImeView()
                 } else {
@@ -945,6 +967,7 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 pinnedOnly = true
                 isClipboardPanelOpen = true
+                isEmojiPickerOpen = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -975,6 +998,7 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 isFilterMode = true
                 isClipboardPanelOpen = false
+                isEmojiPickerOpen = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -998,6 +1022,7 @@ class ClipMaxImeService : InputMethodService() {
             isSettingsOpen = !isSettingsOpen
             settingsSavedScrollY = 0
             isClipboardPanelOpen = false
+            isEmojiPickerOpen = false
             clipboardSavedScrollY = 0
             isFilterMode = false
             pinnedOnly = false
@@ -2911,7 +2936,7 @@ class ClipMaxImeService : InputMethodService() {
             renderKeyboardRows()
         }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createCommaEmojiKey(), keyLp(0.9f))
         row4.addView(createGlobeKey(), keyLp(0.9f))
         row4.addView(createSpaceKey(), keyLp(4.4f))
         row4.addView(createStandardKey("."), keyLp(0.9f))
@@ -2953,7 +2978,7 @@ class ClipMaxImeService : InputMethodService() {
             renderKeyboardRows()
         }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createCommaEmojiKey(), keyLp(0.9f))
         row4.addView(createGlobeKey(), keyLp(0.9f))
         row4.addView(createSpaceKey(), keyLp(4.4f))
         row4.addView(createStandardKey("."), keyLp(0.9f))
@@ -2994,7 +3019,7 @@ class ClipMaxImeService : InputMethodService() {
             renderKeyboardRows()
         }, keyLp(1.45f))
 
-        row4.addView(createStandardKey(","), keyLp(0.9f))
+        row4.addView(createCommaEmojiKey(), keyLp(0.9f))
         row4.addView(createGlobeKey(), keyLp(0.9f))
         row4.addView(createSpaceKey(), keyLp(4.4f))
         row4.addView(createStandardKey("."), keyLp(0.9f))
@@ -3184,6 +3209,197 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row4)
     }
 
+    // 4E. NATIVE OFFLINE EMOJI PICKER (Fits Task 1 fixed viewport)
+    private fun iconTypeForEmojiCategory(id: EmojiCatalog.CategoryId): IconType = when (id) {
+        EmojiCatalog.CategoryId.SMILEYS -> IconType.EMOJI
+        EmojiCatalog.CategoryId.PEOPLE -> IconType.EMOJI_PEOPLE
+        EmojiCatalog.CategoryId.NATURE -> IconType.EMOJI_NATURE
+        EmojiCatalog.CategoryId.FOOD -> IconType.EMOJI_FOOD
+        EmojiCatalog.CategoryId.ACTIVITIES -> IconType.EMOJI_ACTIVITIES
+        EmojiCatalog.CategoryId.TRAVEL -> IconType.EMOJI_TRAVEL
+        EmojiCatalog.CategoryId.OBJECTS -> IconType.EMOJI_OBJECTS
+        EmojiCatalog.CategoryId.SYMBOLS -> IconType.EMOJI_SYMBOLS
+    }
+
+    private fun buildEmojiPickerPanel(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(colorBg)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val headerH = if (isLandscape) dp(30) else dp(34)
+
+        // Category & Navigation Bar (ABC | Category Icons | Backspace)
+        val header = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            setBackgroundColor(if (isClassicTheme) (if (isNightMode) 0xFF141C18.toInt() else 0xFFE9EFEA.toInt()) else 0xFF161619.toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headerH)
+        }
+
+        val abcBtn = Button(this@ClipMaxImeService).apply {
+            text = "ABC"
+            isAllCaps = false
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(10), 0, dp(10), 0)
+            setTextColor(colorModText)
+            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            contentDescription = "Return to keyboard"
+            setOnClickListener {
+                isEmojiPickerOpen = false
+                syncKeyboardModeForActiveField()
+                renderFullImeView()
+            }
+        }
+        header.addView(abcBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (headerH - dp(6)).coerceAtLeast(dp(22))).apply {
+            rightMargin = dp(6)
+        })
+
+        val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        }
+        val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        emojiTabViews.clear()
+        val tabSize = (headerH - dp(6)).coerceAtLeast(dp(24))
+        EmojiCatalog.CATEGORIES.forEachIndexed { index, category ->
+            val tab = FrameLayout(this@ClipMaxImeService).apply {
+                contentDescription = category.label
+                val iv = createIconView(IconDrawable(iconTypeForEmojiCategory(category.id), colorModText, 14f))
+                tag = iv
+                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                setOnClickListener {
+                    selectedEmojiCategoryIdx = index
+                    updateEmojiCategoryTabsUI()
+                    populateEmojiGrid()
+                    emojiScrollView?.scrollTo(0, 0)
+                }
+            }
+            emojiTabViews.add(index to tab)
+            tabsRow.addView(tab, LinearLayout.LayoutParams(dp(34), tabSize).apply {
+                rightMargin = dp(3)
+            })
+        }
+        tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        header.addView(tabsScroll)
+
+        val backspaceBtn = FrameLayout(this@ClipMaxImeService).apply {
+            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            contentDescription = "Delete"
+            val iv = createIconView(IconDrawable(IconType.BACKSPACE, colorModText, 15f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setupBackspaceRepeat(this)
+        }
+        header.addView(backspaceBtn, LinearLayout.LayoutParams(dp(36), (headerH - dp(6)).coerceAtLeast(dp(22))).apply {
+            leftMargin = dp(6)
+        })
+
+        addView(header)
+
+        val divider = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }
+        addView(divider)
+
+        val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        emojiScrollView = scroll
+
+        val grid = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(6))
+        }
+        emojiGridContainer = grid
+        scroll.addView(grid, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(scroll)
+
+        updateEmojiCategoryTabsUI()
+        populateEmojiGrid()
+    }
+
+    private fun updateEmojiCategoryTabsUI() {
+        val activeIdx = selectedEmojiCategoryIdx.coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)
+        for ((idx, tab) in emojiTabViews) {
+            val active = (idx == activeIdx)
+            val bg = if (active) colorActiveTabBg else 0
+            val fg = if (active) colorActiveTabText else colorModText
+            val stroke = if (active) colorAccent else 0
+            tab.background = roundedRipple(bg, dp(7f), stroke)
+            val iv = tab.tag as? ImageView
+            val cat = EmojiCatalog.CATEGORIES[idx]
+            iv?.setImageDrawable(IconDrawable(iconTypeForEmojiCategory(cat.id), fg, 14f))
+        }
+    }
+
+    private fun populateEmojiGrid() {
+        val grid = emojiGridContainer ?: return
+        grid.removeAllViews()
+        val catIdx = selectedEmojiCategoryIdx.coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)
+        val emojis = EmojiCatalog.CATEGORIES[catIdx].emojis
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val cols = if (isLandscape) 10 else 8
+        val cellH = if (isLandscape) dp(34) else dp(40)
+
+        var i = 0
+        while (i < emojis.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
+                    bottomMargin = dp(2)
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < emojis.size) {
+                    val emoji = emojis[idx]
+                    val cell = TextView(this).apply {
+                        text = emoji
+                        textSize = 21f
+                        gravity = Gravity.CENTER
+                        background = roundedRipple(0x00000000, dp(8f), 0)
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleEmojiPress(emoji)
+                        }
+                    }
+                    row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                }
+            }
+            grid.addView(row)
+            i += cols
+        }
+    }
+
+    private fun handleEmojiPress(emoji: String) {
+        shiftStateMachine.onNonLetterInput()
+        if (isFilterMode) {
+            keyboardSearchQuery += emoji
+            updateSearchUI()
+            runKeyboardSearch()
+        } else {
+            val conn = currentInputConnection ?: return
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            lastRevertOriginalWord = null
+            clearTypingSuggestionsView()
+            conn.commitText(emoji, 1)
+            updateInsertionHistoryButtons()
+        }
+    }
+
     // =========================================================================
     // KEY VIEW BUILDERS, ACTIONS & FEEDBACK
     // =========================================================================
@@ -3366,6 +3582,86 @@ class ClipMaxImeService : InputMethodService() {
             primaryChar = char,
             longPressChar = hint
         )
+    }
+
+    private fun createCommaEmojiKey(): View = FrameLayout(this).apply {
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+        contentDescription = "Comma, hold for emoji"
+
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = ","
+            textSize = (currentLayoutGeometry.primaryTextSizeSp - 2f).coerceAtLeast(15f)
+            typeface = Typeface.DEFAULT
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(2), 0, 0)
+        }
+        addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        val emojiHint = createIconView(IconDrawable(IconType.EMOJI, colorHintText, 9.5f))
+        addView(
+            emojiHint,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(3)
+                rightMargin = dp(4)
+            }
+        )
+
+        val controller = KeyboardLayoutSpec.LongPressKeyController()
+        val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
+        val longPressTask = Runnable {
+            if (controller.onLongPressTimeout()) {
+                this.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                hideKeyPreview()
+                shiftStateMachine.resetDoubleTapTimer()
+                isEmojiPickerOpen = true
+                isClipboardPanelOpen = false
+                isSettingsOpen = false
+                renderFullImeView()
+            }
+        }
+
+        setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onDown()
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    showKeyPreview(v, ",")
+                    main.postDelayed(longPressTask, thresholdMs)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val x = event.x
+                    val y = event.y
+                    val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
+                    if (!inside && controller.onMove(insideBounds = false)) {
+                        main.removeCallbacks(longPressTask)
+                        v.isPressed = false
+                        hideKeyPreview()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    main.removeCallbacks(longPressTask)
+                    v.isPressed = false
+                    hideKeyPreview()
+                    if (controller.onUp()) {
+                        handleGenericCharPress(",")
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onCancel()
+                    v.isPressed = false
+                    hideKeyPreview()
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun createStandardKey(char: String): View = FrameLayout(this).apply {
@@ -3978,9 +4274,13 @@ class ClipMaxImeService : InputMethodService() {
         isInserting = false
         fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
+        if (!restarting) {
+            isEmojiPickerOpen = false
+        }
         if (isPasswordTarget) {
             isFilterMode = false
             isClipboardPanelOpen = false
+            isEmojiPickerOpen = false
             pinnedOnly = false
         }
         syncKeyboardModeForActiveField()
@@ -4095,7 +4395,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (contextMenuHost != null || isMergeMode || undoRedoHost != null ||
-                isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
+                isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
                 if (event.repeatCount == 0) {
                     event.startTracking()
                 }
@@ -4126,6 +4426,13 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 return true
             }
+            if (isEmojiPickerOpen) {
+                if (!event.isCanceled) {
+                    isEmojiPickerOpen = false
+                    renderFullImeView()
+                }
+                return true
+            }
             if (isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState == 1) {
                 if (!event.isCanceled) {
                     isSettingsOpen = false
@@ -4151,7 +4458,8 @@ class ClipMaxImeService : InputMethodService() {
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
         shiftStateMachine.resetDoubleTapTimer()
-        val needsReset = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
+        val needsReset = isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
+        isEmojiPickerOpen = false
         isSettingsOpen = false
         settingsSavedScrollY = 0
         isClipboardPanelOpen = false
@@ -5068,6 +5376,7 @@ class ClipMaxImeService : InputMethodService() {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         SEND, GO, NEXT, DONE, SPACE,
+        EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -5365,6 +5674,106 @@ class ClipMaxImeService : InputMethodService() {
                         lineTo(13.4f, 8.2f)
                     }
                     canvas.drawPath(p, strokePaint)
+                }
+                IconType.EMOJI -> {
+                    canvas.drawCircle(8f, 8f, 5.8f, strokePaint)
+                    canvas.drawCircle(6.1f, 6.6f, 0.7f, fillPaint)
+                    canvas.drawCircle(9.9f, 6.6f, 0.7f, fillPaint)
+                    val smile = Path().apply {
+                        moveTo(5.6f, 9.5f)
+                        quadTo(8f, 11.6f, 10.4f, 9.5f)
+                    }
+                    canvas.drawPath(smile, strokePaint)
+                }
+                IconType.EMOJI_PEOPLE -> {
+                    canvas.drawCircle(8f, 5.2f, 2.3f, strokePaint)
+                    val shoulders = Path().apply {
+                        moveTo(3.4f, 13.4f)
+                        quadTo(3.8f, 9.6f, 8f, 9.6f)
+                        quadTo(12.2f, 9.6f, 12.6f, 13.4f)
+                    }
+                    canvas.drawPath(shoulders, strokePaint)
+                }
+                IconType.EMOJI_NATURE -> {
+                    val leaf = Path().apply {
+                        moveTo(3.5f, 12.5f)
+                        quadTo(3.5f, 4.0f, 12.5f, 3.5f)
+                        quadTo(12.0f, 12.0f, 3.5f, 12.5f)
+                        close()
+                        moveTo(3.5f, 12.5f)
+                        lineTo(9.5f, 6.5f)
+                    }
+                    canvas.drawPath(leaf, strokePaint)
+                }
+                IconType.EMOJI_FOOD -> {
+                    val cup = Path().apply {
+                        moveTo(3.4f, 6.0f)
+                        lineTo(11.0f, 6.0f)
+                        lineTo(11.0f, 9.6f)
+                        quadTo(11.0f, 12.6f, 7.2f, 12.6f)
+                        quadTo(3.4f, 12.6f, 3.4f, 9.6f)
+                        close()
+                        moveTo(11.0f, 6.8f)
+                        quadTo(13.4f, 6.8f, 13.4f, 8.6f)
+                        quadTo(13.4f, 10.4f, 11.0f, 10.4f)
+                        moveTo(5.8f, 3.0f)
+                        lineTo(5.8f, 4.6f)
+                        moveTo(8.6f, 3.0f)
+                        lineTo(8.6f, 4.6f)
+                    }
+                    canvas.drawPath(cup, strokePaint)
+                }
+                IconType.EMOJI_ACTIVITIES -> {
+                    canvas.drawCircle(8f, 8f, 5.6f, strokePaint)
+                    val seam1 = Path().apply {
+                        moveTo(4.2f, 4.2f)
+                        quadTo(8f, 7.6f, 4.2f, 11.8f)
+                        moveTo(11.8f, 4.2f)
+                        quadTo(8f, 7.6f, 11.8f, 11.8f)
+                    }
+                    canvas.drawPath(seam1, strokePaint)
+                }
+                IconType.EMOJI_TRAVEL -> {
+                    val car = Path().apply {
+                        moveTo(2.8f, 9.2f)
+                        lineTo(4.4f, 5.4f)
+                        lineTo(11.6f, 5.4f)
+                        lineTo(13.2f, 9.2f)
+                        lineTo(13.2f, 12.0f)
+                        lineTo(2.8f, 12.0f)
+                        close()
+                    }
+                    canvas.drawPath(car, strokePaint)
+                    canvas.drawCircle(5.2f, 12.2f, 1.1f, fillPaint)
+                    canvas.drawCircle(10.8f, 12.2f, 1.1f, fillPaint)
+                }
+                IconType.EMOJI_OBJECTS -> {
+                    val bulb = Path().apply {
+                        moveTo(5.8f, 10.4f)
+                        quadTo(3.6f, 8.6f, 4.2f, 5.8f)
+                        quadTo(5.0f, 2.8f, 8.0f, 2.8f)
+                        quadTo(11.0f, 2.8f, 11.8f, 5.8f)
+                        quadTo(12.4f, 8.6f, 10.2f, 10.4f)
+                        lineTo(10.2f, 12.2f)
+                        lineTo(5.8f, 12.2f)
+                        close()
+                        moveTo(6.4f, 13.6f)
+                        lineTo(9.6f, 13.6f)
+                    }
+                    canvas.drawPath(bulb, strokePaint)
+                }
+                IconType.EMOJI_SYMBOLS -> {
+                    val hash = Path().apply {
+                        moveTo(6.0f, 3.0f)
+                        lineTo(4.8f, 13.0f)
+                        moveTo(11.2f, 3.0f)
+                        lineTo(10.0f, 13.0f)
+                        moveTo(3.0f, 6.2f)
+                        lineTo(13.0f, 6.2f)
+                        moveTo(2.6f, 9.8f)
+                        lineTo(12.6f, 9.8f)
+                    }
+                    canvas.drawPath(hash, strokePaint)
                 }
                 IconType.MERGE -> {
                     val p = Path().apply {
