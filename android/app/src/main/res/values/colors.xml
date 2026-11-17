@@ -1,0 +1,12 @@
+<resources>
+    <color name="clipmax_bg">#F8F9F8</color>
+    <color name="clipmax_surface">#FFFFFF</color>
+    <color name="clipmax_surface_secondary">#F1F3F2</color>
+    <color name="clipmax_text_primary">#232726</color>
+    <color name="clipmax_text_secondary">#6B7470</color>
+    <color name="clipmax_border">#E1E5E3</color>
+    <color name="clipmax_mint">#4A8B71</color>
+    <color name="clipmax_mint_soft">#E3EFE9</color>
+    <color name="clipmax_mint_text">#2B5846</color>
+    <color name="clipmax_destructive">#D9383A</color>
+</resources>

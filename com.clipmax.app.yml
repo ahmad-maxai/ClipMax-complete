@@ -1,0 +1,42 @@
+Categories:
+  - System
+  - Utilities
+License: GPL-3.0-or-later
+AuthorName: Ahmad Sa'id
+AuthorEmail: asaidtanko@gmail.com
+SourceCode: https://github.com/ahmad-maxai/ClipMax-complete
+IssueTracker: https://github.com/ahmad-maxai/ClipMax-complete/issues
+Changelog: https://github.com/ahmad-maxai/ClipMax-complete/releases
+
+AutoName: ClipMax
+
+Summary: Offline clipboard manager and system keyboard
+
+Description: |-
+  ClipMax helps you save and organize copied text on your Android device.
+
+  Use ClipMax to keep useful text snippets accessible through its clipboard
+  interface and keyboard. Find saved clips and reuse text when you need it.
+
+  Features:
+  * Save and organize text snippets
+  * Search saved clips
+  * Access clips through the ClipMax keyboard
+  * Insert long text using bounded surrogate-safe chunks
+  * Keep your clipboard collection private and offline on your device
+
+RepoType: git
+Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
+
+Builds:
+  - versionName: 1.0.1
+    versionCode: 11
+    commit: v1.0.1
+    subdir: android
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.1
+CurrentVersionCode: 11
