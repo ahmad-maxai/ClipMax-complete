@@ -229,6 +229,13 @@ internal class InsertionHistoryManager(
                 return singleLineInserted
             }
         }
+        // Host editor trailing delimiter / auto-spacing / link normalization fallback (e.g. ChatGPT, Slack, rich text):
+        // Detects when host auto-appends 1..4 delimiter chars or trailing slash to links.
+        val trailingMatch = resolveUndoTrailingDelimiterMatch(before, entry)
+        if (trailingMatch != null) {
+            return trailingMatch
+        }
+
         // Clamped host editor buffer handling for large texts (e.g. Chrome/WebView returning 64..2048 chars):
         // Verify that the exposed window matches the trailing portion of the inserted text.
         if (before.isNotEmpty()) {
@@ -248,6 +255,59 @@ internal class InsertionHistoryManager(
                 singleLineInserted.endsWith(normBefore)
             ) {
                 return singleLineInserted
+            }
+        }
+        return null
+    }
+
+    private fun resolveUndoTrailingDelimiterMatch(before: String, entry: HistoryEntry): String? {
+        val trimmed = before.trimEnd { it == ' ' || it == '	' || it == '
+' || it == '' || it.isWhitespace() }
+        val trailingWhitespaceCount = before.length - trimmed.length
+        val isUrl = entry.insertedText.startsWith("http://", ignoreCase = true) ||
+            entry.insertedText.startsWith("https://", ignoreCase = true) ||
+            entry.insertedText.contains("youtube.com", ignoreCase = true) ||
+            entry.insertedText.contains("youtu.be", ignoreCase = true) ||
+            entry.insertedText.contains("://")
+
+        val targetCandidates = listOfNotNull(
+            entry.insertedText,
+            normalizeLineEndings(entry.insertedText).takeIf { it != entry.insertedText },
+            normalizeHostSpacesAndLines(entry.insertedText)
+        ).distinct()
+
+        for (candidate in targetCandidates) {
+            if (trailingWhitespaceCount in 1..4) {
+                if (trimmed.length >= candidate.length && trimmed.endsWith(candidate)) {
+                    val prefix = trimmed.substring(0, trimmed.length - candidate.length)
+                    if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                        return before.takeLast(candidate.length + trailingWhitespaceCount)
+                    }
+                }
+            }
+
+            if (isUrl) {
+                // Host added trailing slash before trailing whitespace (e.g. "https://youtu.be/xyz/ ")
+                val trimmedSlash = trimmed.trimEnd('/')
+                val slashCount = trimmed.length - trimmedSlash.length
+                if (slashCount in 1..2 && !candidate.endsWith('/')) {
+                    if (trimmedSlash.length >= candidate.length && trimmedSlash.endsWith(candidate)) {
+                        val prefix = trimmedSlash.substring(0, trimmedSlash.length - candidate.length)
+                        if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                            return before.takeLast(candidate.length + slashCount + trailingWhitespaceCount)
+                        }
+                    }
+                }
+                // Host stripped trailing slash
+                if (candidate.endsWith('/') && candidate.length > 1) {
+                    val candidateNoSlash = candidate.removeSuffix("/")
+                    if (trimmed.length >= candidateNoSlash.length && trimmed.endsWith(candidateNoSlash)) {
+                        val prefix = trimmed.substring(0, trimmed.length - candidateNoSlash.length)
+                        if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                            return before.takeLast(candidateNoSlash.length + trailingWhitespaceCount)
+                        }
+                    }
+                }
             }
         }
         return null

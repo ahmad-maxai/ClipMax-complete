@@ -18,13 +18,19 @@ import {
   ClipItem,
   Nav,
   Retention,
+  RETENTION_PRESET_KEYS,
   RETENTION_LABELS,
+  formatRetentionLabel,
   ThemeMode,
 } from "../lib/types";
 import {
   saveStoredRetention,
   saveStoredCaptureEnabled,
   createClipItem,
+  getStoredCustomDuration,
+  saveStoredCustomDuration,
+  getStoredCustomUnit,
+  saveStoredCustomUnit,
 } from "../lib/storage";
 import { formatBytes } from "../lib/chunker";
 import { createZipBackup, restoreZipBackup, downloadFile } from "../lib/backup";
@@ -61,6 +67,69 @@ export function SettingsScreen({
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [isProcessingBackup, setIsProcessingBackup] = useState(false);
+  const isCustomActive = retention === "custom" || retention.startsWith("custom:") || /^(\d+)[mh]$/i.test(retention);
+  const [customDurationInput, setCustomDurationInput] = useState<string>(() => {
+    const match = retention.match(/^(?:custom:)?(\d+)\s*([mh])$/i);
+    if (match) return match[1];
+    return String(getStoredCustomDuration());
+  });
+  const [customUnit, setCustomUnit] = useState<"m" | "h">(() => {
+    const match = retention.match(/^(?:custom:)?(\d+)\s*([mh])$/i);
+    if (match) return match[2].toLowerCase() === "h" ? "h" : "m";
+    return getStoredCustomUnit();
+  });
+  const [customInputError, setCustomInputError] = useState<string | null>(null);
+
+  const handleSelectPreset = (r: Retention) => {
+    preserveScroll(() => {
+      setCustomInputError(null);
+      onChangeRetention(r);
+      saveStoredRetention(r);
+      toast(`Retention set to ${RETENTION_LABELS[r] || r}`);
+    });
+  };
+
+  const handleSelectCustom = () => {
+    preserveScroll(() => {
+      const parsed = parseInt(customDurationInput, 10);
+      const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setCustomDurationInput("15");
+        setCustomInputError(null);
+      }
+      saveStoredCustomDuration(safeDuration);
+      saveStoredCustomUnit(customUnit);
+      const customVal = `custom:${safeDuration}${customUnit}`;
+      onChangeRetention(customVal);
+      saveStoredRetention(customVal);
+      toast(`Retention set to ${formatRetentionLabel(customVal, safeDuration, customUnit)}`);
+    });
+  };
+
+  const handleCustomDurationChange = (valStr: string) => {
+    setCustomDurationInput(valStr);
+    const parsed = parseInt(valStr, 10);
+    if (!valStr.trim() || isNaN(parsed) || parsed <= 0) {
+      setCustomInputError("Duration must be a positive whole number (min 1)");
+      return;
+    }
+    setCustomInputError(null);
+    saveStoredCustomDuration(parsed);
+    const customVal = `custom:${parsed}${customUnit}`;
+    onChangeRetention(customVal);
+    saveStoredRetention(customVal);
+  };
+
+  const handleCustomUnitChange = (newUnit: "m" | "h") => {
+    setCustomUnit(newUnit);
+    saveStoredCustomUnit(newUnit);
+    const parsed = parseInt(customDurationInput, 10);
+    const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
+    const customVal = `custom:${safeDuration}${newUnit}`;
+    onChangeRetention(customVal);
+    saveStoredRetention(customVal);
+    toast(`Retention updated: ${formatRetentionLabel(customVal, safeDuration, newUnit)}`);
+  };
 
 
 
@@ -371,18 +440,18 @@ export function SettingsScreen({
             <div
               role="radiogroup"
               aria-label="Retention duration"
-              className="mt-2.5 grid grid-cols-3 gap-1.5"
+              className="mt-2.5 grid grid-cols-3 sm:grid-cols-4 gap-1.5"
             >
-              {(Object.keys(RETENTION_LABELS) as Retention[]).map((r) => (
+              {RETENTION_PRESET_KEYS.map((r) => (
                 <button
                   key={r}
                   type="button"
                   role="radio"
-                  aria-checked={retention === r}
-                  onClick={() => handleSelectRetention(r)}
+                  aria-checked={!isCustomActive && retention === r}
+                  onClick={() => handleSelectPreset(r)}
                   className={cn(
                     "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
-                    retention === r
+                    !isCustomActive && retention === r
                       ? "border-mint bg-mint-soft text-mint-foreground"
                       : "border-border bg-surface text-foreground hover:bg-accent"
                   )}
@@ -390,7 +459,86 @@ export function SettingsScreen({
                   {RETENTION_LABELS[r]}
                 </button>
               ))}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={isCustomActive}
+                onClick={handleSelectCustom}
+                className={cn(
+                  "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                  isCustomActive
+                    ? "border-mint bg-mint-soft text-mint-foreground"
+                    : "border-border bg-surface text-foreground hover:bg-accent"
+                )}
+              >
+                Custom
+              </button>
             </div>
+
+            {isCustomActive && (
+              <div className="mt-3 rounded-xl border border-border bg-surface-2 p-3 space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground">Custom duration</span>
+                  <span className="text-[11px] font-medium text-mint">
+                    {formatRetentionLabel(retention, parseInt(customDurationInput, 10) || 15, customUnit)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={customDurationInput}
+                      onChange={(e) => handleCustomDurationChange(e.target.value)}
+                      placeholder="15"
+                      className={cn(
+                        "w-full h-9 rounded-lg border bg-surface px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-mint tap-target",
+                        customInputError ? "border-danger focus:ring-danger" : "border-border"
+                      )}
+                      aria-label="Custom retention duration"
+                    />
+                  </div>
+                  <div className="flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label="Duration unit">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={customUnit === "m"}
+                      onClick={() => handleCustomUnitChange("m")}
+                      className={cn(
+                        "h-8 px-3 rounded-md text-xs font-semibold transition-colors tap-target",
+                        customUnit === "m"
+                          ? "bg-mint-soft text-mint-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Minutes
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={customUnit === "h"}
+                      onClick={() => handleCustomUnitChange("h")}
+                      className={cn(
+                        "h-8 px-3 rounded-md text-xs font-semibold transition-colors tap-target",
+                        customUnit === "h"
+                          ? "bg-mint-soft text-mint-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Hours
+                    </button>
+                  </div>
+                </div>
+                {customInputError ? (
+                  <p className="text-[11px] text-danger font-medium">{customInputError}</p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    Clips will automatically expire after {parseInt(customDurationInput, 10) || 15} {customUnit === "m" ? ((parseInt(customDurationInput, 10) || 15) === 1 ? "minute" : "minutes") : ((parseInt(customDurationInput, 10) || 15) === 1 ? "hour" : "hours")}.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </Section>
 

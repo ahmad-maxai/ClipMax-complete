@@ -11,7 +11,7 @@ internal object PasteUndoCapsuleSpec {
     const val RIGHT_MARGIN_DP = 42f // Positioned immediately left of the circular > nav button
     const val ICON_SIZE_DP = 14f
     const val TEXT_SIZE_SP = 12.5f
-    const val SELF_UPDATE_GRACE_MS = 350L
+    const val SELF_UPDATE_GRACE_MS = 700L
     const val LARGE_PASTE_CHAR_THRESHOLD = 1_500
     const val LARGE_PASTE_GRACE_MS = 2_500L
     const val RESTART_INPUT_SETTLE_GRACE_MS = 2_500L

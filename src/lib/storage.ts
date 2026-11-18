@@ -4,6 +4,8 @@ import { isNativeAndroid } from "./nativeBridge";
 
 const STORAGE_KEY_ITEMS = "clipmax_items_v1";
 const STORAGE_KEY_RETENTION = "clipmax_retention_v1";
+const STORAGE_KEY_CUSTOM_DURATION = "clipmax_custom_retention_duration";
+const STORAGE_KEY_CUSTOM_UNIT = "clipmax_custom_retention_unit";
 const STORAGE_KEY_CAPTURE = "clipmax_capture_v1";
 const STORAGE_KEY_DRAFT = "clipmax_draft_v1";
 
@@ -58,19 +60,82 @@ export function saveStoredItems(items: ClipItem[]): void {
   }
 }
 
+export function getStoredCustomDuration(): number {
+  if (isNativeAndroid() && window.ClipMaxNative?.getCustomRetentionDuration) {
+    try {
+      const d = window.ClipMaxNative.getCustomRetentionDuration();
+      if (typeof d === "number" && d > 0) return d;
+    } catch {}
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_DURATION);
+    if (raw) {
+      const d = parseInt(raw, 10);
+      if (d > 0) return d;
+    }
+  } catch {}
+  return 15;
+}
+
+export function saveStoredCustomDuration(duration: number): void {
+  const safe = duration > 0 ? Math.floor(duration) : 15;
+  const unit = getStoredCustomUnit();
+  if (isNativeAndroid() && window.ClipMaxNative?.setCustomRetention) {
+    try {
+      window.ClipMaxNative.setCustomRetention(safe, unit);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_CUSTOM_DURATION, String(safe));
+  } catch {}
+}
+
+export function getStoredCustomUnit(): "m" | "h" {
+  if (isNativeAndroid() && window.ClipMaxNative?.getCustomRetentionUnit) {
+    try {
+      const u = window.ClipMaxNative.getCustomRetentionUnit();
+      if (u === "m" || u === "h") return u;
+    } catch {}
+  }
+  try {
+    const u = localStorage.getItem(STORAGE_KEY_CUSTOM_UNIT);
+    if (u === "m" || u === "h") return u;
+  } catch {}
+  return "m";
+}
+
+export function saveStoredCustomUnit(unit: "m" | "h"): void {
+  const duration = getStoredCustomDuration();
+  if (isNativeAndroid() && window.ClipMaxNative?.setCustomRetention) {
+    try {
+      window.ClipMaxNative.setCustomRetention(duration, unit);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_CUSTOM_UNIT, unit);
+  } catch {}
+}
+
+export function isRetentionValid(r: string | null | undefined): boolean {
+  if (!r) return false;
+  if (["off", "1h", "6h", "24h", "72h", "forever", "custom"].includes(r)) return true;
+  const clean = r.startsWith("custom:") ? r.slice(7) : r;
+  return /^(\d+)\s*([mh])$/i.test(clean);
+}
+
 export function getStoredRetention(): Retention {
   if (isNativeAndroid() && window.ClipMaxNative?.getRetention) {
     try {
-      const r = window.ClipMaxNative.getRetention() as Retention;
-      if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
-        return r;
+      const r = window.ClipMaxNative.getRetention();
+      if (isRetentionValid(r)) {
+        return r as Retention;
       }
     } catch {}
   }
   try {
-    const r = localStorage.getItem(STORAGE_KEY_RETENTION) as Retention;
-    if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
-      return r;
+    const r = localStorage.getItem(STORAGE_KEY_RETENTION);
+    if (isRetentionValid(r)) {
+      return r as Retention;
     }
   } catch {}
   return "24h";
@@ -152,16 +217,29 @@ function cleanExpiredItems(items: ClipItem[]): ClipItem[] {
 }
 
 export function computeExpiry(retention: Retention): number | null {
-  const msMap: Record<Retention, number | null> = {
-    off: null,
-    "1h": 1 * H,
-    "6h": 6 * H,
-    "24h": 24 * H,
-    "72h": 72 * H,
-    forever: null,
-  };
-  const duration = msMap[retention];
-  return duration ? Date.now() + duration : null;
+  if (retention === "off" || retention === "forever") return null;
+  if (retention === "1h") return Date.now() + 1 * H;
+  if (retention === "6h") return Date.now() + 6 * H;
+  if (retention === "24h") return Date.now() + 24 * H;
+  if (retention === "72h") return Date.now() + 72 * H;
+
+  const clean = retention.startsWith("custom:") ? retention.slice(7) : retention;
+  const match = clean.match(/^(\d+)\s*([mh])$/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    if (num > 0) {
+      const ms = unit.startsWith("h") ? num * 3600 * 1000 : num * 60 * 1000;
+      return Date.now() + ms;
+    }
+  }
+  if (retention === "custom") {
+    const num = getStoredCustomDuration();
+    const unit = getStoredCustomUnit();
+    const ms = unit === "h" ? num * 3600 * 1000 : num * 60 * 1000;
+    return Date.now() + ms;
+  }
+  return Date.now() + 24 * H;
 }
 
 export function createClipItem(

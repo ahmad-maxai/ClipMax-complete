@@ -4834,12 +4834,12 @@ class ClipMaxImeService : InputMethodService() {
         val sameHostNonPassword = !pkgChanged && lastEditorPackage != null && !isPasswordTarget
         val fieldChanged = when {
             attribute.fieldId == lastEditorFieldId -> false
-            restarting && sameHostNonPassword && (attribute.fieldId == 0 || lastEditorFieldId == 0) -> false
-            else -> (attribute.fieldId != 0 || lastEditorFieldId != 0)
+            sameHostNonPassword && (attribute.fieldId == 0 || lastEditorFieldId == 0) -> false
+            else -> (attribute.fieldId != 0 && lastEditorFieldId != 0 && attribute.fieldId != lastEditorFieldId)
         }
         val inputClassChanged = lastEditorPackage != null &&
             nextInputClass != prevInputClass &&
-            !(restarting && sameHostNonPassword && (nextInputClass == 0 || prevInputClass == 0))
+            !(sameHostNonPassword && (nextInputClass == 0 || prevInputClass == 0))
         val hardFieldChanged = pkgChanged || fieldChanged || inputClassChanged || isPasswordTarget
 
         val nowMs = SystemClock.elapsedRealtime()

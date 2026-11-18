@@ -311,7 +311,37 @@ class AndroidBridge(
     fun setRetention(retention: String) {
         try {
             val prefs = CapturePreferences.preferences(context)
-            prefs.edit().putString(CapturePreferences.MODE_KEY, retention).apply()
+            CapturePreferences.setMode(prefs, retention)
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
+    fun getCustomRetentionDuration(): Int {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.customDuration(prefs)
+        } catch (e: Throwable) {
+            CapturePreferences.DEFAULT_CUSTOM_DURATION
+        }
+    }
+
+    @JavascriptInterface
+    fun getCustomRetentionUnit(): String {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.customUnit(prefs)
+        } catch (e: Throwable) {
+            CapturePreferences.DEFAULT_CUSTOM_UNIT
+        }
+    }
+
+    @JavascriptInterface
+    fun setCustomRetention(duration: Int, unit: String) {
+        try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.setCustomRetention(prefs, duration, unit)
         } catch (e: Throwable) {
             // ignore
         }

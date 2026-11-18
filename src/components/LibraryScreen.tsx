@@ -9,7 +9,6 @@ import {
   Sun,
   X,
   ChevronDown,
-  Download,
 } from "lucide-react";
 import { TopBar, Wordmark, Btn, IconBtn } from "./primitives";
 import {
@@ -300,31 +299,6 @@ export function LibraryScreen({
           )}
         </div>
 
-        {/* Verified Build #42 APK & ZIP Downloads */}
-        <div className="flex items-center justify-between rounded-xl border border-border bg-surface px-3 py-2 text-xs shadow-2xs">
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-semibold text-foreground">Build #42 (Phase 5B)</span>
-            <span className="hidden sm:inline text-muted-foreground text-[11px]">· Verified APK & PKZIP 2.0</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <a
-              href="/ClipMax.apk"
-              download="ClipMax-build42.apk"
-              className="inline-flex items-center gap-1 rounded-lg bg-foreground px-2.5 py-1 text-[11px] font-bold text-background transition-opacity hover:opacity-90"
-            >
-              <Download className="h-3 w-3" />
-              Download .apk
-            </a>
-            <a
-              href="/ClipMax-Phase5B-APK.zip"
-              download="ClipMax-build42-APK.zip"
-              className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-surface"
-            >
-              .zip
-            </a>
-          </div>
-        </div>
       </div>
 
       {/* Cards List (flex-1 scrollable area) */}

@@ -16,6 +16,9 @@ export interface ClipMaxNativeBridge {
   showImePicker(): void;
   getRetention(): string;
   setRetention(retention: string): void;
+  getCustomRetentionDuration?(): number;
+  getCustomRetentionUnit?(): string;
+  setCustomRetention?(duration: number, unit: string): void;
   getCaptureEnabled(): boolean;
   setCaptureEnabled(enabled: boolean): void;
   setTheme(theme: string): void;
