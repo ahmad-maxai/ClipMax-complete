@@ -118,11 +118,11 @@ class EmojiInterfaceSpecTest {
     @Test
     fun testEmojiGridSevenColumnsAndSpacedNavigationProportions() {
         assertEquals(7, EmojiInterfaceSpec.PORTRAIT_COLUMNS)
-        assertEquals(9, EmojiInterfaceSpec.LANDSCAPE_COLUMNS)
+        assertEquals(7, EmojiInterfaceSpec.LANDSCAPE_COLUMNS)
         assertTrue(EmojiInterfaceSpec.TAB_WIDTH_DP >= 40f)
         assertTrue(EmojiInterfaceSpec.TAB_GAP_DP >= 6f)
         assertTrue(EmojiInterfaceSpec.CELL_HEIGHT_PORTRAIT_DP >= 44f)
-        assertTrue(EmojiInterfaceSpec.CELL_TEXT_SIZE_SP >= 22f)
+        assertTrue(EmojiInterfaceSpec.CELL_TEXT_SIZE_SP >= 28f)
         assertTrue(EmojiInterfaceSpec.NAV_HEADER_HEIGHT_PORTRAIT_DP >= 40f)
     }
 }

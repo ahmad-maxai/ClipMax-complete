@@ -10,7 +10,7 @@ internal object EmojiInterfaceSpec {
     const val MAX_RECENT_EMOJIS = 28
 
     const val PORTRAIT_COLUMNS = 7
-    const val LANDSCAPE_COLUMNS = 9
+    const val LANDSCAPE_COLUMNS = 7
 
     const val NAV_HEADER_HEIGHT_PORTRAIT_DP = 42f
     const val NAV_HEADER_HEIGHT_LANDSCAPE_DP = 36f
@@ -22,8 +22,8 @@ internal object EmojiInterfaceSpec {
 
     const val CELL_HEIGHT_PORTRAIT_DP = 46f
     const val CELL_HEIGHT_LANDSCAPE_DP = 38f
-    const val CELL_TEXT_SIZE_SP = 23f
-    const val CELL_ROW_GAP_DP = 4f
+    const val CELL_TEXT_SIZE_SP = 30f
+    const val CELL_ROW_GAP_DP = 6f
 
     private const val ZWJ = 0x200D
     private const val VARIATION_SELECTOR_TEXT = 0xFE0E

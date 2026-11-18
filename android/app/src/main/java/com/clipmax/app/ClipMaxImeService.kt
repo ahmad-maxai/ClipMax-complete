@@ -197,6 +197,7 @@ class ClipMaxImeService : InputMethodService() {
     private var emojiRemoveOverlay: View? = null
     private var emojiScrollView: android.widget.ScrollView? = null
     private var emojiGridContainer: LinearLayout? = null
+    private val emojiSectionViews = mutableListOf<View>()
     private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
     private val emojiPreferences: SharedPreferences by lazy {
         getSharedPreferences(EmojiInterfaceSpec.PREF_FILE, Context.MODE_PRIVATE)
@@ -3590,8 +3591,12 @@ class ClipMaxImeService : InputMethodService() {
                     dismissEmojiRemoveOverlay()
                     selectedEmojiCategoryIdx = tabIdx
                     updateEmojiCategoryTabsUI()
-                    populateEmojiGrid()
-                    emojiScrollView?.scrollTo(0, 0)
+                    val targetView = emojiSectionViews.getOrNull(tabIdx)
+                    if (targetView != null) {
+                        emojiScrollView?.smoothScrollTo(0, targetView.top)
+                    } else {
+                        emojiScrollView?.scrollTo(0, 0)
+                    }
                 }
             }
             emojiTabViews.add(tabIdx to tab)
@@ -3626,6 +3631,21 @@ class ClipMaxImeService : InputMethodService() {
         val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
             isVerticalScrollBarEnabled = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                    var bestIdx = 0
+                    for (i in emojiSectionViews.indices) {
+                        val v = emojiSectionViews[i]
+                        if (v.top <= scrollY + dp(32)) {
+                            bestIdx = i
+                        }
+                    }
+                    if (bestIdx != selectedEmojiCategoryIdx) {
+                        selectedEmojiCategoryIdx = bestIdx
+                        updateEmojiCategoryTabsUI()
+                    }
+                }
+            }
         }
         emojiScrollView = scroll
 
@@ -3656,27 +3676,10 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    private fun populateEmojiGrid() {
+        private fun populateEmojiGrid() {
         val grid = emojiGridContainer ?: return
         grid.removeAllViews()
-        val tabIdx = resolveActiveEmojiTabIndex()
-        val isRecentTab = (tabIdx == 0)
-        val emojis = if (isRecentTab) {
-            recentEmojiHistory.items()
-        } else {
-            EmojiCatalog.CATEGORIES[(tabIdx - 1).coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)].emojis
-        }
-
-        if (isRecentTab && emojis.isEmpty()) {
-            grid.addView(TextView(this).apply {
-                text = "No recent emojis yet.\nTap any emoji to keep it here."
-                textSize = 12.5f
-                setTextColor(colorHintText)
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(36), dp(16), dp(24))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            return
-        }
+        emojiSectionViews.clear()
 
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val cols = if (isLandscape) EmojiInterfaceSpec.LANDSCAPE_COLUMNS else EmojiInterfaceSpec.PORTRAIT_COLUMNS
@@ -3686,45 +3689,84 @@ class ClipMaxImeService : InputMethodService() {
         ).toInt()
         val rowGap = dp(EmojiInterfaceSpec.CELL_ROW_GAP_DP).toInt()
 
-        var i = 0
-        while (i < emojis.size) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
-                    bottomMargin = rowGap
+        val totalSections = 1 + EmojiCatalog.CATEGORIES.size
+        for (sectionIdx in 0 until totalSections) {
+            val sectionContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(12)
                 }
             }
-            for (c in 0 until cols) {
-                val idx = i + c
-                if (idx < emojis.size) {
-                    val emoji = emojis[idx]
-                    val cell = TextView(this).apply {
-                        text = emoji
-                        textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
-                        gravity = Gravity.CENTER
-                        includeFontPadding = false
-                        isClickable = true
-                        isFocusable = true
-                        background = roundedRipple(0x00000000, dp(10f), 0)
-                        setOnClickListener {
-                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            handleEmojiPress(emoji, fromRecentTab = isRecentTab)
-                        }
-                        if (isRecentTab) {
-                            setOnLongClickListener {
-                                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                                showRecentEmojiRemoveOverlay(emoji)
-                                true
-                            }
+            emojiSectionViews.add(sectionContainer)
+
+            val sectionTitle = if (sectionIdx == 0) "Recent" else EmojiCatalog.CATEGORIES[sectionIdx - 1].label
+            val emojis = if (sectionIdx == 0) {
+                recentEmojiHistory.items()
+            } else {
+                EmojiCatalog.CATEGORIES[sectionIdx - 1].emojis
+            }
+
+            val headerTv = TextView(this).apply {
+                text = sectionTitle
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                setPadding(dp(12), dp(8), dp(12), dp(4))
+            }
+            sectionContainer.addView(headerTv)
+
+            if (sectionIdx == 0 && emojis.isEmpty()) {
+                val emptyTv = TextView(this).apply {
+                    text = "No recent emojis yet. Tap any emoji to keep it here."
+                    textSize = 12f
+                    setTextColor(colorHintText)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(16), dp(16), dp(16), dp(16))
+                }
+                sectionContainer.addView(emptyTv)
+            } else {
+                var i = 0
+                while (i < emojis.size) {
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
+                            bottomMargin = rowGap
                         }
                     }
-                    row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-                } else {
-                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                    for (c in 0 until cols) {
+                        val idx = i + c
+                        if (idx < emojis.size) {
+                            val emoji = emojis[idx]
+                            val cell = TextView(this).apply {
+                                text = emoji
+                                textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
+                                gravity = Gravity.CENTER
+                                includeFontPadding = false
+                                isClickable = true
+                                isFocusable = true
+                                background = roundedRipple(0x00000000, dp(10f), 0)
+                                setOnClickListener {
+                                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    handleEmojiPress(emoji, fromRecentTab = (sectionIdx == 0))
+                                }
+                                if (sectionIdx == 0) {
+                                    setOnLongClickListener {
+                                        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                        showRecentEmojiRemoveOverlay(emoji)
+                                        true
+                                    }
+                                }
+                            }
+                            row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                        } else {
+                            row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                        }
+                    }
+                    sectionContainer.addView(row)
+                    i += cols
                 }
             }
-            grid.addView(row)
-            i += cols
+            grid.addView(sectionContainer)
         }
     }
 
