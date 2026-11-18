@@ -57,7 +57,7 @@ internal object EmojiInterfaceSpec {
         var idx = len
 
         // 1. Handle CRLF newline pair as one unit
-        if (idx >= 2 && text[idx - 1] == n && text[idx - 2] == r) {
+        if (idx >= 2 && text[idx - 1] == '\n' && text[idx - 2] == '\r') {
             return 2
         }
 
@@ -145,7 +145,7 @@ internal object EmojiInterfaceSpec {
         companion object {
             fun decode(raw: String?): List<String> {
                 if (raw.isNullOrBlank()) return emptyList()
-                return raw.split(n).map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_RECENT_EMOJIS)
+                return raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_RECENT_EMOJIS)
             }
         }
     }

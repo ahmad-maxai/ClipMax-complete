@@ -17,7 +17,7 @@ class EmojiInterfaceSpecTest {
                 i += 2
             } else {
                 assertFalse("Unpaired low surrogate at index $i", Character.isLowSurrogate(ch))
-                assertNotEquals("Replacement char found", uFFFD, ch)
+                assertNotEquals("Replacement char found", '\uFFFD', ch)
                 i += 1
             }
         }
