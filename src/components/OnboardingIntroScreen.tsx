@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowRight, Keyboard, Lock, Sparkles } from "lucide-react";
+import { ArrowRight, ClipboardList, Keyboard, Lock } from "lucide-react";
 import { motion } from "motion/react";
 import { Btn, ClipMaxLogo } from "./primitives";
 
@@ -11,7 +11,7 @@ interface OnboardingIntroScreenProps {
 
 const INTRO_HIGHLIGHTS = [
   {
-    icon: Sparkles,
+    icon: ClipboardList,
     title: "Your clips, always ready",
     description: "Save snippets, links, and templates once and find them instantly.",
   },

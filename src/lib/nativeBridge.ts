@@ -31,6 +31,7 @@ export interface ClipMaxNativeBridge {
   isClipMaxImeEnabled?(): boolean;
   isClipMaxImeSelected?(): boolean;
   areAnimationsReduced?(): boolean;
+  openExternalUrl?(url: string): boolean;
 }
 
 declare global {
@@ -76,6 +77,18 @@ export function nativeShare(text: string, title: string = "ClipMax"): boolean {
   if (typeof navigator !== "undefined" && navigator.share) {
     navigator.share({ title, text }).catch(() => {});
     return true;
+  }
+  return false;
+}
+
+/** Open an http/https URL in Android's default browser when inside the native WebView */
+export function nativeOpenExternalUrl(url: string): boolean {
+  if (isNativeAndroid() && window.ClipMaxNative?.openExternalUrl) {
+    try {
+      return Boolean(window.ClipMaxNative.openExternalUrl(url));
+    } catch (e) {
+      console.warn("Native openExternalUrl failed", e);
+    }
   }
   return false;
 }

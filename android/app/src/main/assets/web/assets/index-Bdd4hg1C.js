@@ -11552,6 +11552,15 @@ function nativeShare(text, title = "ClipMax") {
 	}
 	return false;
 }
+/** Open an http/https URL in Android's default browser when inside the native WebView */
+function nativeOpenExternalUrl(url) {
+	if (isNativeAndroid() && window.ClipMaxNative?.openExternalUrl) try {
+		return Boolean(window.ClipMaxNative.openExternalUrl(url));
+	} catch (e) {
+		console.warn("Native openExternalUrl failed", e);
+	}
+	return false;
+}
 // src/lib/storage.ts
 var STORAGE_KEY_ITEMS = "clipmax_items_v1";
 var STORAGE_KEY_RETENTION = "clipmax_retention_v1";
@@ -12037,6 +12046,43 @@ var CircleCheck = createLucideIcon("circle-check", [["circle", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var ClipboardList = createLucideIcon("clipboard-list", [
+	["rect", {
+		width: "8",
+		height: "4",
+		x: "8",
+		y: "2",
+		rx: "1",
+		ry: "1",
+		key: "tgr4d6"
+	}],
+	["path", {
+		d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
+		key: "116196"
+	}],
+	["path", {
+		d: "M12 11h4",
+		key: "1jrz19"
+	}],
+	["path", {
+		d: "M12 16h4",
+		key: "n85exb"
+	}],
+	["path", {
+		d: "M8 11h.01",
+		key: "1dfujw"
+	}],
+	["path", {
+		d: "M8 16h.01",
+		key: "18s6g9"
+	}]
+]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var ClipboardPaste = createLucideIcon("clipboard-paste", [
 	["path", {
 		d: "M11 14h10",
@@ -12061,6 +12107,26 @@ var ClipboardPaste = createLucideIcon("clipboard-paste", [
 		height: "4",
 		rx: "1",
 		key: "ublpy"
+	}]
+]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var CodeXml = createLucideIcon("code-xml", [
+	["path", {
+		d: "m18 16 4-4-4-4",
+		key: "1inbqp"
+	}],
+	["path", {
+		d: "m6 8-4 4 4 4",
+		key: "15zrgr"
+	}],
+	["path", {
+		d: "m14.5 4-5 16",
+		key: "e7oirm"
 	}]
 ]);
 /**
@@ -12142,6 +12208,26 @@ var Download = createLucideIcon("download", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var ExternalLink = createLucideIcon("external-link", [
+	["path", {
+		d: "M15 3h6v6",
+		key: "1q9fwt"
+	}],
+	["path", {
+		d: "M10 14 21 3",
+		key: "gplh6r"
+	}],
+	["path", {
+		d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+		key: "a6xqqp"
+	}]
+]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var FileUp = createLucideIcon("file-up", [
 	["path", {
 		d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
@@ -12160,6 +12246,19 @@ var FileUp = createLucideIcon("file-up", [
 		key: "15xj92"
 	}]
 ]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var Github = createLucideIcon("github", [["path", {
+	d: "M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4",
+	key: "tonef"
+}], ["path", {
+	d: "M9 18c-4.51 2-5-2-7-2",
+	key: "9comsn"
+}]]);
 /**
 * @license lucide-react v0.546.0 - ISC
 *
@@ -12446,32 +12545,6 @@ var SlidersVertical = createLucideIcon("sliders-vertical", [
 	["path", {
 		d: "M5 21v-7",
 		key: "1w1uti"
-	}]
-]);
-/**
-* @license lucide-react v0.546.0 - ISC
-*
-* This source code is licensed under the ISC license.
-* See the LICENSE file in the root directory of this source tree.
-*/
-var Sparkles = createLucideIcon("sparkles", [
-	["path", {
-		d: "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z",
-		key: "1s2grr"
-	}],
-	["path", {
-		d: "M20 2v4",
-		key: "1rf3ol"
-	}],
-	["path", {
-		d: "M22 4h-4",
-		key: "gwowj6"
-	}],
-	["circle", {
-		cx: "4",
-		cy: "20",
-		r: "2",
-		key: "6kqj1y"
 	}]
 ]);
 /**
@@ -29843,7 +29916,7 @@ function KeyboardOnboardingGuide({ state, scrollContainerRef, sectionRef, enable
 					variant: "mint",
 					className: "mt-6 h-12 w-full rounded-xl text-sm font-bold shadow-md",
 					onClick: onComplete,
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Sparkles, { className: "h-4 w-4" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Start using ClipMax" })]
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Keyboard, { className: "h-4 w-4" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Start using ClipMax" })]
 				})
 			]
 		})
@@ -30004,11 +30077,151 @@ function KeyboardOnboardingGuide({ state, scrollContainerRef, sectionRef, enable
 		]
 	});
 }
+// src/components/AboutClipMaxModal.tsx
+var CLIPMAX_GITHUB_URL = "https://github.com/ahmad-maxai/ClipMax-complete";
+function AboutClipMaxModal({ open, onClose }) {
+	(0, import_react.useEffect)(() => {
+		if (!open) return;
+		const handleKeyDown = (e) => {
+			if (e.key === "Escape") onClose();
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [open, onClose]);
+	if (!open) return null;
+	const handleGitHubClick = (e) => {
+		if (isNativeAndroid()) {
+			e.preventDefault();
+			nativeOpenExternalUrl(CLIPMAX_GITHUB_URL);
+		}
+	};
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+		role: "dialog",
+		"aria-modal": "true",
+		"aria-labelledby": "about-clipmax-title",
+		onClick: (e) => {
+			if (e.target === e.currentTarget) onClose();
+		},
+		className: "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150",
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "w-full max-w-sm max-h-[86dvh] flex flex-col rounded-3xl border border-border bg-surface text-foreground shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150",
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b border-border/70",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "flex items-center gap-3 min-w-0",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ClipMaxLogo, {
+							size: 46,
+							className: "shadow-xs"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "min-w-0",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+								id: "about-clipmax-title",
+								className: "text-base font-bold tracking-tight text-foreground leading-tight",
+								children: "About ClipMax"
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-[11px] font-medium text-muted-foreground mt-0.5",
+								children: "Open-source · GPL-3.0-or-later"
+							})]
+						})]
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(IconBtn, {
+						label: "Close About ClipMax",
+						onClick: onClose,
+						className: "-mr-1.5 -mt-1.5 h-9 w-9 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-foreground",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X, { className: "h-4.5 w-4.5" })
+					})]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3.5 text-left",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "space-y-2 text-[13px] leading-relaxed text-muted-foreground",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-foreground/95",
+								children: "ClipMax is an independent, open-source clipboard and keyboard project built to make everyday copying and pasting simpler."
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "It gives your frequently used text, links, and snippets a reliable home, while bringing your saved clips directly into your Android keyboard." })]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "rounded-2xl border border-border bg-surface-2 p-3.5 space-y-1.5",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-center gap-2",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-mint-soft text-mint-foreground",
+									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ShieldCheck, { className: "h-3.5 w-3.5 text-mint" })
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
+									className: "text-xs font-bold text-foreground",
+									children: "Built with a local-first philosophy"
+								})]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-xs leading-relaxed text-muted-foreground",
+								children: "Your clips stay on your device. ClipMax is designed without accounts, unnecessary cloud uploads, or telemetry."
+							})]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "rounded-2xl border border-border bg-surface-2 p-3.5 space-y-1.5",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center gap-2",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-mint-soft text-mint-foreground",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeXml, { className: "h-3.5 w-3.5 text-mint" })
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", {
+										className: "text-xs font-bold text-foreground",
+										children: "Open source. Built to improve."
+									})]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+									className: "text-xs leading-relaxed text-muted-foreground",
+									children: "ClipMax is developed as an open-source project. Its source code is available for people to inspect, learn from, contribute to, and help improve."
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+									className: "text-[11px] font-medium text-muted-foreground/90 pt-0.5",
+									children: "Licensed under GNU General Public License v3.0."
+								})
+							]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "pt-0.5 space-y-1.5",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("a", {
+								href: CLIPMAX_GITHUB_URL,
+								target: "_blank",
+								rel: "noopener noreferrer",
+								onClick: handleGitHubClick,
+								className: "flex min-h-[44px] w-full items-center justify-between gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-xs font-semibold text-foreground hover:bg-accent active:scale-[0.98] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+									className: "flex items-center gap-2 min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Github, { className: "h-4 w-4 shrink-0 text-mint" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "truncate",
+										children: "View source on GitHub"
+									})]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ExternalLink, { className: "h-3.5 w-3.5 shrink-0 text-muted-foreground" })]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-center text-[11px] text-muted-foreground",
+								children: "Explore the code, report issues, or contribute."
+							})]
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "shrink-0 border-t border-border/70 px-5 py-3 bg-surface",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Btn, {
+						variant: "subtle",
+						size: "sm",
+						onClick: onClose,
+						className: "h-10 w-full rounded-xl font-semibold",
+						children: "Close"
+					})
+				})
+			]
+		})
+	});
+}
 // src/components/SettingsScreen.tsx
 function SettingsScreen({ items, onUpdateItems, retention, onChangeRetention, captureEnabled, onChangeCaptureEnabled, themeMode, systemDark, onChangeThemeMode, nav, onboardingState, reducedMotion = false, onSkipOnboarding, onCompleteOnboarding, onOnboardingBack }) {
 	const { toast, success, error } = useToast();
 	const [privacyExpanded, setPrivacyExpanded] = (0, import_react.useState)(false);
 	const [confirmDeleteAll, setConfirmDeleteAll] = (0, import_react.useState)(false);
+	const [aboutOpen, setAboutOpen] = (0, import_react.useState)(false);
 	const [isProcessingBackup, setIsProcessingBackup] = (0, import_react.useState)(false);
 	const isCustomActive = retention === "custom" || retention.startsWith("custom:") || /^(\d+)[mh]$/i.test(retention);
 	const [customDurationInput, setCustomDurationInput] = (0, import_react.useState)(() => {
@@ -30522,9 +30735,14 @@ function SettingsScreen({ items, onUpdateItems, retention, onChangeRetention, ca
 							})
 						})
 					}),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-						className: "text-center text-[11px] text-muted-foreground/70 pt-2",
-						children: "ClipMax v0.5.1 Redesign · Native Android Experimental"
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "pt-1 flex justify-center",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setAboutOpen(true),
+							className: "inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/70 active:scale-[0.98] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Info, { className: "h-3.5 w-3.5 opacity-80" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "About ClipMax" })]
+						})
 					})
 				]
 			}),
@@ -30536,6 +30754,10 @@ function SettingsScreen({ items, onUpdateItems, retention, onChangeRetention, ca
 				destructive: true,
 				onConfirm: handleDeleteAll,
 				onClose: () => setConfirmDeleteAll(false)
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(AboutClipMaxModal, {
+				open: aboutOpen,
+				onClose: () => setAboutOpen(false)
 			}),
 			isOnboardingActive && onboardingState && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(KeyboardOnboardingGuide, {
 				state: onboardingState,
@@ -30565,7 +30787,7 @@ function StatCard({ value, label }) {
 // src/components/OnboardingIntroScreen.tsx
 var INTRO_HIGHLIGHTS = [
 	{
-		icon: Sparkles,
+		icon: ClipboardList,
 		title: "Your clips, always ready",
 		description: "Save snippets, links, and templates once and find them instantly."
 	},

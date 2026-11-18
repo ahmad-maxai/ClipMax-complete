@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Smartphone,
   ExternalLink,
+  Info,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, Section, ConfirmModal, ClipMaxLogo } from "./primitives";
 import {
@@ -39,6 +40,7 @@ import { cn } from "../lib/utils";
 import { isNativeAndroid } from "../lib/nativeBridge";
 import { OnboardingState } from "../lib/onboarding";
 import { KeyboardOnboardingGuide } from "./KeyboardOnboardingGuide";
+import { AboutClipMaxModal } from "./AboutClipMaxModal";
 
 interface SettingsScreenProps {
   items: ClipItem[];
@@ -78,6 +80,7 @@ export function SettingsScreen({
   const { toast, success, error } = useToast();
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [isProcessingBackup, setIsProcessingBackup] = useState(false);
   const isCustomActive = retention === "custom" || retention.startsWith("custom:") || /^(\d+)[mh]$/i.test(retention);
   const [customDurationInput, setCustomDurationInput] = useState<string>(() => {
@@ -667,9 +670,16 @@ export function SettingsScreen({
           </div>
         </Section>
 
-        <p className="text-center text-[11px] text-muted-foreground/70 pt-2">
-          ClipMax v0.5.1 Redesign · Native Android Experimental
-        </p>
+        <div className="pt-1 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setAboutOpen(true)}
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/70 active:scale-[0.98] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Info className="h-3.5 w-3.5 opacity-80" />
+            <span>About ClipMax</span>
+          </button>
+        </div>
       </div>
 
       {/* Confirm Delete All Modal */}
@@ -682,6 +692,9 @@ export function SettingsScreen({
         onConfirm={handleDeleteAll}
         onClose={() => setConfirmDeleteAll(false)}
       />
+
+      {/* About ClipMax Modal */}
+      <AboutClipMaxModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
       {isOnboardingActive && onboardingState && (
         <KeyboardOnboardingGuide

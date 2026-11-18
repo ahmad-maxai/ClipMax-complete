@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, ArrowUp, CheckCircle2, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowUp, CheckCircle2, Keyboard } from "lucide-react";
 import { motion } from "motion/react";
 import { Btn } from "./primitives";
 import { OnboardingState } from "../lib/onboarding";
@@ -296,7 +296,7 @@ export function KeyboardOnboardingGuide({
             className="mt-6 h-12 w-full rounded-xl text-sm font-bold shadow-md"
             onClick={onComplete}
           >
-            <Sparkles className="h-4 w-4" />
+            <Keyboard className="h-4 w-4" />
             <span>Start using ClipMax</span>
           </Btn>
         </motion.div>

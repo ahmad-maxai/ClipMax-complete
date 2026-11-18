@@ -475,4 +475,26 @@ class AndroidBridge(
             false
         }
     }
+
+    @JavascriptInterface
+    fun openExternalUrl(url: String): Boolean {
+        if (!isSafeExternalHttpUrl(url)) return false
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url.trim())).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    companion object {
+        internal fun isSafeExternalHttpUrl(rawUrl: String?): Boolean {
+            val trimmed = rawUrl?.trim().orEmpty()
+            return trimmed.startsWith("https://", ignoreCase = true) ||
+                trimmed.startsWith("http://", ignoreCase = true)
+        }
+    }
 }
