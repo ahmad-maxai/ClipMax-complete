@@ -14,6 +14,7 @@ import { ClipItem, Nav } from "../lib/types";
 import {
   createClipItem,
   getStoredDraft,
+  getStoredRetention,
   saveStoredDraft,
   clearStoredDraft,
 } from "../lib/storage";
@@ -24,6 +25,7 @@ interface EditorScreenProps {
   id?: string;
   items: ClipItem[];
   onUpdateItems: (items: ClipItem[]) => void;
+  onClipsAdded?: (ids: string[]) => void;
   nav: Nav;
 }
 
@@ -31,6 +33,7 @@ export function EditorScreen({
   id,
   items,
   onUpdateItems,
+  onClipsAdded,
   nav,
 }: EditorScreenProps) {
   const { toast, success, error } = useToast();
@@ -183,7 +186,7 @@ export function EditorScreen({
     const cleanTitle = (title.trim() || "Untitled").slice(0, 200);
 
     if (currentId) {
-      // Update existing
+      // Update existing (preserves pinned, isExpiryLocked, expiresAt)
       const updated = items.map((c) =>
         c.id === currentId
           ? {
@@ -198,10 +201,12 @@ export function EditorScreen({
       );
       onUpdateItems(updated);
     } else {
-      // Create new
-      const newItem = createClipItem(cleanTitle, content, false);
+      // Create new using active retention policy
+      const retention = getStoredRetention();
+      const newItem = createClipItem(cleanTitle, content, false, retention);
       setCurrentId(newItem.id);
       onUpdateItems([newItem, ...items]);
+      onClipsAdded?.([newItem.id]);
     }
 
     setSavedInitial({ title, content });

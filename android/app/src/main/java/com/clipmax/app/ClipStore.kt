@@ -36,7 +36,8 @@ data class ClipItem(
     val characterCount: Int,
     val sizeBytes: Long,
     val pinned: Boolean,
-    val contentFile: String
+    val contentFile: String,
+    val isExpiryLocked: Boolean = false
 )
 
 data class ClipDraft(val itemId: String?, val title: String, val content: String)
@@ -63,7 +64,8 @@ data class RestoreRecord(
     val title: String,
     val content: String,
     val pinned: Boolean,
-    val createdAt: Long
+    val createdAt: Long,
+    val isExpiryLocked: Boolean = false
 )
 
 /**
@@ -76,7 +78,8 @@ class ClipStore(root: File) {
         const val MAX_ITEM_BYTES = 16L * 1024L * 1024L
         const val MAX_BACKUP_BYTES = 128L * 1024L * 1024L
         private const val META_MAGIC = 0x434D4158 // "CMAX"
-        private const val META_VERSION = 1
+        private const val META_VERSION = 2
+        private const val META_VERSION_V1 = 1
         private const val DRAFT_MAGIC = 0x434D4452 // "CMDR"
 
         private val storeLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
@@ -139,20 +142,41 @@ class ClipStore(root: File) {
             ?.takeIf { safeContentName(it.contentFile) && File(contentDir, it.contentFile).isFile }
     }
 
-    fun save(id: String?, title: String, content: String, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
-        return saveFromReader(id, title, StringReader(content), pinned, savedAt)
+    fun save(
+        id: String?,
+        title: String,
+        content: String,
+        pinned: Boolean? = null,
+        savedAt: Long? = null,
+        isExpiryLocked: Boolean? = null
+    ): ClipItem {
+        return saveFromReader(id, title, StringReader(content), pinned, savedAt, isExpiryLocked)
     }
 
     /** Saves a selected text Reader incrementally, without assembling a second full String in ClipMax. */
-    fun saveFromReader(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
+    fun saveFromReader(
+        id: String?,
+        title: String,
+        reader: Reader,
+        pinned: Boolean? = null,
+        savedAt: Long? = null,
+        isExpiryLocked: Boolean? = null
+    ): ClipItem {
         val saved = synchronized(storeLock) {
-            saveInternal(id, title, reader, pinned, savedAt)
+            saveInternal(id, title, reader, pinned, savedAt, isExpiryLocked)
         }
         notifyChanged()
         return saved
     }
 
-    private fun saveInternal(id: String?, title: String, reader: Reader, pinned: Boolean? = null, savedAt: Long? = null): ClipItem {
+    private fun saveInternal(
+        id: String?,
+        title: String,
+        reader: Reader,
+        pinned: Boolean? = null,
+        savedAt: Long? = null,
+        isExpiryLocked: Boolean? = null
+    ): ClipItem {
         val cleanTitle = title.trim().ifEmpty { "Untitled" }
         require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
         val prior = id?.let { getItem(it) }
@@ -186,7 +210,8 @@ class ClipStore(root: File) {
             characterCount = characterCount,
             sizeBytes = byteCount,
             pinned = pinned ?: prior?.pinned ?: false,
-            contentFile = contentName
+            contentFile = contentName,
+            isExpiryLocked = isExpiryLocked ?: prior?.isExpiryLocked ?: false
         )
         writeMetadataAtomic(item)
         prior?.let { old -> if (old.contentFile != contentName) File(contentDir, old.contentFile).delete() }
@@ -259,17 +284,38 @@ class ClipStore(root: File) {
         return updated
     }
 
-    fun updateMetadataOnly(id: String, title: String, pinned: Boolean, modifiedAt: Long? = null): ClipItem? {
+    fun setExpiryLocked(id: String, locked: Boolean): ClipItem {
+        val updated = synchronized(storeLock) {
+            val old = getItem(id) ?: throw IllegalArgumentException("The item no longer exists.")
+            old.copy(isExpiryLocked = locked, modifiedAt = System.currentTimeMillis()).also(::writeMetadataAtomic)
+        }
+        notifyChanged()
+        return updated
+    }
+
+    fun updateMetadataOnly(
+        id: String,
+        title: String,
+        pinned: Boolean,
+        modifiedAt: Long? = null,
+        isExpiryLocked: Boolean? = null
+    ): ClipItem? {
         val updated = synchronized(storeLock) {
             val old = getItem(id) ?: return@synchronized null
             val cleanTitle = title.trim().ifEmpty { "Untitled" }
             require(cleanTitle.length <= 200) { "Title must be 200 characters or fewer." }
-            if (old.title == cleanTitle && old.pinned == pinned && (modifiedAt == null || old.modifiedAt == modifiedAt)) {
+            val nextLocked = isExpiryLocked ?: old.isExpiryLocked
+            if (old.title == cleanTitle &&
+                old.pinned == pinned &&
+                old.isExpiryLocked == nextLocked &&
+                (modifiedAt == null || old.modifiedAt == modifiedAt)
+            ) {
                 return@synchronized old
             }
             old.copy(
                 title = cleanTitle,
                 pinned = pinned,
+                isExpiryLocked = nextLocked,
                 modifiedAt = modifiedAt ?: System.currentTimeMillis()
             ).also(::writeMetadataAtomic)
         }
@@ -340,7 +386,8 @@ class ClipStore(root: File) {
                 id = null,
                 title = mergedTitle,
                 reader = StringReader(mergedText),
-                pinned = source.pinned || target.pinned
+                pinned = source.pinned || target.pinned,
+                isExpiryLocked = source.isExpiryLocked || target.isExpiryLocked
             )
             deleteInternal(sourceId)
             deleteInternal(targetId)
@@ -413,8 +460,22 @@ class ClipStore(root: File) {
             val title1 = "$baseTitle (Part 1)".take(180)
             val title2 = "$baseTitle (Part 2)".take(180)
 
-            val item1 = saveInternal(null, title1, StringReader(part1Text), pinned = original.pinned, savedAt = original.createdAt)
-            val item2 = saveInternal(null, title2, StringReader(part2Text), pinned = original.pinned, savedAt = original.createdAt + 1L)
+            val item1 = saveInternal(
+                null,
+                title1,
+                StringReader(part1Text),
+                pinned = original.pinned,
+                savedAt = original.createdAt,
+                isExpiryLocked = original.isExpiryLocked
+            )
+            val item2 = saveInternal(
+                null,
+                title2,
+                StringReader(part2Text),
+                pinned = original.pinned,
+                savedAt = original.createdAt + 1L,
+                isExpiryLocked = original.isExpiryLocked
+            )
             deleteInternal(id)
             SplitResult(original, fullText, item1, part1Text, item2, part2Text)
         }
@@ -437,7 +498,8 @@ class ClipStore(root: File) {
                     title = rec.title,
                     reader = StringReader(rec.content),
                     pinned = rec.pinned,
-                    savedAt = rec.createdAt
+                    savedAt = rec.createdAt,
+                    isExpiryLocked = rec.isExpiryLocked
                 )
             }
         }
@@ -643,17 +705,35 @@ class ClipStore(root: File) {
         out.writeLong(item.sizeBytes)
         out.writeBoolean(item.pinned)
         out.writeUTF(item.contentFile)
+        out.writeBoolean(item.isExpiryLocked)
         out.flush()
     }
 
     private fun readMetadata(file: File): ClipItem {
         require(file.isFile && file.length() <= 4096L) { "Invalid metadata file." }
         return DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
-            require(input.readInt() == META_MAGIC && input.readInt() == META_VERSION) { "Unsupported metadata." }
+            require(input.readInt() == META_MAGIC) { "Unsupported metadata." }
+            val version = input.readInt()
+            require(version == META_VERSION_V1 || version == META_VERSION) { "Unsupported metadata version." }
+            val id = input.readUTF()
+            val title = input.readUTF()
+            val createdAt = input.readLong()
+            val modifiedAt = input.readLong()
+            val characterCount = input.readInt()
+            val sizeBytes = input.readLong()
+            val pinned = input.readBoolean()
+            val contentFile = input.readUTF()
+            val isExpiryLocked = if (version >= META_VERSION) input.readBoolean() else false
             val item = ClipItem(
-                id = input.readUTF(), title = input.readUTF(), createdAt = input.readLong(),
-                modifiedAt = input.readLong(), characterCount = input.readInt(), sizeBytes = input.readLong(),
-                pinned = input.readBoolean(), contentFile = input.readUTF()
+                id = id,
+                title = title,
+                createdAt = createdAt,
+                modifiedAt = modifiedAt,
+                characterCount = characterCount,
+                sizeBytes = sizeBytes,
+                pinned = pinned,
+                contentFile = contentFile,
+                isExpiryLocked = isExpiryLocked
             )
             require(safeId(item.id) && item.title.length <= 200 && item.characterCount >= 0 &&
                 item.sizeBytes in 0..MAX_ITEM_BYTES && safeContentName(item.contentFile)) { "Invalid metadata values." }

@@ -28,23 +28,36 @@ class AndroidBridge(
     @JavascriptInterface
     fun isNative(): Boolean = true
 
+    private fun serializeItem(
+        item: ClipItem,
+        content: String,
+        prefs: android.content.SharedPreferences
+    ): JSONObject {
+        val obj = JSONObject()
+        obj.put("id", item.id)
+        obj.put("title", item.title)
+        obj.put("content", content)
+        obj.put("createdAt", item.createdAt)
+        obj.put("modifiedAt", item.modifiedAt)
+        obj.put("characterCount", item.characterCount)
+        obj.put("sizeBytes", item.sizeBytes)
+        obj.put("pinned", item.pinned)
+        obj.put("isExpiryLocked", item.isExpiryLocked)
+        val expiry = if (item.pinned || item.isExpiryLocked) null else CapturePreferences.getExpiry(prefs, item.id)
+        if (expiry != null) obj.put("expiresAt", expiry) else obj.put("expiresAt", JSONObject.NULL)
+        return obj
+    }
+
     @JavascriptInterface
     fun getItems(): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.cleanupExpired(store, prefs)
             val items = store.listItems()
             val readIds = ArrayList<String>(items.size)
             val jsonArray = JSONArray()
             for (item in items) {
-                val obj = JSONObject()
-                obj.put("id", item.id)
-                obj.put("title", item.title)
-                obj.put("content", store.readContent(item))
-                obj.put("createdAt", item.createdAt)
-                obj.put("modifiedAt", item.modifiedAt)
-                obj.put("characterCount", item.characterCount)
-                obj.put("sizeBytes", item.sizeBytes)
-                obj.put("pinned", item.pinned)
-                jsonArray.put(obj)
+                jsonArray.put(serializeItem(item, store.readContent(item), prefs))
                 readIds.add(item.id)
             }
             synchronized(webSyncLock) {
@@ -62,16 +75,7 @@ class AndroidBridge(
         return try {
             val item = store.getItem(id) ?: return ""
             val content = store.readContent(item)
-            val obj = JSONObject()
-            obj.put("id", item.id)
-            obj.put("title", item.title)
-            obj.put("content", content)
-            obj.put("createdAt", item.createdAt)
-            obj.put("modifiedAt", item.modifiedAt)
-            obj.put("characterCount", item.characterCount)
-            obj.put("sizeBytes", item.sizeBytes)
-            obj.put("pinned", item.pinned)
-            obj.toString()
+            serializeItem(item, content, CapturePreferences.preferences(context)).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -82,16 +86,7 @@ class AndroidBridge(
         return try {
             val saved = store.save(id = null, title = title, content = content, pinned = pinned)
             synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
-            val obj = JSONObject()
-            obj.put("id", saved.id)
-            obj.put("title", saved.title)
-            obj.put("content", content)
-            obj.put("createdAt", saved.createdAt)
-            obj.put("modifiedAt", saved.modifiedAt)
-            obj.put("characterCount", saved.characterCount)
-            obj.put("sizeBytes", saved.sizeBytes)
-            obj.put("pinned", saved.pinned)
-            obj.toString()
+            serializeItem(saved, content, CapturePreferences.preferences(context)).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -100,21 +95,13 @@ class AndroidBridge(
     @JavascriptInterface
     fun updateItem(id: String, title: String, content: String, pinned: Boolean): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
             val saved = store.save(id = id, title = title, content = content, pinned = pinned)
-            if (pinned) {
-                CapturePreferences.removeExpiry(CapturePreferences.preferences(context), saved.id)
+            if (pinned || saved.isExpiryLocked) {
+                CapturePreferences.removeExpiry(prefs, saved.id)
             }
             synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
-            val obj = JSONObject()
-            obj.put("id", saved.id)
-            obj.put("title", saved.title)
-            obj.put("content", content)
-            obj.put("createdAt", saved.createdAt)
-            obj.put("modifiedAt", saved.modifiedAt)
-            obj.put("characterCount", saved.characterCount)
-            obj.put("sizeBytes", saved.sizeBytes)
-            obj.put("pinned", saved.pinned)
-            obj.toString()
+            serializeItem(saved, content, prefs).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -139,21 +126,31 @@ class AndroidBridge(
     @JavascriptInterface
     fun setPinned(id: String, pinned: Boolean): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
             val updated = store.setPinned(id, pinned)
-            if (pinned) {
-                CapturePreferences.removeExpiry(CapturePreferences.preferences(context), updated.id)
+            if (pinned || updated.isExpiryLocked) {
+                CapturePreferences.removeExpiry(prefs, updated.id)
             }
             val content = store.readContent(updated)
-            val obj = JSONObject()
-            obj.put("id", updated.id)
-            obj.put("title", updated.title)
-            obj.put("content", content)
-            obj.put("createdAt", updated.createdAt)
-            obj.put("modifiedAt", updated.modifiedAt)
-            obj.put("characterCount", updated.characterCount)
-            obj.put("sizeBytes", updated.sizeBytes)
-            obj.put("pinned", updated.pinned)
-            obj.toString()
+            serializeItem(updated, content, prefs).toString()
+        } catch (e: Throwable) {
+            ""
+        }
+    }
+
+    @JavascriptInterface
+    fun setExpiryLocked(id: String, locked: Boolean): String {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            val updated = store.setExpiryLocked(id, locked)
+            if (locked || updated.pinned) {
+                CapturePreferences.removeExpiry(prefs, updated.id)
+            } else {
+                CapturePreferences.recalculateExpiryOnUnlock(prefs, updated.id)
+            }
+            CaptureExpiryReceiver.schedule(context)
+            val content = store.readContent(updated)
+            serializeItem(updated, content, prefs).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -174,26 +171,45 @@ class AndroidBridge(
                 val title = if (obj.has("title")) obj.getString("title") else "Untitled"
                 val content = if (obj.has("content")) obj.getString("content") else ""
                 val pinned = if (obj.has("pinned")) obj.getBoolean("pinned") else false
+                val hasLockField = obj.has("isExpiryLocked") && !obj.isNull("isExpiryLocked")
+                val isExpiryLocked = if (hasLockField) obj.getBoolean("isExpiryLocked") else false
                 val modifiedAt = if (obj.has("modifiedAt")) obj.getLong("modifiedAt") else null
                 val createdAt = if (obj.has("createdAt")) obj.getLong("createdAt") else null
 
                 val existing = id?.let { existingItems[it] }
+                val effectiveLocked = if (hasLockField) isExpiryLocked else (existing?.isExpiryLocked ?: false)
                 val saved = if (existing != null &&
                     existing.characterCount == content.codePointCount(0, content.length) &&
                     runCatching { store.readContent(existing) == content }.getOrDefault(false)
                 ) {
-                    store.updateMetadataOnly(existing.id, title, pinned, modifiedAt) ?: existing
+                    store.updateMetadataOnly(
+                        existing.id,
+                        title,
+                        pinned,
+                        modifiedAt,
+                        isExpiryLocked = effectiveLocked
+                    ) ?: existing
                 } else {
                     store.save(
                         id = id,
                         title = title,
                         content = content,
                         pinned = pinned,
-                        savedAt = modifiedAt ?: createdAt
+                        savedAt = modifiedAt ?: createdAt,
+                        isExpiryLocked = effectiveLocked
                     )
                 }
-                if (pinned) {
+                if (pinned || saved.isExpiryLocked) {
                     CapturePreferences.removeExpiry(prefs, saved.id)
+                } else if (obj.has("expiresAt")) {
+                    if (obj.isNull("expiresAt")) {
+                        CapturePreferences.removeExpiry(prefs, saved.id)
+                    } else {
+                        val exp = obj.optLong("expiresAt", -1L)
+                        if (exp > 0L) {
+                            CapturePreferences.setExpiry(prefs, saved.id, exp)
+                        }
+                    }
                 }
                 newIds.add(saved.id)
             }
@@ -216,6 +232,7 @@ class AndroidBridge(
                 }
             }
 
+            CaptureExpiryReceiver.schedule(context)
             synchronized(webSyncLock) {
                 lastWebSyncedIds.clear()
                 lastWebSyncedIds.addAll(newIds)

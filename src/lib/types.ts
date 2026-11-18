@@ -7,6 +7,7 @@ export type ClipItem = {
   characterCount: number;
   sizeBytes: number;
   pinned: boolean;
+  isExpiryLocked?: boolean;
   expiresAt?: number | null;
   contentFile?: string;
 };

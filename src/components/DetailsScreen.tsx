@@ -4,25 +4,34 @@ import {
   Copy,
   CopyPlus,
   Download,
+  Lock,
   Pencil,
   Pin,
   PinOff,
   Share2,
   Trash2,
   Type,
+  Unlock,
   Check,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, ConfirmModal } from "./primitives";
-import { ClipItem, Nav } from "../lib/types";
-import { fullDateTime } from "../lib/storage";
+import { ClipItem, Nav, Retention } from "../lib/types";
+import {
+  applyItemExpiryLockState,
+  computeExpiry,
+  fullDateTime,
+  hasFiniteRetention,
+} from "../lib/storage";
 import { formatBytes } from "../lib/chunker";
 import { downloadFile } from "../lib/backup";
 import { nativeCopy, nativeShare } from "../lib/nativeBridge";
 import { useToast } from "./ui/Toast";
+import { cn } from "../lib/utils";
 
 interface DetailsScreenProps {
   id: string;
   items: ClipItem[];
+  retention: Retention;
   onUpdateItems: (items: ClipItem[]) => void;
   nav: Nav;
 }
@@ -30,6 +39,7 @@ interface DetailsScreenProps {
 export function DetailsScreen({
   id,
   items,
+  retention,
   onUpdateItems,
   nav,
 }: DetailsScreenProps) {
@@ -55,13 +65,47 @@ export function DetailsScreen({
   const lines = clip.content.split("\n").length;
   const words = clip.content.trim() ? clip.content.trim().split(/\s+/).length : 0;
 
-  // Toggle Pinned
+  // Toggle Pinned (completely independent of expiry lock)
   const handleTogglePinned = () => {
+    const nextPinned = !clip.pinned;
+    const nowMs = Date.now();
     const updated = items.map((c) =>
-      c.id === id ? { ...c, pinned: !c.pinned, modifiedAt: Date.now() } : c
+      c.id === id
+        ? {
+            ...c,
+            pinned: nextPinned,
+            expiresAt:
+              nextPinned || c.isExpiryLocked
+                ? null
+                : c.expiresAt ?? computeExpiry(retention, nowMs),
+            modifiedAt: nowMs,
+          }
+        : c
     );
     onUpdateItems(updated);
     toast(clip.pinned ? "Unpinned from top" : "Pinned to top");
+  };
+
+  // Toggle Expiry Protection Lock (completely independent of pinning)
+  const handleToggleExpiryLock = () => {
+    const nextLocked = !Boolean(clip.isExpiryLocked);
+    const nowMs = Date.now();
+    const updated = items.map((c) =>
+      c.id === id ? applyItemExpiryLockState(c, nextLocked, retention, nowMs) : c
+    );
+    onUpdateItems(updated);
+    if (nextLocked) {
+      toast("Locked from expiry", {
+        description: "Automatic expiry will not remove this clip.",
+      });
+    } else {
+      toast("Expiry protection unlocked", {
+        description:
+          !clip.pinned && hasFiniteRetention(retention)
+            ? "A fresh expiry window has started from now."
+            : "This clip is now unlocked.",
+      });
+    }
   };
 
   // Duplicate item
@@ -73,6 +117,8 @@ export function DetailsScreen({
       id: copyId,
       title: `${clip.title} (copy)`.slice(0, 200),
       pinned: false,
+      isExpiryLocked: false,
+      expiresAt: computeExpiry(retention, t),
       createdAt: t,
       modifiedAt: t,
     };
@@ -195,18 +241,26 @@ export function DetailsScreen({
       />
 
       <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3">
-        {/* Title and Pin status */}
+        {/* Title, Expiry Lock, and Pin status */}
         <div>
-          <div className="flex items-start gap-2">
-            <h1 className="flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
+          <div className="flex flex-wrap items-start gap-2">
+            <h1 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
               {clip.title}
             </h1>
-            {clip.pinned && (
-              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-mint-soft px-2.5 py-0.5 text-xs font-semibold text-mint-foreground">
-                <Pin className="h-3 w-3" />
-                Pinned
-              </span>
-            )}
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 shrink-0">
+              {clip.isExpiryLocked && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-foreground/90">
+                  <Lock className="h-3 w-3 text-mint" aria-hidden />
+                  Locked
+                </span>
+              )}
+              {clip.pinned && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-mint-soft px-2.5 py-0.5 text-xs font-semibold text-mint-foreground">
+                  <Pin className="h-3 w-3" />
+                  Pinned
+                </span>
+              )}
+            </div>
           </div>
 
           {/* 4-Grid Metadata */}
@@ -222,6 +276,50 @@ export function DetailsScreen({
               value={`${words.toLocaleString()} words · ${lines.toLocaleString()} lines`}
             />
           </dl>
+
+          {/* Per-item Expiry Protection Toggle */}
+          <div className="mt-2.5 flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div
+                className={cn(
+                  "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+                  clip.isExpiryLocked
+                    ? "bg-mint-soft text-mint"
+                    : "bg-surface-2 text-muted-foreground"
+                )}
+              >
+                {clip.isExpiryLocked ? (
+                  <Lock className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Unlock className="h-4 w-4" aria-hidden />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground">
+                  {clip.isExpiryLocked ? "Expiry protection locked" : "Expiry protection"}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {clip.isExpiryLocked
+                    ? "Automatic expiry will not remove this clip"
+                    : clip.pinned
+                      ? "Protected while pinned · lock for independent protection"
+                      : clip.expiresAt
+                        ? `Expires ${fullDateTime(clip.expiresAt)}`
+                        : hasFiniteRetention(retention)
+                          ? "Follows active retention settings"
+                          : "Retention is Forever (no auto-expiry)"}
+                </p>
+              </div>
+            </div>
+            <Btn
+              size="sm"
+              variant={clip.isExpiryLocked ? "outline" : "mint"}
+              onClick={handleToggleExpiryLock}
+              className="shrink-0 text-xs"
+            >
+              {clip.isExpiryLocked ? "Unlock expiry protection" : "Lock from expiry"}
+            </Btn>
+          </div>
         </div>
 
         {/* Content Viewer */}

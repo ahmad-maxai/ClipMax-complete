@@ -73,42 +73,94 @@ class KeyboardLayoutSpecTest {
     }
 
     @Test
-    fun testNumericEditorInfoNeverAutoActivatesNumpadAndFocusResetsToAlpha() {
+    fun testNumericEditorInfoAutoActivatesNumpadAndRestoresAlphaOnStandardFields() {
         val controller = KeyboardLayoutSpec.KeyboardModeController()
         val numericTypes = listOf(
             InputFieldPolicy.TYPE_CLASS_NUMBER,
+            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_FLAG_DECIMAL,
+            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_FLAG_SIGNED,
             InputFieldPolicy.TYPE_CLASS_PHONE,
             InputFieldPolicy.TYPE_CLASS_DATETIME,
-            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_VARIATION_PASSWORD,
-            InputFieldPolicy.TYPE_CLASS_TEXT
+            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_VARIATION_PASSWORD
         )
 
         for (type in numericTypes) {
             val caps = InputFieldPolicy.evaluate(type)
             controller.onFieldFocused(caps, restarting = false)
             assertEquals(
-                "Numeric or text EditorInfo=$type must not auto-activate NUMPAD",
+                "Numeric EditorInfo=$type should auto-activate NUMPAD",
+                KeyboardLayoutSpec.KeyboardMode.NUMPAD,
+                controller.currentMode
+            )
+        }
+
+        // Standard, multiline, email, web email, URI, search, and text password restore ALPHA
+        val textTypes = listOf(
+            InputFieldPolicy.TYPE_CLASS_TEXT,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_FLAG_MULTI_LINE,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_URI,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_FILTER,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_PASSWORD
+        )
+        for (type in textTypes) {
+            val numCaps = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
+            controller.onFieldFocused(numCaps, restarting = false)
+            assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
+
+            val textCaps = InputFieldPolicy.evaluate(type)
+            controller.onFieldFocused(textCaps, restarting = false)
+            assertEquals(
+                "Standard/non-numeric EditorInfo=$type must restore ALPHA",
                 KeyboardLayoutSpec.KeyboardMode.ALPHA,
                 controller.currentMode
             )
         }
 
-        // User explicitly opens NUMPAD via SYMBOLS -> 12 34
-        controller.toSymbols()
-        controller.toNumpad()
+        // Sequential transitions across same/different apps: ALPHA -> NUMBER -> TEXT -> EMAIL -> URL -> PIN -> TEXT
+        controller.onFieldFocused(InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT), restarting = false)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.onFieldFocused(InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER), restarting = false)
         assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
-
-        // Same field restarting keeps current mode; moving focus to a new field resets to ALPHA
-        val numCaps = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
-        controller.onFieldFocused(numCaps, restarting = true)
+        controller.onFieldFocused(InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT), restarting = false)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.onFieldFocused(
+            InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_EMAIL_ADDRESS),
+            restarting = false
+        )
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.onFieldFocused(
+            InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_URI),
+            restarting = false
+        )
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.onFieldFocused(
+            InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_VARIATION_PASSWORD),
+            restarting = false
+        )
         assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
-
-        controller.onFieldFocused(numCaps, restarting = false)
+        controller.onFieldFocused(InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT), restarting = false)
         assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
 
+        // Manual override (NUMPAD -> ABC -> ALPHA) preserved when restarting = true on same numeric field
+        val numCaps = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
+        controller.onFieldFocused(numCaps, restarting = false)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
+        controller.toAlpha()
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.onFieldFocused(numCaps, restarting = true)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+
+        // Fresh field focus re-evaluates to NUMPAD; filter mode keeps ALPHA and remembers NUMPAD
+        controller.onFieldFocused(numCaps, restarting = false)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
+        controller.onFieldFocused(numCaps, restarting = false, isFilterMode = true)
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
+        controller.exitSearchClips()
+        assertEquals(KeyboardLayoutSpec.KeyboardMode.NUMPAD, controller.currentMode)
+
         // Window hidden resets back to ALPHA
-        controller.toSymbols()
-        controller.toNumpad()
         controller.onWindowHiddenReset()
         assertEquals(KeyboardLayoutSpec.KeyboardMode.ALPHA, controller.currentMode)
     }

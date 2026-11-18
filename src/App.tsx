@@ -10,13 +10,16 @@ import {
   saveStoredItems,
   getStoredRetention,
   getStoredCaptureEnabled,
+  hasFiniteRetention,
+  lockItemsFromExpiry,
 } from "./lib/storage";
-import { ToastProvider } from "./components/ui/Toast";
+import { ToastProvider, useToast } from "./components/ui/Toast";
 import { LibraryScreen } from "./components/LibraryScreen";
 import { DetailsScreen } from "./components/DetailsScreen";
 import { EditorScreen } from "./components/EditorScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { OnboardingIntroScreen } from "./components/OnboardingIntroScreen";
+import { ExpiryReminderBanner } from "./components/ExpiryReminderBanner";
 import {
   OnboardingState,
   advanceOnboardingFromIntro,
@@ -79,6 +82,7 @@ export default function App() {
   );
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
   const [systemDark, setSystemDark] = useState<boolean>(() => readSystemNight());
+  const [pendingExpiryIds, setPendingExpiryIds] = useState<string[]>([]);
 
   const effectiveDark =
     themeMode === "dark" ? true : themeMode === "light" ? false : systemDark;
@@ -194,6 +198,23 @@ export default function App() {
     saveStoredItems(updated);
   };
 
+  // Trigger contextual expiry reminder when finite retention is active
+  const handleClipsAdded = (addedIds: string[]) => {
+    if (addedIds.length === 0) return;
+    const currentRetention = getStoredRetention();
+    setRetention(currentRetention);
+    if (hasFiniteRetention(currentRetention)) {
+      setPendingExpiryIds(addedIds);
+    }
+  };
+
+  // Clear stale reminder if retention becomes non-finite
+  useEffect(() => {
+    if (!hasFiniteRetention(retention) && pendingExpiryIds.length > 0) {
+      setPendingExpiryIds([]);
+    }
+  }, [retention, pendingExpiryIds.length]);
+
   const toggleTheme = () => {
     setThemeMode(effectiveDark ? "light" : "dark");
   };
@@ -231,6 +252,7 @@ export default function App() {
           <LibraryScreen
             items={items}
             onUpdateItems={handleUpdateItems}
+            onClipsAdded={handleClipsAdded}
             nav={setScreen}
             dark={effectiveDark}
             onToggleTheme={toggleTheme}
@@ -241,6 +263,7 @@ export default function App() {
           <DetailsScreen
             id={screen.id}
             items={items}
+            retention={retention}
             onUpdateItems={handleUpdateItems}
             nav={setScreen}
           />
@@ -251,6 +274,7 @@ export default function App() {
             id={screen.id}
             items={items}
             onUpdateItems={handleUpdateItems}
+            onClipsAdded={handleClipsAdded}
             nav={setScreen}
           />
         );
@@ -281,9 +305,71 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="w-full h-[100dvh] max-h-[100dvh] flex flex-col bg-background text-foreground overflow-hidden select-none font-sans antialiased">
-        {renderScreen()}
-      </div>
+      <AppShell
+        items={items}
+        pendingExpiryIds={pendingExpiryIds}
+        hasFiniteExpiry={hasFiniteRetention(retention)}
+        onClearPendingExpiry={() => setPendingExpiryIds([])}
+        onUpdateItems={handleUpdateItems}
+      >
+        <div className="w-full h-[100dvh] max-h-[100dvh] flex flex-col bg-background text-foreground overflow-hidden select-none font-sans antialiased">
+          {renderScreen()}
+        </div>
+      </AppShell>
     </ToastProvider>
+  );
+}
+
+function AppShell({
+  items,
+  pendingExpiryIds,
+  hasFiniteExpiry,
+  onClearPendingExpiry,
+  onUpdateItems,
+  children,
+}: {
+  items: ClipItem[];
+  pendingExpiryIds: string[];
+  hasFiniteExpiry: boolean;
+  onClearPendingExpiry: () => void;
+  onUpdateItems: (items: ClipItem[]) => void;
+  children: React.ReactNode;
+}) {
+  const { success } = useToast();
+
+  const existingPendingIds = pendingExpiryIds.filter((pid) =>
+    items.some((item) => item.id === pid && !item.isExpiryLocked && !item.pinned)
+  );
+
+  const handleLockClips = () => {
+    if (existingPendingIds.length === 0) {
+      onClearPendingExpiry();
+      return;
+    }
+    const updated = lockItemsFromExpiry(items, existingPendingIds);
+    onUpdateItems(updated);
+    onClearPendingExpiry();
+    success(
+      existingPendingIds.length > 1
+        ? `Locked ${existingPendingIds.length} clips from expiry`
+        : "Clip locked from expiry",
+      {
+        description: "Automatic expiry will not remove locked items.",
+      }
+    );
+  };
+
+  return (
+    <>
+      {children}
+      {hasFiniteExpiry && existingPendingIds.length > 0 && (
+        <ExpiryReminderBanner
+          itemIds={existingPendingIds}
+          onLockClips={handleLockClips}
+          onKeepExpiry={onClearPendingExpiry}
+          onDismiss={onClearPendingExpiry}
+        />
+      )}
+    </>
   );
 }

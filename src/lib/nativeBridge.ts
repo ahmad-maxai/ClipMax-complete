@@ -8,6 +8,7 @@ export interface ClipMaxNativeBridge {
   updateItem(id: string, title: string, content: string, pinned: boolean): string;
   deleteItem(id: string): boolean;
   setPinned(id: string, pinned: boolean): string;
+  setExpiryLocked?(id: string, locked: boolean): string;
   syncItems(jsonArrayString: string): boolean;
   clearAllItems(): boolean;
   copyToClipboard(text: string): boolean;

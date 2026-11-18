@@ -115,25 +115,44 @@ class InputFieldPolicyTest {
     }
 
     @Test
-    fun testNumericFieldClassificationPreservedWithoutAutoActivatingNumpad() {
-        val num = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
-        assertEquals(InputFieldPolicy.NumericFieldKind.NUMBER, num.numericFieldKind)
-        assertTrue(InputFieldPolicy.isNumericField(num))
-        assertFalse(num.isPasswordOrPin)
-        assertTrue(num.allowClipboard)
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(num, isFilterMode = false))
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(num, isFilterMode = true))
-        assertFalse(InputFieldPolicy.shouldUseDedicatedNumpad(num, isFilterMode = false))
+    fun testNumericPhoneDatetimeAndPinAutoActivateNumpadWhileTextFieldsStayAlpha() {
+        val plainNum = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_NUMBER)
+        assertEquals(InputFieldPolicy.NumericFieldKind.NUMBER, plainNum.numericFieldKind)
+        assertTrue(InputFieldPolicy.isNumericField(plainNum))
+        assertFalse(plainNum.allowsDecimal)
+        assertFalse(plainNum.allowsSigned)
+        assertFalse(plainNum.isPasswordOrPin)
+        assertTrue(plainNum.allowClipboard)
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(plainNum, isFilterMode = false))
+        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(plainNum, isFilterMode = true))
+
+        val decimalNum = InputFieldPolicy.evaluate(
+            InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        assertEquals(InputFieldPolicy.NumericFieldKind.NUMBER, decimalNum.numericFieldKind)
+        assertTrue(decimalNum.allowsDecimal)
+        assertFalse(decimalNum.allowsSigned)
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(decimalNum, isFilterMode = false))
+
+        val signedDecimalNum = InputFieldPolicy.evaluate(
+            InputFieldPolicy.TYPE_CLASS_NUMBER or
+                InputFieldPolicy.TYPE_NUMBER_FLAG_SIGNED or
+                InputFieldPolicy.TYPE_NUMBER_FLAG_DECIMAL
+        )
+        assertEquals(InputFieldPolicy.NumericFieldKind.NUMBER, signedDecimalNum.numericFieldKind)
+        assertTrue(signedDecimalNum.allowsDecimal)
+        assertTrue(signedDecimalNum.allowsSigned)
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(signedDecimalNum, isFilterMode = false))
 
         val phone = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_PHONE)
         assertEquals(InputFieldPolicy.NumericFieldKind.PHONE, phone.numericFieldKind)
         assertTrue(InputFieldPolicy.isNumericField(phone))
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(phone, isFilterMode = false))
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(phone, isFilterMode = false))
 
         val datetime = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_DATETIME)
         assertEquals(InputFieldPolicy.NumericFieldKind.DATETIME, datetime.numericFieldKind)
         assertTrue(InputFieldPolicy.isNumericField(datetime))
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(datetime, isFilterMode = false))
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(datetime, isFilterMode = false))
 
         val pin = InputFieldPolicy.evaluate(
             InputFieldPolicy.TYPE_CLASS_NUMBER or InputFieldPolicy.TYPE_NUMBER_VARIATION_PASSWORD
@@ -146,11 +165,25 @@ class InputFieldPolicyTest {
         assertFalse(pin.allowAutocomplete)
         assertFalse(pin.allowAutocorrect)
         assertFalse(pin.allowSessionLearning)
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(pin, isFilterMode = false))
+        assertTrue(InputFieldPolicy.shouldAutoActivateNumpad(pin, isFilterMode = false))
+        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(pin, isFilterMode = true))
 
-        val textField = InputFieldPolicy.evaluate(InputFieldPolicy.TYPE_CLASS_TEXT)
-        assertEquals(InputFieldPolicy.NumericFieldKind.NONE, textField.numericFieldKind)
-        assertFalse(InputFieldPolicy.isNumericField(textField))
-        assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(textField, isFilterMode = false))
+        val nonNumericTypes = listOf(
+            InputFieldPolicy.TYPE_CLASS_TEXT,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_FLAG_MULTI_LINE,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_URI,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_FILTER,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_PASSWORD,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputFieldPolicy.TYPE_CLASS_TEXT or InputFieldPolicy.TYPE_TEXT_VARIATION_WEB_PASSWORD
+        )
+        for (type in nonNumericTypes) {
+            val caps = InputFieldPolicy.evaluate(type)
+            assertEquals(InputFieldPolicy.NumericFieldKind.NONE, caps.numericFieldKind)
+            assertFalse(InputFieldPolicy.isNumericField(caps))
+            assertFalse(InputFieldPolicy.shouldAutoActivateNumpad(caps, isFilterMode = false))
+        }
     }
 }

@@ -2279,7 +2279,8 @@ class ClipMaxImeService : InputMethodService() {
                 title = orig.title,
                 content = snapshot.removedContents[orig.id] ?: "",
                 pinned = orig.pinned,
-                createdAt = orig.createdAt
+                createdAt = orig.createdAt,
+                isExpiryLocked = orig.isExpiryLocked
             )
         }
         io.execute {
@@ -2322,7 +2323,8 @@ class ClipMaxImeService : InputMethodService() {
                 title = added.title,
                 content = snapshot.addedContents[added.id] ?: "",
                 pinned = added.pinned,
-                createdAt = added.createdAt
+                createdAt = added.createdAt,
+                isExpiryLocked = added.isExpiryLocked
             )
         }
         io.execute {
@@ -2578,6 +2580,33 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
 
+            val lockColor = if (latestItem.isExpiryLocked) colorAccent else colorKeyText
+            addActionRow(
+                label = if (latestItem.isExpiryLocked) "Unlock expiry" else "Lock expiry",
+                iconType = IconType.LOCK,
+                tint = lockColor
+            ) {
+                dismissContextMenu(animate = true)
+                io.execute {
+                    val fresh = store.getItem(targetId) ?: return@execute
+                    val nextLocked = !fresh.isExpiryLocked
+                    val updated = store.setExpiryLocked(targetId, nextLocked)
+                    if (nextLocked || updated.pinned) {
+                        CapturePreferences.removeExpiry(capturePreferences, targetId)
+                    } else {
+                        CapturePreferences.recalculateExpiryOnUnlock(capturePreferences, targetId, captureMode)
+                    }
+                    CaptureExpiryReceiver.schedule(this@ClipMaxImeService)
+                    main.post {
+                        setStatus(
+                            if (nextLocked) "Expiry protection locked."
+                            else "Expiry protection unlocked."
+                        )
+                        reloadItems()
+                    }
+                }
+            }
+
             addActionRow(
                 label = "Edit",
                 iconType = IconType.EDIT,
@@ -2742,7 +2771,11 @@ class ClipMaxImeService : InputMethodService() {
             else -> roundedRipple(cardSurfaceBg, radiusPx, colorKeyBorder)
         }
 
-        // Row 1: Strictly ONLY the dynamic bottom-up positional serial number ("#1", "#2", ...)
+        // Row 1: Dynamic bottom-up positional serial number ("#1", "#2", ...) + subtle expiry lock indicator
+        val headerRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         val serialTv = TextView(this@ClipMaxImeService).apply {
             text = serialLabel
             textSize = 11.5f
@@ -2751,10 +2784,17 @@ class ClipMaxImeService : InputMethodService() {
             setSingleLine(true)
             includeFontPadding = false
         }
+        headerRow.addView(serialTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (item.isExpiryLocked) {
+            val lockIcon = createIconView(IconDrawable(IconType.LOCK, colorAccent, 10.5f)).apply {
+                contentDescription = "Protected from expiry"
+            }
+            headerRow.addView(lockIcon, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
         addView(
-            serialTv,
+            headerRow,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
                 bottomMargin = dp(5)
@@ -2933,6 +2973,13 @@ class ClipMaxImeService : InputMethodService() {
                 setPadding(0, 0, dp(4), 0)
             }
             addView(pinIcon)
+        }
+        if (item.isExpiryLocked) {
+            val lockIcon = createIconView(IconDrawable(IconType.LOCK, colorHintText, 10f)).apply {
+                contentDescription = "Protected from expiry"
+                setPadding(0, 0, dp(4), 0)
+            }
+            addView(lockIcon)
         }
 
         val rawSnippet = snippetCache[item.id] ?: getRawSnippetPrefix(item, 180)
@@ -4827,6 +4874,8 @@ class ClipMaxImeService : InputMethodService() {
     override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         dismissContextMenu(animate = false)
+        val prevCapabilities = fieldCapabilities
+        val wasPasswordTarget = isPasswordTarget
         fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
 
@@ -4879,7 +4928,17 @@ class ClipMaxImeService : InputMethodService() {
             isEmojiPickerOpen = false
             pinnedOnly = false
         }
-        modeController.onFieldFocused(fieldCapabilities, restarting)
+        val numericRequirementChanged =
+            InputFieldPolicy.shouldAutoActivateNumpad(prevCapabilities, isFilterMode) !=
+                InputFieldPolicy.shouldAutoActivateNumpad(fieldCapabilities, isFilterMode) ||
+            prevCapabilities.numericFieldKind != fieldCapabilities.numericFieldKind
+        val treatAsNewField = !restarting || hardFieldChanged || numericRequirementChanged || (wasPasswordTarget != isPasswordTarget)
+        val prevMode = modeController.currentMode
+        modeController.onFieldFocused(
+            capabilities = fieldCapabilities,
+            restarting = !treatAsNewField,
+            isFilterMode = isFilterMode
+        )
         autoCapMode = AutoCapitalizationPolicy.resolveCapMode(attribute.inputType, isFilterMode)
         shiftStateMachine.onInputSessionReset()
 
@@ -4963,6 +5022,10 @@ class ClipMaxImeService : InputMethodService() {
         window?.window?.let { applySystemNavBarTheme(it) }
         if (imeRootFrame != null && computeThemeStateKey() != lastRenderedThemeKey) {
             renderFullImeView()
+        } else if (keyboardRowsContainer != null && !isClipboardPanelOpen && !isSettingsOpen && !isEmojiPickerOpen &&
+            (modeController.currentMode != prevMode || isPasswordTarget != wasPasswordTarget)
+        ) {
+            renderKeyboardRows()
         }
         if (pasteCapsuleController.isActive && isPasswordTarget) {
             dismissPasteUndoCapsule()
@@ -4982,13 +5045,18 @@ class ClipMaxImeService : InputMethodService() {
             shiftStateMachine.resetDoubleTapTimer()
         }
         toolbarStateACenterMode = 0
+        val prevCapabilities = fieldCapabilities
         fieldCapabilities = InputFieldPolicy.evaluate(info.inputType, info.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(info.inputType)
         if (isPasswordTarget && isFilterMode) {
             isFilterMode = false
         }
-        if (!restarting) {
-            modeController.onFieldFocused(fieldCapabilities, restarting = false)
+        val numChanged =
+            InputFieldPolicy.shouldAutoActivateNumpad(prevCapabilities, isFilterMode) !=
+                InputFieldPolicy.shouldAutoActivateNumpad(fieldCapabilities, isFilterMode) ||
+            prevCapabilities.numericFieldKind != fieldCapabilities.numericFieldKind
+        if (!restarting || numChanged) {
+            modeController.onFieldFocused(fieldCapabilities, restarting = false, isFilterMode = isFilterMode)
         }
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
@@ -5168,6 +5236,7 @@ class ClipMaxImeService : InputMethodService() {
         inputSessionActive = false
         inputViewActive = false
         isPasswordTarget = false
+        fieldCapabilities = InputFieldPolicy.evaluate(InputType.TYPE_CLASS_TEXT, 0)
         updateCaptureMonitoring()
         pendingSelectionCapture?.let(main::removeCallbacks)
         pendingSelectionCapture = null

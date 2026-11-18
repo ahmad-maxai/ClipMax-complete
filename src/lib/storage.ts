@@ -202,8 +202,8 @@ function cleanExpiredItems(items: ClipItem[]): ClipItem[] {
   const current = Date.now();
   let changed = false;
   const filtered = items.filter((item) => {
-    // Pinned items are never removed by retention
-    if (item.pinned) return true;
+    // Pinned and expiry-locked items are never removed by retention
+    if (item.pinned || item.isExpiryLocked) return true;
     if (item.expiresAt && item.expiresAt <= current) {
       changed = true;
       return false;
@@ -216,12 +216,17 @@ function cleanExpiredItems(items: ClipItem[]): ClipItem[] {
   return filtered;
 }
 
-export function computeExpiry(retention: Retention): number | null {
+export function hasFiniteRetention(retention: Retention): boolean {
+  const normalized = (retention || "").trim().toLowerCase();
+  return normalized !== "off" && normalized !== "forever" && normalized !== "";
+}
+
+export function computeExpiry(retention: Retention, baseTime: number = Date.now()): number | null {
   if (retention === "off" || retention === "forever") return null;
-  if (retention === "1h") return Date.now() + 1 * H;
-  if (retention === "6h") return Date.now() + 6 * H;
-  if (retention === "24h") return Date.now() + 24 * H;
-  if (retention === "72h") return Date.now() + 72 * H;
+  if (retention === "1h") return baseTime + 1 * H;
+  if (retention === "6h") return baseTime + 6 * H;
+  if (retention === "24h") return baseTime + 24 * H;
+  if (retention === "72h") return baseTime + 72 * H;
 
   const clean = retention.startsWith("custom:") ? retention.slice(7) : retention;
   const match = clean.match(/^(\d+)\s*([mh])$/i);
@@ -230,23 +235,59 @@ export function computeExpiry(retention: Retention): number | null {
     const unit = match[2].toLowerCase();
     if (num > 0) {
       const ms = unit.startsWith("h") ? num * 3600 * 1000 : num * 60 * 1000;
-      return Date.now() + ms;
+      return baseTime + ms;
     }
   }
   if (retention === "custom") {
     const num = getStoredCustomDuration();
     const unit = getStoredCustomUnit();
     const ms = unit === "h" ? num * 3600 * 1000 : num * 60 * 1000;
-    return Date.now() + ms;
+    return baseTime + ms;
   }
-  return Date.now() + 24 * H;
+  return baseTime + 24 * H;
+}
+
+export function applyItemExpiryLockState(
+  item: ClipItem,
+  locked: boolean,
+  retention: Retention,
+  nowMs: number = Date.now()
+): ClipItem {
+  const nextLocked = Boolean(locked);
+  const nextExpiresAt =
+    nextLocked || item.pinned ? null : computeExpiry(retention, nowMs);
+  return {
+    ...item,
+    isExpiryLocked: nextLocked,
+    expiresAt: nextExpiresAt,
+    modifiedAt: nowMs,
+  };
+}
+
+export function lockItemsFromExpiry(
+  items: ClipItem[],
+  ids: Iterable<string>,
+  nowMs: number = Date.now()
+): ClipItem[] {
+  const idSet = new Set(ids);
+  return items.map((item) =>
+    idSet.has(item.id)
+      ? {
+          ...item,
+          isExpiryLocked: true,
+          expiresAt: null,
+          modifiedAt: nowMs,
+        }
+      : item
+  );
 }
 
 export function createClipItem(
   title: string,
   content: string,
   pinned = false,
-  retention: Retention = "forever"
+  retention: Retention = "forever",
+  isExpiryLocked = false
 ): ClipItem {
   const t = Date.now();
   const bytes = utf8ByteLength(content);
@@ -265,7 +306,8 @@ export function createClipItem(
     characterCount: content.length,
     sizeBytes: bytes,
     pinned,
-    expiresAt: pinned ? null : computeExpiry(retention),
+    isExpiryLocked,
+    expiresAt: pinned || isExpiryLocked ? null : computeExpiry(retention, t),
   };
 }
 

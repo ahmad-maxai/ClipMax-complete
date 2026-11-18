@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef } from "react";
 import {
   FileUp,
+  Lock,
   Moon,
   Pin,
   Plus,
@@ -22,6 +23,7 @@ import {
   filterClips,
   relTime,
   createClipItem,
+  getStoredRetention,
 } from "../lib/storage";
 import { formatBytes, utf8ByteLength } from "../lib/chunker";
 import { restoreZipBackup } from "../lib/backup";
@@ -31,6 +33,7 @@ import { cn } from "../lib/utils";
 interface LibraryScreenProps {
   items: ClipItem[];
   onUpdateItems: (items: ClipItem[]) => void;
+  onClipsAdded?: (ids: string[]) => void;
   nav: Nav;
   dark: boolean;
   onToggleTheme: () => void;
@@ -39,6 +42,7 @@ interface LibraryScreenProps {
 export function LibraryScreen({
   items,
   onUpdateItems,
+  onClipsAdded,
   nav,
   dark,
   onToggleTheme,
@@ -72,21 +76,24 @@ export function LibraryScreen({
 
   const pinnedCount = useMemo(() => items.filter((i) => i.pinned).length, [items]);
 
-  // Universal file import supporting .txt, markdown, JSON backups, and ClipMax .zip backups
+  // Universal file import supporting .txt, markdown, JSON clip arrays, and ClipMax .zip backups
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFiles = e.target.files ? Array.from(e.target.files) : [];
+    if (selectedFiles.length === 0) return;
 
-    const lowerName = file.name.toLowerCase();
+    const isZipFile = (f: File) => {
+      const lower = f.name.toLowerCase();
+      return (
+        lower.endsWith(".zip") ||
+        f.type === "application/zip" ||
+        f.type === "application/x-zip-compressed"
+      );
+    };
 
-    // 1. Handle ZIP Backup Archive
-    if (
-      lowerName.endsWith(".zip") ||
-      file.type === "application/zip" ||
-      file.type === "application/x-zip-compressed"
-    ) {
+    // 1. Handle ZIP Backup Archive (preserves backup state without reminder spam)
+    if (selectedFiles.length === 1 && isZipFile(selectedFiles[0])) {
       try {
-        const res = await restoreZipBackup(file, items);
+        const res = await restoreZipBackup(selectedFiles[0], items);
         onUpdateItems(res.items);
         success(`Restored ${res.restoredCount} items from backup`, {
           description: res.warnings.length
@@ -103,15 +110,26 @@ export function LibraryScreen({
       return;
     }
 
-    // 2. Handle Text, Markdown, JSON, Code, and Document files
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        let text = String(event.target?.result || "");
-        // Strip UTF-8 BOM if present
-        text = text.replace(/^\uFEFF/, "");
+    // 2. Handle regular single or batch text, markdown, JSON, or mixed file imports
+    try {
+      const activeRetention = getStoredRetention();
+      let workingItems = [...items];
+      const importedNonBackupItems: ClipItem[] = [];
+      let restoredZipCount = 0;
 
-        // Check if this text file is a JSON backup (array of clip objects)
+      for (const file of selectedFiles) {
+        if (isZipFile(file)) {
+          const res = await restoreZipBackup(file, workingItems);
+          workingItems = res.items;
+          restoredZipCount += res.restoredCount;
+          continue;
+        }
+
+        let text = await file.text();
+        text = text.replace(/^\uFEFF/, "");
+        const lowerName = file.name.toLowerCase();
+
+        // Check if this text file is a JSON clip list (array of clip objects)
         if (
           lowerName.endsWith(".json") ||
           (text.trim().startsWith("[") && text.trim().endsWith("]"))
@@ -123,53 +141,70 @@ export function LibraryScreen({
               parsed.length > 0 &&
               ("content" in parsed[0] || "title" in parsed[0])
             ) {
-              const newItems: ClipItem[] = [];
               for (const p of parsed) {
                 const itemTitle = String(p.title || "Imported clip");
                 const itemContent = String(p.content || "");
                 const isPinned = Boolean(p.pinned);
-                newItems.push(createClipItem(itemTitle, itemContent, isPinned));
+                const locked = Boolean(p.isExpiryLocked);
+                const created = createClipItem(
+                  itemTitle,
+                  itemContent,
+                  isPinned,
+                  activeRetention,
+                  locked
+                );
+                importedNonBackupItems.push(created);
+                workingItems = [created, ...workingItems];
               }
-              const merged = [...newItems, ...items];
-              onUpdateItems(merged);
-              success(`Imported ${newItems.length} clips from JSON`, {
-                description: `Successfully restored ${newItems.length} items to library.`,
-              });
-              return;
+              continue;
             }
           } catch {
-            // Not a JSON backup array, treat as regular text content below
+            // Not a JSON clip array, treat as regular text content below
           }
         }
 
         // Regular plain text / markdown / code file import
         const title = file.name.replace(/\.[^/.]+$/, "") || "Imported text";
-        const newItem = createClipItem(title, text, false);
-        onUpdateItems([newItem, ...items]);
-        success(`Imported "${file.name}"`, {
-          description: `${text.length.toLocaleString()} characters (${formatBytes(newItem.sizeBytes)})`,
+        const newItem = createClipItem(title, text, false, activeRetention);
+        importedNonBackupItems.push(newItem);
+        workingItems = [newItem, ...workingItems];
+      }
+
+      onUpdateItems(workingItems);
+
+      if (importedNonBackupItems.length === 1 && restoredZipCount === 0) {
+        const single = importedNonBackupItems[0];
+        const fileName = selectedFiles[0]?.name || single.title;
+        success(`Imported "${fileName}"`, {
+          description: `${single.characterCount.toLocaleString()} characters (${formatBytes(single.sizeBytes)})`,
           action: {
             label: "View",
-            onClick: () => nav({ name: "details", id: newItem.id }),
+            onClick: () => nav({ name: "details", id: single.id }),
           },
         });
-      } catch (err: any) {
-        error("Import failed", {
-          description: err?.message || "Could not process imported file.",
+      } else if (importedNonBackupItems.length > 0) {
+        success(`Imported ${importedNonBackupItems.length} clips`, {
+          description: `Successfully added ${importedNonBackupItems.length} items to library.`,
         });
-      } finally {
-        if (fileInputRef.current) fileInputRef.current.value = "";
+      } else if (restoredZipCount > 0) {
+        success(`Restored ${restoredZipCount} items from backup`, {
+          description: `Archive restored. Total clips: ${workingItems.length}`,
+        });
       }
-    };
 
-    reader.onerror = () => {
+      const lockCandidateIds = importedNonBackupItems
+        .filter((item) => !item.pinned && !item.isExpiryLocked)
+        .map((item) => item.id);
+      if (lockCandidateIds.length > 0) {
+        onClipsAdded?.(lockCandidateIds);
+      }
+    } catch (err: any) {
       error("Import failed", {
-        description: reader.error?.message || "Failed to read file from storage.",
+        description: err?.message || "Could not process imported file.",
       });
+    } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
-    };
-
-    reader.readAsText(file, "UTF-8");
+    }
   };
 
   return (
@@ -178,6 +213,7 @@ export function LibraryScreen({
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         accept=".txt,.md,.json,.zip,text/plain,text/*,application/zip,application/json"
         className="hidden"
         onChange={handleImportFile}
@@ -422,6 +458,15 @@ function ClipCard({
         <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-foreground group-hover:text-primary">
           <Highlight text={clip.title} q={query} />
         </h3>
+        {clip.isExpiryLocked && (
+          <span
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-mint"
+            title="Protected from expiry"
+            aria-label="Protected from expiry"
+          >
+            <Lock className="h-2.5 w-2.5" aria-hidden />
+          </span>
+        )}
         {clip.pinned && (
           <span className="inline-flex items-center gap-1 rounded-full bg-mint-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-mint-foreground">
             <Pin className="h-2.5 w-2.5" aria-hidden />

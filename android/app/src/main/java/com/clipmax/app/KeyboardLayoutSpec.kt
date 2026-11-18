@@ -45,8 +45,9 @@ internal object KeyboardLayoutSpec {
      * - NUMPAD (ABC) -> ALPHA
      * - NUMPAD (!?#) -> SYMBOLS
      *
-     * Never auto-activates NUMPAD on numeric EditorInfo focus.
-     * Supports temporary QWERTY entry during Search Clips and restores prior mode on exit.
+     * Auto-activates NUMPAD when focusing numeric EditorInfo fields and restores ALPHA when
+     * returning to text/email/URL/password fields. Supports temporary QWERTY entry during
+     * Search Clips and restores prior mode on exit.
      */
     class KeyboardModeController {
         var currentMode: KeyboardMode = KeyboardMode.ALPHA
@@ -86,12 +87,23 @@ internal object KeyboardLayoutSpec {
         }
 
         fun onFieldFocused(
-            @Suppress("UNUSED_PARAMETER") capabilities: InputFieldPolicy.FieldCapabilities,
-            restarting: Boolean = false
+            capabilities: InputFieldPolicy.FieldCapabilities,
+            restarting: Boolean = false,
+            isFilterMode: Boolean = false
         ) {
             if (!restarting) {
-                preSearchMode = null
-                currentMode = KeyboardMode.ALPHA
+                val targetMode = if (InputFieldPolicy.shouldAutoActivateNumpad(capabilities, isFilterMode = false)) {
+                    KeyboardMode.NUMPAD
+                } else {
+                    KeyboardMode.ALPHA
+                }
+                if (isFilterMode) {
+                    preSearchMode = targetMode
+                    currentMode = KeyboardMode.ALPHA
+                } else {
+                    preSearchMode = null
+                    currentMode = targetMode
+                }
             }
         }
 

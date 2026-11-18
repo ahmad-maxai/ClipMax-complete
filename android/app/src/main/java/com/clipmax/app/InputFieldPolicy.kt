@@ -31,7 +31,15 @@ internal object InputFieldPolicy {
     const val TYPE_TEXT_VARIATION_WEB_PASSWORD = 0x000000e0
 
     const val TYPE_TEXT_FLAG_NO_SUGGESTIONS = 0x00080000
+    const val TYPE_TEXT_FLAG_MULTI_LINE = 0x00020000
+    const val TYPE_TEXT_FLAG_IME_MULTI_LINE = 0x00040000
+    const val TYPE_NUMBER_VARIATION_NORMAL = 0x00000000
     const val TYPE_NUMBER_VARIATION_PASSWORD = 0x00000010
+    const val TYPE_NUMBER_FLAG_SIGNED = 0x00001000
+    const val TYPE_NUMBER_FLAG_DECIMAL = 0x00002000
+    const val TYPE_DATETIME_VARIATION_NORMAL = 0x00000000
+    const val TYPE_DATETIME_VARIATION_DATE = 0x00000010
+    const val TYPE_DATETIME_VARIATION_TIME = 0x00000020
 
     const val IME_FLAG_NO_PERSONALIZED_LEARNING = 0x01000000
     const val IME_MASK_ACTION = 0x000000ff
@@ -97,20 +105,23 @@ internal object InputFieldPolicy {
         val allowAutocomplete: Boolean,
         val allowAutocorrect: Boolean,
         val allowSessionLearning: Boolean,
-        val numericFieldKind: NumericFieldKind = NumericFieldKind.NONE
+        val numericFieldKind: NumericFieldKind = NumericFieldKind.NONE,
+        val allowsDecimal: Boolean = false,
+        val allowsSigned: Boolean = false
     )
 
     fun isNumericField(capabilities: FieldCapabilities): Boolean =
         capabilities.numericFieldKind != NumericFieldKind.NONE
 
     /**
-     * Phase 2A corrective navigation policy: NUMPAD is never auto-activated when a numeric
-     * EditorInfo field receives focus; users enter it via ALPHA -> SYMBOLS (?123) -> NUMPAD (12 34).
+     * Automatically activates ClipMax's existing NUMPAD when focus moves to a numeric
+     * EditorInfo field (plain/decimal/signed number, phone, datetime, or numeric PIN),
+     * unless internal Search Clips filter mode requires QWERTY text entry.
      */
     fun shouldAutoActivateNumpad(
-        @Suppress("UNUSED_PARAMETER") capabilities: FieldCapabilities,
-        @Suppress("UNUSED_PARAMETER") isFilterMode: Boolean = false
-    ): Boolean = false
+        capabilities: FieldCapabilities,
+        isFilterMode: Boolean = false
+    ): Boolean = !isFilterMode && isNumericField(capabilities)
 
     fun shouldUseDedicatedNumpad(capabilities: FieldCapabilities, isFilterMode: Boolean = false): Boolean =
         shouldAutoActivateNumpad(capabilities, isFilterMode)
@@ -147,6 +158,9 @@ internal object InputFieldPolicy {
             else -> NumericFieldKind.NONE
         }
 
+        val isDecimal = fieldClass == TYPE_CLASS_NUMBER && (inputType and TYPE_NUMBER_FLAG_DECIMAL) != 0
+        val isSigned = fieldClass == TYPE_CLASS_NUMBER && (inputType and TYPE_NUMBER_FLAG_SIGNED) != 0
+
         val isNonProseClass = numericKind != NumericFieldKind.NONE
 
         val isSpecializedText = fieldClass == TYPE_CLASS_TEXT && (
@@ -170,7 +184,9 @@ internal object InputFieldPolicy {
             allowAutocomplete = !disableIntelligence,
             allowAutocorrect = !disableIntelligence && !isPersonNameField,
             allowSessionLearning = !disableIntelligence && !noPersonalized,
-            numericFieldKind = numericKind
+            numericFieldKind = numericKind,
+            allowsDecimal = isDecimal,
+            allowsSigned = isSigned
         )
     }
 }

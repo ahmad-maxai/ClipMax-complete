@@ -255,7 +255,13 @@ export function SettingsScreen({
         const parsed = JSON.parse(text);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const newItems = parsed.map((p: any) =>
-            createClipItem(p.title || "Imported clip", p.content || "", Boolean(p.pinned))
+            createClipItem(
+              p.title || "Imported clip",
+              p.content || "",
+              Boolean(p.pinned),
+              retention,
+              Boolean(p.isExpiryLocked)
+            )
           );
           onUpdateItems([...newItems, ...items]);
           success(`Restored ${newItems.length} items from JSON backup`, {

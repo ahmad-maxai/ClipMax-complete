@@ -207,6 +207,45 @@ internal object CapturePreferences {
         }
     }
 
+    fun getExpiry(preferences: SharedPreferences, itemId: String): Long? =
+        if (preferences.contains(expiryKey(itemId))) preferences.getLong(expiryKey(itemId), -1L).takeIf { it > 0L } else null
+
+    fun setExpiry(preferences: SharedPreferences, itemId: String, expiresAtMillis: Long) {
+        if (expiresAtMillis > 0L) {
+            preferences.edit().putLong(expiryKey(itemId), expiresAtMillis).apply()
+        } else {
+            removeExpiry(preferences, itemId)
+        }
+    }
+
+    fun hasFiniteRetention(preferences: SharedPreferences, value: String = mode(preferences)): Boolean =
+        parseRetentionMillis(value, preferences) != null
+
+    /**
+     * Recalculates a fresh expiry timestamp starting at [now] using the current active retention
+     * setting when an item is unlocked. Returns null (and clears any expiry ledger entry) if
+     * active retention is Forever or Off. Never reuses an old expired timestamp.
+     */
+    fun recalculateExpiryOnUnlock(
+        preferences: SharedPreferences,
+        itemId: String,
+        mode: String = mode(preferences),
+        now: Long = System.currentTimeMillis()
+    ): Long? {
+        val durationMs = parseRetentionMillis(mode, preferences)
+        val editor = preferences.edit()
+        val nextExpiryAt = if (durationMs == null) {
+            editor.remove(expiryKey(itemId))
+            null
+        } else {
+            val target = now + durationMs
+            editor.putLong(expiryKey(itemId), target)
+            target
+        }
+        editor.apply()
+        return nextExpiryAt
+    }
+
     fun markCaptured(preferences: SharedPreferences, itemId: String, value: String, now: Long = System.currentTimeMillis()) {
         val expiry = parseRetentionMillis(value, preferences)
         val editor = preferences.edit()
@@ -231,7 +270,7 @@ internal object CapturePreferences {
         .mapNotNull { it.value as? Long }
         .minOrNull()
 
-    /** Deletes expired capture cards; pinned items are NEVER deleted by retention cleanup. */
+    /** Deletes expired capture cards; pinned and expiry-locked items are NEVER deleted by retention cleanup. */
     @Synchronized
     fun cleanupExpired(store: ClipStore, preferences: SharedPreferences, now: Long = System.currentTimeMillis()): Int {
         val deletedIds = mutableListOf<String>()
@@ -240,8 +279,8 @@ internal object CapturePreferences {
             if (!key.startsWith(EXPIRY_PREFIX) || value !is Long || value > now) return@forEach
             val id = key.removePrefix(EXPIRY_PREFIX)
             val existing = store.getItem(id)
-            if (existing != null && existing.pinned) {
-                // Pinned items must never be deleted by retention cleanup
+            if (existing != null && (existing.pinned || existing.isExpiryLocked)) {
+                // Pinned and expiry-locked items must never be deleted by retention cleanup
                 editor.remove(key)
                 return@forEach
             }
