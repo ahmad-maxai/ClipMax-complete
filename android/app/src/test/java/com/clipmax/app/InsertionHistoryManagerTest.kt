@@ -370,25 +370,19 @@ Paragraph 1: Background.
     fun testLargeTextWithNormalizedCrlfPreservesExactRestoration() {
         val history = InsertionHistoryManager()
         val target = InsertionHistoryManager.EditorTarget("com.android.notepad", 3, 1)
-        val initial = "Header
-"
+        val initial = "Header\n"
         val editor = FakeHostEditorGateway(initialText = initial, target = target, normalizeCrlf = true)
 
-        // 500 lines separated by 
-
-        val crlfClip = (1..500).joinToString("
-") { "Line item number $it" }
-        assertTrue(crlfClip.contains("
-"))
+        // 500 lines separated by CRLF
+        val crlfClip = (1..500).joinToString("\r\n") { "Line item number $it" }
+        assertTrue(crlfClip.contains("\r\n"))
         val beforeAnchor = editor.textBeforeCursor(48).orEmpty()
         val afterAnchor = editor.textAfterCursor(48).orEmpty()
 
         assertTrue(editor.commitText(crlfClip))
         assertTrue(history.recordClipInsertion(target, crlfClip, beforeAnchor, afterAnchor))
 
-        // Host editor normalized 
- to 
-; undo must delete exact normalized length
+        // Host editor normalized CRLF to LF; undo must delete exact normalized length
         assertTrue(history.canSafelyUndo(editor).allowed)
         val undoRes = history.undo(editor)
         assertTrue(undoRes.success)
@@ -398,9 +392,7 @@ Paragraph 1: Background.
         // Redo restores text
         assertTrue(history.canSafelyRedo(editor).allowed)
         assertTrue(history.redo(editor).success)
-        assertEquals(initial + crlfClip.replace("
-", "
-"), editor.buffer.toString())
+        assertEquals(initial + crlfClip.replace("\r\n", "\n"), editor.buffer.toString())
     }
 
     @Test
