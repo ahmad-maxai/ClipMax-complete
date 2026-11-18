@@ -560,4 +560,93 @@ class InsertionHistoryManagerTest {
         assertTrue(redoRes.success)
         assertEquals("query: " + multiLineClip.replace('\n', ' '), hostBuffer.toString())
     }
+
+    @Test
+    fun testSearchFieldTruncationAndLargeTextPaste() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.google.android.youtube", 101, 1)
+        val hostBuffer = StringBuilder("search: ")
+        val largeText = "A".repeat(500) // 500 chars pasted
+        val truncatedAccepted = "A".repeat(100) // Search field caps at 100 chars
+
+        val searchGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String? {
+                val start = maxOf(0, hostBuffer.length - maxChars)
+                return hostBuffer.substring(start, hostBuffer.length)
+            }
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                // Search field truncates to max 100 chars
+                val applied = if (text.length > 100) text.take(100) else text
+                hostBuffer.append(applied)
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(searchGateway.commitText(largeText))
+        assertTrue(history.recordClipInsertion(target, largeText, "search: ", ""))
+        assertTrue(history.canSafelyUndo(searchGateway).allowed)
+
+        val undoRes = history.undo(searchGateway)
+        assertTrue(undoRes.success)
+        assertEquals("search: ", hostBuffer.toString())
+        assertTrue(history.canSafelyRedo(searchGateway).allowed)
+        assertTrue(history.redo(searchGateway).success)
+        assertEquals("search: " + truncatedAccepted, hostBuffer.toString())
+    }
+
+    @Test
+    fun testYoutubeLinkMarkdownWrappingInChatGPT() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 202, 1)
+        val hostBuffer = StringBuilder("Check this out: ")
+        val youtubeUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        val markdownFormatted = "[YouTube Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ)"
+
+        val chatGPTGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String? {
+                val start = maxOf(0, hostBuffer.length - maxChars)
+                return hostBuffer.substring(start, hostBuffer.length)
+            }
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                // ChatGPT auto-formats pasted URL into markdown link
+                if (text.contains("youtube.com")) {
+                    hostBuffer.append("[YouTube Video](").append(text).append(")")
+                } else {
+                    hostBuffer.append(text)
+                }
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(chatGPTGateway.commitText(youtubeUrl))
+        assertTrue(history.recordClipInsertion(target, youtubeUrl, "Check this out: ", ""))
+        assertTrue(history.canSafelyUndo(chatGPTGateway).allowed)
+
+        val undoRes = history.undo(chatGPTGateway)
+        assertTrue(undoRes.success)
+        assertEquals("Check this out: ", hostBuffer.toString())
+        assertTrue(history.canSafelyRedo(chatGPTGateway).allowed)
+        assertTrue(history.redo(chatGPTGateway).success)
+        assertEquals("Check this out: " + markdownFormatted, hostBuffer.toString())
+    }
 }

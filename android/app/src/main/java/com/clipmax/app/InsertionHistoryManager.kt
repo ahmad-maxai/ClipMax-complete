@@ -256,6 +256,14 @@ internal class InsertionHistoryManager(
             ) {
                 return singleLineInserted
             }
+            if (normBefore.isNotEmpty() && spaceNormInserted.startsWith(normBefore) &&
+                normBefore.length >= minOf(spaceNormInserted.length, 4)
+            ) {
+                val prefix = before.substring(0, (before.length - normBefore.length).coerceAtLeast(0))
+                if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                    return normBefore
+                }
+            }
         }
         return null
     }
@@ -557,6 +565,26 @@ internal class InsertionHistoryManager(
             }
 
             if (isUrl) {
+                val idx = before.lastIndexOf(candidate)
+                if (idx >= 0) {
+                    val afterUrl = before.substring(idx + candidate.length)
+                    if (afterUrl.all { it == ')' || it == ']' || it == ' ' || it == '\t' || it == '\n' || it == '\r' }) {
+                        val beforeUrl = before.substring(0, idx)
+                        val openBracketIdx = maxOf(beforeUrl.lastIndexOf('['), beforeUrl.lastIndexOf('('))
+                        if (openBracketIdx >= 0 && idx - openBracketIdx < 128) {
+                            val prefix = before.substring(0, openBracketIdx)
+                            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                                return before.takeLast(before.length - openBracketIdx)
+                            }
+                        } else {
+                            val prefix = before.substring(0, idx)
+                            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                                return before.takeLast(before.length - idx)
+                            }
+                        }
+                    }
+                }
+
                 val trimmedSlash = trimmed.trimEnd('/')
                 val slashCount = trimmed.length - trimmedSlash.length
                 if (slashCount in 1..2 && !candidate.endsWith('/')) {
