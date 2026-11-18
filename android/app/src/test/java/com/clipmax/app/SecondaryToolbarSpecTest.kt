@@ -24,6 +24,17 @@ class SecondaryToolbarSpecTest {
     }
 
     @Test
+    fun testToolbarIsIconOnlyWithoutLabelsOrPersistentActiveCard() {
+        assertTrue(SecondaryToolbarSpec.ICON_ONLY)
+        assertFalse(SecondaryToolbarSpec.SHOW_LABELS)
+        assertFalse(SecondaryToolbarSpec.PERSISTENT_ACTIVE_CARD)
+        assertTrue(SecondaryToolbarSpec.CENTER_ICON_SIZE_DP >= 19.5f)
+        assertTrue(SecondaryToolbarSpec.TOUCH_RIPPLE_SIZE_DP >= 32f)
+        assertTrue(SecondaryToolbarSpec.PRESS_SCALE in 0.80f..0.95f)
+        assertTrue(SecondaryToolbarSpec.PRESS_ALPHA in 0.50f..0.85f)
+    }
+
+    @Test
     fun testToolbarHeightMatchesCanonicalViewportWithoutExpansion() {
         assertEquals(38f, SecondaryToolbarSpec.TOOLBAR_HEIGHT_DP, 0.001f)
         assertEquals(KeyboardLayoutSpec.TOOLBAR_HEIGHT_DP, SecondaryToolbarSpec.TOOLBAR_HEIGHT_DP, 0.001f)
@@ -34,27 +45,28 @@ class SecondaryToolbarSpecTest {
     }
 
     @Test
-    fun testIconScaleAndLabelTypographyMatchReferenceProportions() {
-        assertFalse(SecondaryToolbarSpec.LABEL_BOLD)
-        assertTrue(SecondaryToolbarSpec.CENTER_ICON_SIZE_DP >= 17f)
-        assertTrue(SecondaryToolbarSpec.GLOBE_ICON_SIZE_DP >= 17.5f)
+    fun testEndButtonGeometryAndPalettesAcrossGraphiteAndClassic() {
         assertEquals(
             SecondaryToolbarSpec.END_BUTTON_SIZE_DP / 2f,
             SecondaryToolbarSpec.END_BUTTON_CORNER_DP,
             0.001f
         )
-    }
 
-    @Test
-    fun testDarkAndLightToolbarPalettesHaveCleanContrastAndMutedLabels() {
-        val dark = SecondaryToolbarSpec.resolvePalette(isNightMode = true)
-        assertEquals(0xFFFFFFFF.toInt(), dark.backCircleBg)
-        assertEquals(0xFF111111.toInt(), dark.backIconFg)
-        assertNotEquals(dark.centerIconFg, dark.centerLabelFg)
+        val graphite = SecondaryToolbarSpec.resolvePalette(isNightMode = true, isClassicTheme = false)
+        assertEquals(0xFF21252B.toInt(), graphite.toolbarBg)
+        assertEquals(0xFFFFFFFF.toInt(), graphite.backCircleBg)
+        assertEquals(0xFF111111.toInt(), graphite.backIconFg)
+        assertEquals(0xFFE1E3E6.toInt(), graphite.centerIconFg)
+        assertEquals(0xFF282C33.toInt(), graphite.globeCircleBg)
+        assertEquals(0x1AFFFFFF.toInt(), graphite.globeCircleBorder)
 
-        val light = SecondaryToolbarSpec.resolvePalette(isNightMode = false)
-        assertNotEquals(dark.backCircleBg, light.backCircleBg)
-        assertNotEquals(dark.globeCircleBg, light.globeCircleBg)
-        assertNotEquals(light.centerIconFg, light.centerLabelFg)
+        val classicDark = SecondaryToolbarSpec.resolvePalette(isNightMode = true, isClassicTheme = true)
+        assertEquals(0xFF151C18.toInt(), classicDark.toolbarBg)
+        assertNotEquals(graphite.toolbarBg, classicDark.toolbarBg)
+
+        val classicLight = SecondaryToolbarSpec.resolvePalette(isNightMode = false, isClassicTheme = true)
+        assertNotEquals(graphite.backCircleBg, classicLight.backCircleBg)
+        assertNotEquals(graphite.globeCircleBg, classicLight.globeCircleBg)
+        assertNotEquals(classicLight.centerIconFg, classicLight.toolbarBg)
     }
 }

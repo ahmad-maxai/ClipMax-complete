@@ -291,6 +291,27 @@ class KeyboardLayoutSpecTest {
         assertEquals(classicLight.colorAccent, classicLight.enterKeyBg)
         assertEquals(classicLight.colorAccentText, classicLight.enterKeyFg)
         assertNotEquals(classicLight.colorBg, classicDark.colorBg)
+        assertEquals(0xFFECEFF1.toInt(), classicLight.colorBg)
+        assertEquals(0xFF151C18.toInt(), classicDark.colorBg)
+    }
+
+    @Test
+    fun testHarmonizedNeutralDarkPaletteTiersAndMicroBorders() {
+        val graphite = KeyboardLayoutSpec.resolveThemePalette("graphite", systemNightMode = true)
+        assertEquals(0xFF121316.toInt(), graphite.colorBg)
+        assertEquals(0xFF181A1F.toInt(), graphite.colorAltDeepBg)
+        assertEquals(0xFF282C33.toInt(), graphite.colorKeyBg)
+        assertEquals(0xFF202328.toInt(), graphite.colorAltPrimaryBg)
+        assertEquals(0xFF1E2126.toInt(), graphite.colorModBg)
+        assertEquals(0xFF21252B.toInt(), graphite.colorToolbarBg)
+        assertEquals(0xFF21252B.toInt(), graphite.colorChipBg)
+        assertEquals(0xFFE1E3E6.toInt(), graphite.colorKeyText)
+        assertEquals(0xFFF0F2F5.toInt(), graphite.colorAltPrimaryText)
+
+        // Micro-borders must be subtle 8-12% white opacity in dark mode
+        val borderAlpha = (graphite.colorKeyBorder ushr 24) and 0xFF
+        assertTrue("Expected ~8-12% white micro-border, got alpha=$borderAlpha", borderAlpha in 20..32)
+        assertEquals(0x00FFFFFF, graphite.colorKeyBorder and 0x00FFFFFF)
     }
 
     @Test
