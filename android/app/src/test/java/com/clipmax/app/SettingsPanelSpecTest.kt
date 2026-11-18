@@ -34,12 +34,12 @@ class SettingsPanelSpecTest {
         val pillPalette = SettingsPanelSpec.resolvePillCardPalette(imePalette)
 
         assertFalse(pillPalette.isClassicTheme)
-        assertEquals(0xFF121316.toInt(), pillPalette.panelBg)
-        assertEquals(0xFF181A1F.toInt(), pillPalette.headerBg)
-        assertEquals(0xFF181A1F.toInt(), pillPalette.cardBg)
-        assertEquals(0xFF202328.toInt(), pillPalette.inactivePillBg)
-        assertEquals(0xFF282C33.toInt(), pillPalette.actionPillBg)
-        assertEquals(0xFFF0F2F5.toInt(), pillPalette.activePillFg)
+        assertEquals(0xFF202124.toInt(), pillPalette.panelBg)
+        assertEquals(0xFF303134.toInt(), pillPalette.headerBg)
+        assertEquals(0xFF303134.toInt(), pillPalette.cardBg)
+        assertEquals(0xFF3C4043.toInt(), pillPalette.inactivePillBg)
+        assertEquals(0xFF3C4043.toInt(), pillPalette.actionPillBg)
+        assertEquals(0xFFE8EAED.toInt(), pillPalette.activePillFg)
 
         val active = SettingsPanelSpec.resolvePillVisualState(selected = true, palette = pillPalette)
         val inactive = SettingsPanelSpec.resolvePillVisualState(selected = false, palette = pillPalette)

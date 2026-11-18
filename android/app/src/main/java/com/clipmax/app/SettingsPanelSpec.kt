@@ -141,23 +141,23 @@ internal object SettingsPanelSpec {
             else -> PillCardPalette(
                 isClassicTheme = false,
                 isNightMode = true,
-                panelBg = palette.colorBg,                   // #121316
-                headerBg = palette.colorAltDeepBg,           // #181A1F
-                dividerColor = palette.colorSnippetBorder,   // 8% white
-                cardBg = palette.colorAltDeepBg,             // #181A1F
-                cardBorder = palette.colorSnippetBorder,     // 8% white
-                sectionTitleFg = palette.colorAltPrimaryText,// #F0F2F5
-                itemLabelFg = palette.colorKeyText,          // #E1E3E6
-                subLabelFg = palette.colorModText,           // #9EA4AE
-                inactivePillBg = palette.colorAltPrimaryBg,  // #202328 matte charcoal
-                inactivePillBorder = palette.colorKeyBorder, // 10% white
-                inactivePillFg = palette.colorHintText,      // #8A909A muted grey
-                activePillBg = 0xFF323741.toInt(),           // lifted neutral charcoal highlight
+                panelBg = palette.colorBg,                   // #202124
+                headerBg = palette.colorAltDeepBg,           // #303134
+                dividerColor = palette.colorSnippetBorder,   // 12% white
+                cardBg = palette.colorAltDeepBg,             // #303134
+                cardBorder = palette.colorSnippetBorder,     // 12% white
+                sectionTitleFg = palette.colorAltPrimaryText,// #E8EAED
+                itemLabelFg = palette.colorKeyText,          // #E8EAED
+                subLabelFg = palette.colorModText,           // #E8EAED
+                inactivePillBg = palette.colorAltPrimaryBg,  // #3C4043
+                inactivePillBorder = palette.colorKeyBorder, // 12% white
+                inactivePillFg = palette.colorHintText,      // #9AA0A6
+                activePillBg = 0xFF484C52.toInt(),           // lifted neutral charcoal highlight
                 activePillBorder = 0x4DFFFFFF.toInt(),       // ~30% white border emphasis
-                activePillFg = palette.colorAltPrimaryText,  // #F0F2F5 crisp off-white
-                actionPillBg = palette.colorKeyBg,           // #282C33
+                activePillFg = palette.colorAltPrimaryText,  // #E8EAED
+                actionPillBg = palette.colorKeyBg,           // #3C4043
                 actionPillBorder = 0x24FFFFFF.toInt(),       // subtle crisp border
-                actionPillFg = palette.colorAltPrimaryText,  // #F0F2F5
+                actionPillFg = palette.colorAltPrimaryText,  // #E8EAED
                 pillRipple = 0x24FFFFFF.toInt()
             )
         }
