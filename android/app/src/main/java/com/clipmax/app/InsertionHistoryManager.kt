@@ -242,6 +242,12 @@ internal class InsertionHistoryManager(
             return trailingMatch
         }
 
+        // Host editor trailing delimiter / auto-spacing / link normalization fallback (e.g. ChatGPT, Slack, rich text):
+        val trailingMatch = resolveUndoTrailingDelimiterMatch(before, entry)
+        if (trailingMatch != null) {
+            return trailingMatch
+        }
+
         // Clamped host editor buffer handling for large texts (e.g. Chrome/WebView returning 64..2048 chars):
         // Verify that the exposed window matches the trailing portion of the inserted text.
         if (before.isNotEmpty()) {
