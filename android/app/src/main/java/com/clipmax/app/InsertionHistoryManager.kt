@@ -256,12 +256,20 @@ internal class InsertionHistoryManager(
             ) {
                 return singleLineInserted
             }
-            if (normBefore.isNotEmpty() && spaceNormInserted.startsWith(normBefore) &&
-                normBefore.length >= minOf(spaceNormInserted.length, 4)
+            val anchor = entry.beforeAnchor
+            val insertedPart = if (anchor.isNotEmpty() && normBefore.endsWith(anchor) && normBefore.length > anchor.length) {
+                normBefore.removeSuffix(anchor)
+            } else if (anchor.isNotEmpty() && normBefore.contains(anchor)) {
+                normBefore.substring(normBefore.lastIndexOf(anchor) + anchor.length)
+            } else {
+                normBefore
+            }
+            if (insertedPart.isNotEmpty() && spaceNormInserted.startsWith(insertedPart) &&
+                insertedPart.length >= minOf(spaceNormInserted.length, 4)
             ) {
-                val prefix = before.substring(0, (before.length - normBefore.length).coerceAtLeast(0))
-                if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
-                    return normBefore
+                val prefix = before.substring(0, (before.length - insertedPart.length).coerceAtLeast(0))
+                if (suffixMatchesAnchor(prefix, anchor)) {
+                    return insertedPart
                 }
             }
         }
@@ -329,7 +337,7 @@ internal class InsertionHistoryManager(
             return Availability(false, "Text is selected; cannot safely undo.")
         }
 
-        val requestLen = entry.insertedText.length + entry.beforeAnchor.length
+        val requestLen = entry.insertedText.length * 2 + entry.beforeAnchor.length + 64
         var before = gateway.textBeforeCursor(requestLen)
         if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
@@ -387,7 +395,7 @@ internal class InsertionHistoryManager(
             return OperationResult(false, check.reason ?: "Undo unavailable.")
         }
         val entry = undoStack.peekFirst() ?: return OperationResult(false, "Nothing to undo.")
-        val requestLen = entry.insertedText.length + entry.beforeAnchor.length
+        val requestLen = entry.insertedText.length * 2 + entry.beforeAnchor.length + 64
         var before = gateway.textBeforeCursor(requestLen)
         if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
