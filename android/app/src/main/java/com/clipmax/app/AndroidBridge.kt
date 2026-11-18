@@ -277,6 +277,9 @@ class AndroidBridge(
     @JavascriptInterface
     fun openImeSettings() {
         try {
+            if (!OnboardingStore.getReconciledState(context).completed) {
+                OnboardingStore.markAttemptedEnable(context)
+            }
             val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
@@ -288,6 +291,9 @@ class AndroidBridge(
     @JavascriptInterface
     fun showImePicker() {
         try {
+            if (!OnboardingStore.getReconciledState(context).completed) {
+                OnboardingStore.markAttemptedSelect(context)
+            }
             mainHandler.post {
                 val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.showInputMethodPicker()
@@ -397,6 +403,74 @@ class AndroidBridge(
         return try {
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun getOnboardingState(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.getReconciledState(context))
+        } catch (e: Throwable) {
+            """{"completed":true,"step":"COMPLETION","imeEnabled":false,"imeSelected":false,"attemptedEnable":false,"attemptedSelect":false}"""
+        }
+    }
+
+    @JavascriptInterface
+    fun advanceOnboardingFromIntro(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.advanceFromIntroduction(context))
+        } catch (e: Throwable) {
+            getOnboardingState()
+        }
+    }
+
+    @JavascriptInterface
+    fun returnOnboardingToIntro(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.returnToIntroduction(context))
+        } catch (e: Throwable) {
+            getOnboardingState()
+        }
+    }
+
+    @JavascriptInterface
+    fun completeOnboarding(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.markCompleted(context))
+        } catch (e: Throwable) {
+            """{"completed":true,"step":"COMPLETION","imeEnabled":false,"imeSelected":false,"attemptedEnable":false,"attemptedSelect":false}"""
+        }
+    }
+
+    @JavascriptInterface
+    fun isClipMaxImeEnabled(): Boolean {
+        return try {
+            OnboardingStore.isClipMaxImeEnabled(context)
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun isClipMaxImeSelected(): Boolean {
+        return try {
+            OnboardingStore.isClipMaxImeSelected(context)
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun areAnimationsReduced(): Boolean {
+        return try {
+            val scale = Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            scale == 0f
         } catch (e: Throwable) {
             false
         }

@@ -16,6 +16,16 @@ import { LibraryScreen } from "./components/LibraryScreen";
 import { DetailsScreen } from "./components/DetailsScreen";
 import { EditorScreen } from "./components/EditorScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { OnboardingIntroScreen } from "./components/OnboardingIntroScreen";
+import {
+  OnboardingState,
+  advanceOnboardingFromIntro,
+  completeOnboarding,
+  getOnboardingState,
+  isReducedMotionPreferred,
+  parseOnboardingStateJson,
+  returnOnboardingToIntro,
+} from "./lib/onboarding";
 
 function normalizeThemeMode(raw?: string | null): ThemeMode {
   const val = (raw ?? "").trim().toLowerCase();
@@ -50,7 +60,18 @@ function readSystemNight(): boolean {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>({ name: "library" });
+  const [onboardingState, setOnboardingState] = useState<OnboardingState>(() =>
+    getOnboardingState()
+  );
+  const [reducedMotion, setReducedMotion] = useState<boolean>(() =>
+    isReducedMotionPreferred()
+  );
+  const [screen, setScreen] = useState<Screen>(() => {
+    const initial = getOnboardingState();
+    return !initial.completed && initial.step !== "INTRODUCTION"
+      ? { name: "settings" }
+      : { name: "library" };
+  });
   const [items, setItems] = useState<ClipItem[]>(() => getStoredItems());
   const [retention, setRetention] = useState<Retention>(() => getStoredRetention());
   const [captureEnabled, setCaptureEnabled] = useState<boolean>(() =>
@@ -116,8 +137,16 @@ export default function App() {
     };
   }, []);
 
-  // Listen for native Android events (resume refresh, edit intent from IME)
+  // Listen for native Android events (resume refresh, IME onboarding verification, edit intent from IME)
   useEffect(() => {
+    const syncOnboardingState = (next: OnboardingState) => {
+      setOnboardingState(next);
+      setReducedMotion(isReducedMotionPreferred());
+      if (!next.completed && next.step !== "INTRODUCTION") {
+        setScreen((prev) => (prev.name === "settings" ? prev : { name: "settings" }));
+      }
+    };
+
     const handleRefresh = () => {
       setItems(getStoredItems());
       setSystemDark(readSystemNight());
@@ -129,6 +158,13 @@ export default function App() {
           }
         } catch {}
       }
+      syncOnboardingState(getOnboardingState());
+    };
+
+    const handleImeStatusChanged = (e: Event) => {
+      const detail = (e as CustomEvent<unknown>).detail;
+      const next = detail ? parseOnboardingStateJson(detail) : getOnboardingState();
+      syncOnboardingState(next);
     };
 
     const handleNav = (e: Event) => {
@@ -143,9 +179,11 @@ export default function App() {
     };
 
     window.addEventListener("clipmax:refresh", handleRefresh);
+    window.addEventListener("clipmax:imeStatusChanged", handleImeStatusChanged);
     window.addEventListener("clipmax:nav", handleNav);
     return () => {
       window.removeEventListener("clipmax:refresh", handleRefresh);
+      window.removeEventListener("clipmax:imeStatusChanged", handleImeStatusChanged);
       window.removeEventListener("clipmax:nav", handleNav);
     };
   }, []);
@@ -160,7 +198,33 @@ export default function App() {
     setThemeMode(effectiveDark ? "light" : "dark");
   };
 
+  const handleNextFromIntro = () => {
+    const next = advanceOnboardingFromIntro();
+    setOnboardingState(next);
+    setScreen({ name: "settings" });
+  };
+
+  const handleFinishOrSkipOnboarding = () => {
+    const done = completeOnboarding();
+    setOnboardingState(done);
+    setScreen({ name: "library" });
+  };
+
+  const handleBackFromSettingsOnboarding = () => {
+    setOnboardingState(returnOnboardingToIntro());
+  };
+
   const renderScreen = () => {
+    if (!onboardingState.completed && onboardingState.step === "INTRODUCTION") {
+      return (
+        <OnboardingIntroScreen
+          reducedMotion={reducedMotion}
+          onNext={handleNextFromIntro}
+          onSkip={handleFinishOrSkipOnboarding}
+        />
+      );
+    }
+
     switch (screen.name) {
       case "library":
         return (
@@ -203,6 +267,11 @@ export default function App() {
             systemDark={systemDark}
             onChangeThemeMode={setThemeMode}
             nav={setScreen}
+            onboardingState={onboardingState}
+            reducedMotion={reducedMotion}
+            onSkipOnboarding={handleFinishOrSkipOnboarding}
+            onCompleteOnboarding={handleFinishOrSkipOnboarding}
+            onOnboardingBack={handleBackFromSettingsOnboarding}
           />
         );
       default:

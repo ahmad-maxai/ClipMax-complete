@@ -37,6 +37,8 @@ import { createZipBackup, restoreZipBackup, downloadFile } from "../lib/backup";
 import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
 import { isNativeAndroid } from "../lib/nativeBridge";
+import { OnboardingState } from "../lib/onboarding";
+import { KeyboardOnboardingGuide } from "./KeyboardOnboardingGuide";
 
 interface SettingsScreenProps {
   items: ClipItem[];
@@ -49,6 +51,11 @@ interface SettingsScreenProps {
   systemDark: boolean;
   onChangeThemeMode: (mode: ThemeMode) => void;
   nav: Nav;
+  onboardingState?: OnboardingState | null;
+  reducedMotion?: boolean;
+  onSkipOnboarding?: () => void;
+  onCompleteOnboarding?: () => void;
+  onOnboardingBack?: () => void;
 }
 
 export function SettingsScreen({
@@ -62,6 +69,11 @@ export function SettingsScreen({
   systemDark,
   onChangeThemeMode,
   nav,
+  onboardingState,
+  reducedMotion = false,
+  onSkipOnboarding,
+  onCompleteOnboarding,
+  onOnboardingBack,
 }: SettingsScreenProps) {
   const { toast, success, error } = useToast();
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
@@ -136,6 +148,13 @@ export function SettingsScreen({
   const zipInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollPosRef = useRef<number>(0);
+  const keyboardSectionRef = useRef<HTMLDivElement>(null);
+  const enableImeBtnRef = useRef<HTMLDivElement>(null);
+  const selectImeBtnRef = useRef<HTMLDivElement>(null);
+  const isOnboardingActive =
+    Boolean(onboardingState) &&
+    !onboardingState?.completed &&
+    onboardingState?.step !== "INTRODUCTION";
 
   const preserveScroll = (action: () => void) => {
     if (scrollRef.current) scrollPosRef.current = scrollRef.current.scrollTop;
@@ -279,7 +298,16 @@ export function SettingsScreen({
 
       <TopBar
         left={
-          <IconBtn label="Back" onClick={() => nav({ name: "library" })}>
+          <IconBtn
+            label="Back"
+            onClick={() => {
+              if (isOnboardingActive && onOnboardingBack) {
+                onOnboardingBack();
+              } else {
+                nav({ name: "library" });
+              }
+            }}
+          >
             <ArrowLeft className="h-5 w-5" />
           </IconBtn>
         }
@@ -364,43 +392,49 @@ export function SettingsScreen({
         </Section>
 
         {/* Native Android System Keyboard Setup */}
-        <Section title="Android System Keyboard">
-          <div className="p-4 bg-surface-2 border-b border-border flex items-start gap-2.5">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-mint text-primary-foreground dark:text-background shadow-2xs">
-              <Keyboard className="h-4.5 w-4.5" />
-            </span>
-            <div className="min-w-0">
-              <span className="text-xs font-bold text-foreground block">
-                ClipMax Native System Keyboard
+        <div ref={keyboardSectionRef}>
+          <Section title="Android System Keyboard">
+            <div className="p-4 bg-surface-2 border-b border-border flex items-start gap-2.5">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-mint text-primary-foreground dark:text-background shadow-2xs">
+                <Keyboard className="h-4.5 w-4.5" />
               </span>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                Enable ClipMax in Android System Settings and select it in the Input Method Picker to insert saved clips directly inside Chrome, YouTube, messaging apps, and any other Android field.
-              </p>
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-foreground block">
+                  ClipMax Native System Keyboard
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  Enable ClipMax in Android System Settings and select it in the Input Method Picker to insert saved clips directly inside Chrome, YouTube, messaging apps, and any other Android field.
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <Btn
-              size="sm"
-              variant="outline"
-              className="w-full justify-start text-xs font-bold gap-2 h-9.5"
-              onClick={handleOpenAndroidSettings}
-            >
-              <Sliders className="h-4 w-4 shrink-0 text-mint" />
-              <span className="truncate">1. Manage System Keyboards</span>
-            </Btn>
+            <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div ref={enableImeBtnRef} className="w-full">
+                <Btn
+                  size="sm"
+                  variant="outline"
+                  className="w-full justify-start text-xs font-bold gap-2 h-9.5"
+                  onClick={handleOpenAndroidSettings}
+                >
+                  <Sliders className="h-4 w-4 shrink-0 text-mint" />
+                  <span className="truncate">1. Manage System Keyboards</span>
+                </Btn>
+              </div>
 
-            <Btn
-              size="sm"
-              variant="mint"
-              className="w-full justify-start text-xs font-bold gap-2 h-9.5"
-              onClick={handleOpenImePicker}
-            >
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span className="truncate">2. Switch Active Input Method</span>
-            </Btn>
-          </div>
-        </Section>
+              <div ref={selectImeBtnRef} className="w-full">
+                <Btn
+                  size="sm"
+                  variant="mint"
+                  className="w-full justify-start text-xs font-bold gap-2 h-9.5"
+                  onClick={handleOpenImePicker}
+                >
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  <span className="truncate">2. Switch Active Input Method</span>
+                </Btn>
+              </div>
+            </div>
+          </Section>
+        </div>
 
         {/* Capture & Retention */}
         <Section title="Automatic Capture & Retention">
@@ -649,6 +683,18 @@ export function SettingsScreen({
         onClose={() => setConfirmDeleteAll(false)}
       />
 
+      {isOnboardingActive && onboardingState && (
+        <KeyboardOnboardingGuide
+          state={onboardingState}
+          scrollContainerRef={scrollRef}
+          sectionRef={keyboardSectionRef}
+          enableBtnRef={enableImeBtnRef}
+          selectBtnRef={selectImeBtnRef}
+          reducedMotion={reducedMotion}
+          onSkip={() => onSkipOnboarding?.()}
+          onComplete={() => onCompleteOnboarding?.()}
+        />
+      )}
     </div>
   );
 }

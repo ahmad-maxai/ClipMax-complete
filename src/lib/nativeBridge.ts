@@ -24,6 +24,13 @@ export interface ClipMaxNativeBridge {
   setTheme(theme: string): void;
   getTheme(): string;
   isSystemNightMode(): boolean;
+  getOnboardingState?(): string;
+  advanceOnboardingFromIntro?(): string;
+  returnOnboardingToIntro?(): string;
+  completeOnboarding?(): string;
+  isClipMaxImeEnabled?(): boolean;
+  isClipMaxImeSelected?(): boolean;
+  areAnimationsReduced?(): boolean;
 }
 
 declare global {

@@ -40,6 +40,9 @@ class MainActivity : Activity() {
     private var activityDestroyed = false
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val onboardingRecheckRunnable = Runnable {
+        dispatchImeOnboardingState()
+    }
     private val storeChangeListener: () -> Unit = {
         mainHandler.post {
             if (!activityDestroyed && isPageLoaded && ::webView.isInitialized) {
@@ -129,6 +132,7 @@ class MainActivity : Activity() {
                     pendingNavId = null
                 }
                 webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
+                dispatchImeOnboardingState()
             }
         }
 
@@ -256,12 +260,16 @@ class MainActivity : Activity() {
         if (isPageLoaded) {
             // Inform the React UI that native state may have been updated (e.g. by IME service)
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
+            dispatchImeOnboardingState()
+            scheduleOnboardingRecheckIfNeeded()
         }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            dispatchImeOnboardingState()
+            scheduleOnboardingRecheckIfNeeded()
             ClipboardCaptureCoordinator.captureCurrentClipboard(
                 context = this,
                 source = CaptureSource.CLIPBOARD_POLL
@@ -271,6 +279,25 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun scheduleOnboardingRecheckIfNeeded() {
+        val state = runCatching { OnboardingStore.getReconciledState(this) }.getOrNull() ?: return
+        if (!state.completed) {
+            mainHandler.removeCallbacks(onboardingRecheckRunnable)
+            mainHandler.postDelayed(onboardingRecheckRunnable, 200L)
+        }
+    }
+
+    private fun dispatchImeOnboardingState() {
+        if (activityDestroyed || !isPageLoaded || !::webView.isInitialized) return
+        val json = runCatching {
+            OnboardingStore.toJson(OnboardingStore.getReconciledState(this))
+        }.getOrNull() ?: return
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('clipmax:imeStatusChanged', { detail: $json }))",
+            null
+        )
     }
 
     private fun handleEditIntent(intent: Intent?) {
@@ -304,6 +331,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         activityDestroyed = true
+        mainHandler.removeCallbacks(onboardingRecheckRunnable)
         ClipStore.removeChangeListener(storeChangeListener)
         if (::webView.isInitialized) {
             webView.destroy()
