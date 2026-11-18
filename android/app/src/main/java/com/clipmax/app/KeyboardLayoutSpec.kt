@@ -281,7 +281,7 @@ internal object KeyboardLayoutSpec {
                            else 0xFFE1E3E6.toInt(),
             colorModBg = if (isClassic && !isNight) 0xFFDFE5E1.toInt()
                          else if (isClassic) 0xFF1A2520.toInt()
-                         else 0xFF1E2126.toInt(),
+                         else 0xFF202328.toInt(),
             colorModText = if (isClassic && !isNight) 0xFF374151.toInt()
                            else if (isClassic) 0xFF9CB3A9.toInt()
                            else 0xFF9EA4AE.toInt(),

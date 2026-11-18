@@ -192,10 +192,19 @@ class ClipMaxImeService : InputMethodService() {
     private var toolbarStateBView: View? = null
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
     private var isEmojiPickerOpen = false
-    private var selectedEmojiCategoryIdx = 0
+    private var selectedEmojiCategoryIdx = -1
+    private var emojiPickerRoot: FrameLayout? = null
+    private var emojiRemoveOverlay: View? = null
     private var emojiScrollView: android.widget.ScrollView? = null
     private var emojiGridContainer: LinearLayout? = null
     private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
+    private val emojiPreferences: SharedPreferences by lazy {
+        getSharedPreferences(EmojiInterfaceSpec.PREF_FILE, Context.MODE_PRIVATE)
+    }
+    private val recentEmojiHistory: EmojiInterfaceSpec.RecentEmojiHistory by lazy {
+        val raw = runCatching { emojiPreferences.getString(EmojiInterfaceSpec.PREF_RECENT_EMOJIS, null) }.getOrNull()
+        EmojiInterfaceSpec.RecentEmojiHistory(EmojiInterfaceSpec.RecentEmojiHistory.decode(raw))
+    }
     private var isMergeMode = false
     private var mergeSourceId: String? = null
     private data class OperationSnapshot(
@@ -485,6 +494,8 @@ class ClipMaxImeService : InputMethodService() {
         pasteUndoCapsuleIcon = null
         pasteUndoCapsuleText = null
         settingsScrollView = null
+        emojiRemoveOverlay = null
+        emojiPickerRoot = null
         emojiScrollView = null
         emojiGridContainer = null
         emojiTabViews.clear()
@@ -714,12 +725,13 @@ class ClipMaxImeService : InputMethodService() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         isBaselineAligned = false
-        setPadding(dp(6), dp(3), dp(6), dp(3))
+        val vPad = dp(OverlayUiSpec.TOOLBAR_VERTICAL_PADDING_DP).toInt()
+        setPadding(dp(6), vPad, dp(6), vPad)
         setBackgroundColor(colorToolbarBg)
 
         // 1. Far-left Clipboard icon button (switches back from Suggestions to Clipboard Pills, or opens Clipboard Panel)
         val clipIconBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorChipBg, dp(14f), colorChipBorder)
+            background = roundedRipple(colorChipBg, dp(17f), colorChipBorder)
             contentDescription = "Clipboard history"
             val iv = createIconView(IconDrawable(IconType.CLIPBOARD, colorKeyText, 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -743,7 +755,7 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
-        addView(clipIconBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+        addView(clipIconBtn, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
             rightMargin = dp(6)
         })
 
@@ -793,15 +805,15 @@ class ClipMaxImeService : InputMethodService() {
 
         // 3. Circular navigation arrow button at far right (White circle with dark right chevron)
         val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(0xFFFFFFFF.toInt(), dp(16f), 0)
+            background = roundedRipple(0xFFFFFFFF.toInt(), dp(17f), 0)
             contentDescription = "More actions"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, 0xFF111111.toInt(), 14f))
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, 0xFF111111.toInt(), 14.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 switchToolbarState(1)
             }
         }
-        addView(rightArrowBtn, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+        addView(rightArrowBtn, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
             leftMargin = dp(6)
             rightMargin = dp(2)
         })
@@ -1811,7 +1823,7 @@ class ClipMaxImeService : InputMethodService() {
         // Left: prominent circular back arrow | Center: Clipboard title | Right: ON/OFF capture toggle
         val subHeader = FrameLayout(this@ClipMaxImeService).apply {
             setPadding(dp(10), dp(3), dp(10), dp(3))
-            setBackgroundColor(colorAltDeepBg)
+            setBackgroundColor(if (isClassicTheme) colorAltDeepBg else colorChipBg)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ClipboardPanelSpec.HEADER_HEIGHT_DP).toInt())
 
             val backBtn = FrameLayout(this@ClipMaxImeService).apply {
@@ -2405,53 +2417,73 @@ class ClipMaxImeService : InputMethodService() {
         )
         host.addView(spotlightViewport)
 
-        // Layer 3: Compact side-mounted contextual action panel (Pin/Unpin, Edit, Delete, Merge, Split)
-        val panelWidth = minOf(dp(142), (surfaceW * 0.44f).toInt()).coerceAtLeast(dp(112))
-        val rowHeight = when {
-            surfaceH < dp(220) -> dp(26)
-            surfaceH < dp(260) -> dp(29)
-            else -> dp(32)
-        }
-        val iconSize = when {
-            surfaceH < dp(220) -> 11f
-            surfaceH < dp(260) -> 12.5f
-            else -> 14f
-        }
-        val panelBg = roundedDrawable(colorKeyBg, dp(10f), colorKeyBorder)
+        // Layer 3: Comfortable side-mounted contextual action panel (Pin/Unpin, Edit, Delete, Merge, Split)
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val surfaceWDp = surfaceW / density
+        val surfaceHDp = surfaceH / density
+        val panelWidth = dp(OverlayUiSpec.resolveContextMenuPanelWidthDp(surfaceWDp)).toInt()
+        val rowHeight = dp(OverlayUiSpec.CONTEXT_MENU_TARGET_ROW_HEIGHT_DP).toInt()
+        val maxMenuHeightPx = dp(OverlayUiSpec.resolveContextMenuMaxHeightDp(surfaceHDp)).toInt()
+        val iconSize = OverlayUiSpec.CONTEXT_MENU_ICON_SIZE_DP
+        val menuSurfaceBg = OverlayUiSpec.resolveContextMenuBg(currentThemePalette)
+        val panelCornerPx = dp(OverlayUiSpec.CONTEXT_MENU_CORNER_DP)
+        val panelBg = roundedDrawable(menuSurfaceBg, panelCornerPx, colorKeyBorder)
 
-        val panel = LinearLayout(this).apply {
+        val panelRows = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = panelBg
-            isClickable = true
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                elevation = dp(12f)
-            }
-            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setPadding(0, dp(OverlayUiSpec.CONTEXT_MENU_PADDING_V_DP).toInt(), 0, dp(OverlayUiSpec.CONTEXT_MENU_PADDING_V_DP).toInt())
 
+            var rowCount = 0
             fun addActionRow(
                 label: String,
                 iconType: IconType,
                 tint: Int,
                 onClick: () -> Unit
             ) {
-                val btn = Button(this@ClipMaxImeService).apply {
-                    text = label
+                if (rowCount > 0) {
+                    val div = View(this@ClipMaxImeService).apply {
+                        setBackgroundColor(colorSnippetBorder)
+                    }
+                    addView(div, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+                        leftMargin = dp(12)
+                        rightMargin = dp(12)
+                    })
+                }
+                rowCount++
+
+                val rowView = LinearLayout(this@ClipMaxImeService).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    isClickable = true
+                    isFocusable = true
                     contentDescription = label
-                    isAllCaps = false
-                    textSize = if (surfaceH < dp(235)) 11.5f else 12f
-                    typeface = Typeface.DEFAULT_BOLD
-                    minHeight = 0
-                    minimumHeight = 0
-                    minWidth = 0
-                    minimumWidth = 0
-                    setTextColor(tint)
-                    gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                    setPadding(dp(10), 0, dp(12), 0)
-                    background = roundedRipple(colorKeyBg, dp(7f), 0)
-                    setIcon(IconDrawable(iconType, tint, iconSize), 8f)
+                    setPadding(
+                        dp(OverlayUiSpec.CONTEXT_MENU_PADDING_H_DP).toInt(),
+                        0,
+                        dp(OverlayUiSpec.CONTEXT_MENU_PADDING_H_DP).toInt(),
+                        0
+                    )
+                    background = roundedRipple(0, dp(8f), 0)
+
+                    val iv = createIconView(IconDrawable(iconType, tint, iconSize))
+                    addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        rightMargin = dp(OverlayUiSpec.CONTEXT_MENU_ICON_GAP_DP).toInt()
+                    })
+
+                    val tv = TextView(this@ClipMaxImeService).apply {
+                        text = label
+                        textSize = OverlayUiSpec.CONTEXT_MENU_TEXT_SP
+                        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                        setTextColor(tint)
+                        setSingleLine(true)
+                        ellipsize = TextUtils.TruncateAt.END
+                        includeFontPadding = false
+                    }
+                    addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
                     setOnClickListener { onClick() }
                 }
-                addView(btn, LinearLayout.LayoutParams(panelWidth - dp(8), rowHeight))
+                addView(rowView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowHeight))
             }
 
             val latestItem = store.getItem(targetId) ?: item
@@ -2530,11 +2562,22 @@ class ClipMaxImeService : InputMethodService() {
             }
         }
 
+        val panel = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            background = panelBg
+            isClickable = true
+            clipToOutline = true
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(10f)
+            }
+            addView(panelRows, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
         panel.measure(
             View.MeasureSpec.makeMeasureSpec(panelWidth, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(surfaceH, View.MeasureSpec.AT_MOST)
+            View.MeasureSpec.makeMeasureSpec(maxMenuHeightPx, View.MeasureSpec.AT_MOST)
         )
-        val panelHeight = panel.measuredHeight.coerceAtLeast(rowHeight * 5 + dp(8))
+        val panelHeight = panel.measuredHeight.coerceAtMost(maxMenuHeightPx)
 
         // Mount on right side beside left-column cards, or left side beside right-column cards
         val cardOnLeft = (cardLeftClamped + cardW / 2) < (surfaceW / 2)
@@ -2550,7 +2593,7 @@ class ClipMaxImeService : InputMethodService() {
 
         host.addView(
             panel,
-            FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            FrameLayout.LayoutParams(panelWidth, panelHeight).apply {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = leftPos
                 topMargin = topPos
@@ -2617,18 +2660,19 @@ class ClipMaxImeService : InputMethodService() {
         )
         val isSource = isMergeMode && item.id == mergeSourceId
         val isTargetCandidate = isMergeMode && item.id != mergeSourceId
+        val cardSurfaceBg = if (isClassicTheme) colorKeyBg else colorChipBg
 
         background = when {
-            isSpotlight -> roundedDrawable(colorKeyBg, radiusPx, colorAccent)
+            isSpotlight -> roundedDrawable(cardSurfaceBg, radiusPx, colorAccent)
             isSource -> roundedDrawable(if (isNightMode) 0x332DD4BF else 0x330D9488, radiusPx, colorAccent)
-            isTargetCandidate -> roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
-            else -> roundedRipple(colorKeyBg, radiusPx, colorKeyBorder)
+            isTargetCandidate -> roundedRipple(cardSurfaceBg, radiusPx, colorKeyBorder)
+            else -> roundedRipple(cardSurfaceBg, radiusPx, colorKeyBorder)
         }
 
         // Row 1: Strictly ONLY the dynamic bottom-up positional serial number ("#1", "#2", ...)
         val serialTv = TextView(this@ClipMaxImeService).apply {
             text = serialLabel
-            textSize = 11f
+            textSize = 11.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorModText)
             setSingleLine(true)
@@ -2640,18 +2684,18 @@ class ClipMaxImeService : InputMethodService() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = dp(4)
+                bottomMargin = dp(5)
             }
         )
 
-        // Row 2: Direct beginning of the original clipboard content (unified surface, no nested box/metadata)
+        // Row 2: Direct beginning of the original clipboard content (unified surface, readable medium weight)
         val contentTv = TextView(this@ClipMaxImeService).apply {
             text = previewContent
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT
+            textSize = 13.5f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(colorKeyText)
-            setLineSpacing(dp(1.5f), 1f)
-            maxLines = 3
+            setLineSpacing(dp(2f), 1f)
+            maxLines = 4
             ellipsize = TextUtils.TruncateAt.END
         }
         addView(
@@ -2804,9 +2848,10 @@ class ClipMaxImeService : InputMethodService() {
 
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(12), 0, dp(12), 0)
-        background = roundedRipple(colorChipBg, dp(14f), colorChipBorder)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29)).apply {
+        val chipPadH = dp(OverlayUiSpec.CLIP_CHIP_PADDING_H_DP).toInt()
+        setPadding(chipPadH, 0, chipPadH, 0)
+        background = roundedRipple(colorChipBg, dp(OverlayUiSpec.CLIP_CHIP_CORNER_DP), colorChipBorder)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(OverlayUiSpec.CLIP_CHIP_HEIGHT_DP).toInt()).apply {
             rightMargin = dp(6)
         }
 
@@ -2832,7 +2877,9 @@ class ClipMaxImeService : InputMethodService() {
 
         val title = TextView(this@ClipMaxImeService).apply {
             text = previewText
-            textSize = 12f
+            textSize = OverlayUiSpec.CLIP_CHIP_TEXT_SP
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
             setTextColor(colorKeyText)
             minWidth = dp(56)
             maxWidth = adaptiveMaxW
@@ -3336,57 +3383,185 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row4)
     }
 
-    // 4E. NATIVE OFFLINE EMOJI PICKER (Fits Task 1 fixed viewport)
-    private fun iconTypeForEmojiCategory(id: EmojiCatalog.CategoryId): IconType = when (id) {
-        EmojiCatalog.CategoryId.SMILEYS -> IconType.EMOJI
-        EmojiCatalog.CategoryId.PEOPLE -> IconType.EMOJI_PEOPLE
-        EmojiCatalog.CategoryId.NATURE -> IconType.EMOJI_NATURE
-        EmojiCatalog.CategoryId.FOOD -> IconType.EMOJI_FOOD
-        EmojiCatalog.CategoryId.ACTIVITIES -> IconType.EMOJI_ACTIVITIES
-        EmojiCatalog.CategoryId.TRAVEL -> IconType.EMOJI_TRAVEL
-        EmojiCatalog.CategoryId.OBJECTS -> IconType.EMOJI_OBJECTS
-        EmojiCatalog.CategoryId.SYMBOLS -> IconType.EMOJI_SYMBOLS
+    // 4E. NATIVE OFFLINE EMOJI PICKER (Fits fixed viewport, Recent history + 7-col grid + spaced nav)
+    private fun iconTypeForEmojiTab(tabIdx: Int): IconType {
+        if (tabIdx == 0) return IconType.EMOJI_RECENT
+        val cat = EmojiCatalog.CATEGORIES[(tabIdx - 1).coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)]
+        return when (cat.id) {
+            EmojiCatalog.CategoryId.SMILEYS -> IconType.EMOJI
+            EmojiCatalog.CategoryId.PEOPLE -> IconType.EMOJI_PEOPLE
+            EmojiCatalog.CategoryId.NATURE -> IconType.EMOJI_NATURE
+            EmojiCatalog.CategoryId.FOOD -> IconType.EMOJI_FOOD
+            EmojiCatalog.CategoryId.ACTIVITIES -> IconType.EMOJI_ACTIVITIES
+            EmojiCatalog.CategoryId.TRAVEL -> IconType.EMOJI_TRAVEL
+            EmojiCatalog.CategoryId.OBJECTS -> IconType.EMOJI_OBJECTS
+            EmojiCatalog.CategoryId.SYMBOLS -> IconType.EMOJI_SYMBOLS
+        }
     }
 
-    private fun buildEmojiPickerPanel(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
+    private fun labelForEmojiTab(tabIdx: Int): String {
+        if (tabIdx == 0) return "Recent"
+        return EmojiCatalog.CATEGORIES[(tabIdx - 1).coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)].label
+    }
+
+    private fun resolveActiveEmojiTabIndex(): Int {
+        if (selectedEmojiCategoryIdx in 0..EmojiCatalog.CATEGORIES.size) {
+            return selectedEmojiCategoryIdx
+        }
+        selectedEmojiCategoryIdx = if (recentEmojiHistory.items().isNotEmpty()) 0 else 1
+        return selectedEmojiCategoryIdx
+    }
+
+    private fun persistRecentEmojis() {
+        emojiPreferences.edit()
+            .putString(EmojiInterfaceSpec.PREF_RECENT_EMOJIS, recentEmojiHistory.encode())
+            .apply()
+    }
+
+    private fun dismissEmojiRemoveOverlay() {
+        val root = emojiPickerRoot
+        val overlay = emojiRemoveOverlay
+        emojiRemoveOverlay = null
+        if (root != null && overlay != null) {
+            root.removeView(overlay)
+        }
+    }
+
+    private fun showRecentEmojiRemoveOverlay(emoji: String) {
+        val root = emojiPickerRoot ?: return
+        dismissEmojiRemoveOverlay()
+
+        val overlayHost = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            setBackgroundColor(0x66000000.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setOnClickListener { dismissEmojiRemoveOverlay() }
+        }
+
+        val cardBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedDrawable(cardBg, dp(14f), colorKeyBorder)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(8f)
+            }
+
+            val previewTv = TextView(this@ClipMaxImeService).apply {
+                text = emoji
+                textSize = 22f
+                setPadding(0, 0, dp(10), 0)
+            }
+            addView(previewTv)
+
+            val removeBtn = TextView(this@ClipMaxImeService).apply {
+                text = "Remove from recents"
+                textSize = 13.5f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(colorDangerText)
+                isClickable = true
+                isFocusable = true
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = roundedRipple(0, dp(8f), 0)
+                setIcon(IconDrawable(IconType.DELETE, colorDangerText, 15f), 8f)
+                setOnClickListener {
+                    if (recentEmojiHistory.remove(emoji)) {
+                        persistRecentEmojis()
+                    }
+                    dismissEmojiRemoveOverlay()
+                    populateEmojiGrid()
+                }
+            }
+            addView(removeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val cancelBtn = TextView(this@ClipMaxImeService).apply {
+                text = "Cancel"
+                textSize = 12.5f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(colorModText)
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(10), dp(8), dp(8), dp(8))
+                background = roundedRipple(0, dp(8f), 0)
+                setOnClickListener { dismissEmojiRemoveOverlay() }
+            }
+            addView(cancelBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = dp(6)
+            })
+        }
+
+        overlayHost.addView(
+            card,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        )
+        emojiRemoveOverlay = overlayHost
+        root.addView(overlayHost)
+    }
+
+    private fun buildEmojiPickerPanel(): View = FrameLayout(this).apply {
+        emojiPickerRoot = this
         setBackgroundColor(colorBg)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
 
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val headerH = if (isLandscape) dp(30) else dp(34)
+        val column = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
 
-        // Category & Navigation Bar (ABC | Category Icons | Backspace)
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val headerH = dp(
+            if (isLandscape) EmojiInterfaceSpec.NAV_HEADER_HEIGHT_LANDSCAPE_DP
+            else EmojiInterfaceSpec.NAV_HEADER_HEIGHT_PORTRAIT_DP
+        ).toInt()
+        val navCtrlH = (headerH - dp(8)).coerceAtLeast(dp(28))
+        val navHeaderBg = if (isClassicTheme) colorAltDeepBg else colorChipBg
+
+        // Category & Navigation Bar (ABC | Spaced Category Icons | Backspace)
         val header = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6), dp(2), dp(6), dp(2))
-            setBackgroundColor(colorAltDeepBg)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setBackgroundColor(navHeaderBg)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headerH)
         }
 
-        val abcBtn = Button(this@ClipMaxImeService).apply {
+        val abcBtn = TextView(this@ClipMaxImeService).apply {
             text = "ABC"
-            isAllCaps = false
-            textSize = 11f
+            textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(10), 0, dp(10), 0)
-            setTextColor(colorModText)
-            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            isClickable = true
+            isFocusable = true
+            minWidth = dp(48)
+            setPadding(dp(12), 0, dp(12), 0)
+            setTextColor(colorKeyText)
+            background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
             contentDescription = "Return to keyboard"
             setOnClickListener {
                 dismissPasteUndoCapsule()
+                dismissEmojiRemoveOverlay()
                 isEmojiPickerOpen = false
                 modeController.toAlpha()
                 renderFullImeView()
             }
         }
-        header.addView(abcBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (headerH - dp(6)).coerceAtLeast(dp(22))).apply {
-            rightMargin = dp(6)
+        header.addView(abcBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
+            rightMargin = dp(8)
         })
 
         val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
@@ -3398,46 +3573,55 @@ class ClipMaxImeService : InputMethodService() {
             gravity = Gravity.CENTER_VERTICAL
         }
         emojiTabViews.clear()
-        val tabSize = (headerH - dp(6)).coerceAtLeast(dp(24))
-        EmojiCatalog.CATEGORIES.forEachIndexed { index, category ->
+        val tabW = dp(EmojiInterfaceSpec.TAB_WIDTH_DP).toInt()
+        val tabGap = dp(EmojiInterfaceSpec.TAB_GAP_DP).toInt()
+        val totalTabs = 1 + EmojiCatalog.CATEGORIES.size
+        for (tabIdx in 0 until totalTabs) {
             val tab = FrameLayout(this@ClipMaxImeService).apply {
-                contentDescription = category.label
-                val iv = createIconView(IconDrawable(iconTypeForEmojiCategory(category.id), colorModText, 14f))
+                contentDescription = labelForEmojiTab(tabIdx)
+                isClickable = true
+                isFocusable = true
+                val iv = createIconView(
+                    IconDrawable(iconTypeForEmojiTab(tabIdx), colorModText, EmojiInterfaceSpec.TAB_ICON_SIZE_DP)
+                )
                 tag = iv
                 addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                 setOnClickListener {
-                    selectedEmojiCategoryIdx = index
+                    dismissEmojiRemoveOverlay()
+                    selectedEmojiCategoryIdx = tabIdx
                     updateEmojiCategoryTabsUI()
                     populateEmojiGrid()
                     emojiScrollView?.scrollTo(0, 0)
                 }
             }
-            emojiTabViews.add(index to tab)
-            tabsRow.addView(tab, LinearLayout.LayoutParams(dp(34), tabSize).apply {
-                rightMargin = dp(3)
+            emojiTabViews.add(tabIdx to tab)
+            tabsRow.addView(tab, LinearLayout.LayoutParams(tabW, navCtrlH).apply {
+                if (tabIdx < totalTabs - 1) rightMargin = tabGap
             })
         }
         tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         header.addView(tabsScroll)
 
         val backspaceBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
             contentDescription = "Delete"
-            val iv = createIconView(IconDrawable(IconType.BACKSPACE, colorModText, 15f))
+            isClickable = true
+            isFocusable = true
+            val iv = createIconView(IconDrawable(IconType.BACKSPACE, colorKeyText, EmojiInterfaceSpec.BACKSPACE_ICON_SIZE_DP))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setupBackspaceRepeat(this)
         }
-        header.addView(backspaceBtn, LinearLayout.LayoutParams(dp(36), (headerH - dp(6)).coerceAtLeast(dp(22))).apply {
-            leftMargin = dp(6)
+        header.addView(backspaceBtn, LinearLayout.LayoutParams(dp(EmojiInterfaceSpec.BACKSPACE_WIDTH_DP).toInt(), navCtrlH).apply {
+            leftMargin = dp(8)
         })
 
-        addView(header)
+        column.addView(header)
 
         val divider = View(this@ClipMaxImeService).apply {
             setBackgroundColor(colorKeyBorder)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
         }
-        addView(divider)
+        column.addView(divider)
 
         val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
             isVerticalScrollBarEnabled = true
@@ -3447,45 +3631,67 @@ class ClipMaxImeService : InputMethodService() {
 
         val grid = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), dp(4), dp(4), dp(6))
+            setPadding(dp(6), dp(6), dp(6), dp(8))
         }
         emojiGridContainer = grid
         scroll.addView(grid, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        addView(scroll)
+        column.addView(scroll)
+
+        addView(column)
 
         updateEmojiCategoryTabsUI()
         populateEmojiGrid()
     }
 
     private fun updateEmojiCategoryTabsUI() {
-        val activeIdx = selectedEmojiCategoryIdx.coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)
-        for ((idx, tab) in emojiTabViews) {
-            val active = (idx == activeIdx)
+        val activeIdx = resolveActiveEmojiTabIndex()
+        for ((tabIdx, tab) in emojiTabViews) {
+            val active = (tabIdx == activeIdx)
             val bg = if (active) colorActiveTabBg else 0
             val fg = if (active) colorActiveTabText else colorModText
-            val stroke = if (active) colorAccent else 0
-            tab.background = roundedRipple(bg, dp(7f), stroke)
+            val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
+            tab.background = roundedRipple(bg, dp(9f), stroke)
             val iv = tab.tag as? ImageView
-            val cat = EmojiCatalog.CATEGORIES[idx]
-            iv?.setImageDrawable(IconDrawable(iconTypeForEmojiCategory(cat.id), fg, 14f))
+            iv?.setImageDrawable(IconDrawable(iconTypeForEmojiTab(tabIdx), fg, EmojiInterfaceSpec.TAB_ICON_SIZE_DP))
         }
     }
 
     private fun populateEmojiGrid() {
         val grid = emojiGridContainer ?: return
         grid.removeAllViews()
-        val catIdx = selectedEmojiCategoryIdx.coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)
-        val emojis = EmojiCatalog.CATEGORIES[catIdx].emojis
+        val tabIdx = resolveActiveEmojiTabIndex()
+        val isRecentTab = (tabIdx == 0)
+        val emojis = if (isRecentTab) {
+            recentEmojiHistory.items()
+        } else {
+            EmojiCatalog.CATEGORIES[(tabIdx - 1).coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)].emojis
+        }
+
+        if (isRecentTab && emojis.isEmpty()) {
+            grid.addView(TextView(this).apply {
+                text = "No recent emojis yet.\nTap any emoji to keep it here."
+                textSize = 12.5f
+                setTextColor(colorHintText)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(36), dp(16), dp(24))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return
+        }
+
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val cols = if (isLandscape) 10 else 8
-        val cellH = if (isLandscape) dp(34) else dp(40)
+        val cols = if (isLandscape) EmojiInterfaceSpec.LANDSCAPE_COLUMNS else EmojiInterfaceSpec.PORTRAIT_COLUMNS
+        val cellH = dp(
+            if (isLandscape) EmojiInterfaceSpec.CELL_HEIGHT_LANDSCAPE_DP
+            else EmojiInterfaceSpec.CELL_HEIGHT_PORTRAIT_DP
+        ).toInt()
+        val rowGap = dp(EmojiInterfaceSpec.CELL_ROW_GAP_DP).toInt()
 
         var i = 0
         while (i < emojis.size) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
-                    bottomMargin = dp(2)
+                    bottomMargin = rowGap
                 }
             }
             for (c in 0 until cols) {
@@ -3494,12 +3700,22 @@ class ClipMaxImeService : InputMethodService() {
                     val emoji = emojis[idx]
                     val cell = TextView(this).apply {
                         text = emoji
-                        textSize = 21f
+                        textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
                         gravity = Gravity.CENTER
-                        background = roundedRipple(0x00000000, dp(8f), 0)
+                        includeFontPadding = false
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(0x00000000, dp(10f), 0)
                         setOnClickListener {
                             performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            handleEmojiPress(emoji)
+                            handleEmojiPress(emoji, fromRecentTab = isRecentTab)
+                        }
+                        if (isRecentTab) {
+                            setOnLongClickListener {
+                                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                showRecentEmojiRemoveOverlay(emoji)
+                                true
+                            }
                         }
                     }
                     row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -3512,8 +3728,9 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    private fun handleEmojiPress(emoji: String) {
+    private fun handleEmojiPress(emoji: String, fromRecentTab: Boolean = false) {
         dismissPasteUndoCapsule()
+        dismissEmojiRemoveOverlay()
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             keyboardSearchQuery += emoji
@@ -3526,6 +3743,11 @@ class ClipMaxImeService : InputMethodService() {
             clearTypingSuggestionsView()
             conn.commitText(emoji, 1)
             updateInsertionHistoryButtons()
+        }
+        recentEmojiHistory.record(emoji)
+        persistRecentEmojis()
+        if (fromRecentTab && resolveActiveEmojiTabIndex() == 0) {
+            populateEmojiGrid()
         }
     }
 
@@ -4013,7 +4235,7 @@ class ClipMaxImeService : InputMethodService() {
         shiftStateMachine.onNonLetterInput()
         if (isFilterMode) {
             if (keyboardSearchQuery.isNotEmpty()) {
-                keyboardSearchQuery = keyboardSearchQuery.dropLast(1)
+                keyboardSearchQuery = EmojiInterfaceSpec.dropLastGrapheme(keyboardSearchQuery)
                 updateSearchUI()
                 runKeyboardSearch()
             }
@@ -4038,9 +4260,14 @@ class ClipMaxImeService : InputMethodService() {
             lastRevertOriginalWord = null
             val selected = runCatching { conn.getSelectedText(0) }.getOrNull()
             val predictedAfterDelete = if (selected.isNullOrEmpty()) {
-                val preDelete = runCatching { conn.getTextBeforeCursor(50, 0)?.toString() }.getOrNull()
-                conn.deleteSurroundingText(1, 0)
-                preDelete?.dropLast(1)
+                val preDelete = runCatching { conn.getTextBeforeCursor(64, 0)?.toString() }.getOrNull()
+                val deleteCount = if (!preDelete.isNullOrEmpty()) {
+                    EmojiInterfaceSpec.lastGraphemeUtf16Length(preDelete)
+                } else {
+                    1
+                }
+                conn.deleteSurroundingText(deleteCount, 0)
+                preDelete?.dropLast(deleteCount)
             } else {
                 conn.commitText("", 1)
                 null
@@ -5304,38 +5531,35 @@ class ClipMaxImeService : InputMethodService() {
     ): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(11), 0, dp(11), 0)
-        val bgCol = when {
-            isHighlight -> colorActiveTabBg
-            else -> colorChipBg
-        }
-        val strokeCol = when {
-            isHighlight -> colorAccent
-            else -> colorChipBorder
-        }
-        val fgCol = when {
-            isHighlight -> colorActiveTabText
-            isRevert -> colorModText
-            else -> colorKeyText
-        }
-        background = roundedRipple(bgCol, dp(14f), strokeCol)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29)).apply {
+        val hPad = dp(OverlayUiSpec.SUGGESTION_PILL_PADDING_H_DP).toInt()
+        setPadding(hPad, 0, hPad, 0)
+        val style = OverlayUiSpec.resolveSuggestionPillStyle(
+            palette = currentThemePalette,
+            isPrimary = isHighlight,
+            isRevert = isRevert
+        )
+        background = roundedRipple(style.bgColor, dp(OverlayUiSpec.SUGGESTION_PILL_CORNER_DP), style.borderColor)
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            dp(OverlayUiSpec.SUGGESTION_PILL_HEIGHT_DP).toInt()
+        ).apply {
             rightMargin = dp(6)
         }
 
         if (isRevert) {
-            val undoIv = createIconView(IconDrawable(IconType.UNDO, fgCol, 11f)).apply {
-                setPadding(0, 0, dp(4), 0)
+            val undoIv = createIconView(IconDrawable(IconType.UNDO, style.textColor, 12.5f)).apply {
+                setPadding(0, 0, dp(5), 0)
             }
             addView(undoIv)
         }
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = label
-            textSize = 12f
-            typeface = if (isHighlight) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            setTextColor(fgCol)
-            maxWidth = dp(170)
+            textSize = OverlayUiSpec.SUGGESTION_PILL_TEXT_SP
+            typeface = if (isHighlight) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(style.textColor)
+            includeFontPadding = false
+            maxWidth = dp(OverlayUiSpec.SUGGESTION_PILL_MAX_WIDTH_DP).toInt()
             setSingleLine(true)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
@@ -5542,7 +5766,7 @@ class ClipMaxImeService : InputMethodService() {
         CLIPBOARD, PIN, PIN_FILLED, KEYBOARD, IME_SWITCH, SEARCH, INSERT, EDIT, DELETE,
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_LEFT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         SEND, GO, NEXT, DONE, SPACE,
-        EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
+        EMOJI_RECENT, EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -5886,6 +6110,15 @@ class ClipMaxImeService : InputMethodService() {
                         lineTo(13.4f, 8.2f)
                     }
                     canvas.drawPath(p, strokePaint)
+                }
+                IconType.EMOJI_RECENT -> {
+                    canvas.drawCircle(8f, 8f, 5.8f, strokePaint)
+                    val hands = Path().apply {
+                        moveTo(8f, 4.7f)
+                        lineTo(8f, 8.2f)
+                        lineTo(10.5f, 9.7f)
+                    }
+                    canvas.drawPath(hands, strokePaint)
                 }
                 IconType.EMOJI -> {
                     canvas.drawCircle(8f, 8f, 5.8f, strokePaint)

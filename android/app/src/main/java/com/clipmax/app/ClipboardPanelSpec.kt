@@ -9,8 +9,8 @@ internal object ClipboardPanelSpec {
     const val BASE_CARD_SPACING_DP = 6f
     const val CARD_SPACING_DP = BASE_CARD_SPACING_DP * 1.5f // 9dp (1.5x previous 6dp spacing)
     const val CARD_CORNER_RADIUS_DP = 10f
-    const val CARD_PADDING_HORIZONTAL_DP = 10f
-    const val CARD_PADDING_VERTICAL_DP = 8f
+    const val CARD_PADDING_HORIZONTAL_DP = 12f
+    const val CARD_PADDING_VERTICAL_DP = 10f
     const val CARD_MIN_HEIGHT_PORTRAIT_DP = 76f // ~13% taller than previous ~67dp nested cards
     const val CARD_MIN_HEIGHT_LANDSCAPE_DP = 68f
     const val HEADER_HEIGHT_DP = 38f

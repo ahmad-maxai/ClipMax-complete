@@ -302,7 +302,7 @@ class KeyboardLayoutSpecTest {
         assertEquals(0xFF181A1F.toInt(), graphite.colorAltDeepBg)
         assertEquals(0xFF282C33.toInt(), graphite.colorKeyBg)
         assertEquals(0xFF202328.toInt(), graphite.colorAltPrimaryBg)
-        assertEquals(0xFF1E2126.toInt(), graphite.colorModBg)
+        assertEquals(0xFF202328.toInt(), graphite.colorModBg)
         assertEquals(0xFF21252B.toInt(), graphite.colorToolbarBg)
         assertEquals(0xFF21252B.toInt(), graphite.colorChipBg)
         assertEquals(0xFFE1E3E6.toInt(), graphite.colorKeyText)
