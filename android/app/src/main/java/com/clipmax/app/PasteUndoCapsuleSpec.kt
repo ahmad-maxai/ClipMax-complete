@@ -87,6 +87,8 @@ internal object PasteUndoCapsuleSpec {
             private set
         var isRedoMode: Boolean = false
             private set
+        var isPendingConfirmation: Boolean = false
+            private set
         var lastActionElapsedMs: Long = 0L
             private set
         var activeGraceMs: Long = SELF_UPDATE_GRACE_MS
@@ -102,6 +104,7 @@ internal object PasteUndoCapsuleSpec {
             val (act, redo) = onPasteSuccess()
             isActive = act
             isRedoMode = redo
+            isPendingConfirmation = false
             lastActionElapsedMs = nowMs
             activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
         }
@@ -110,18 +113,68 @@ internal object PasteUndoCapsuleSpec {
             dismiss()
         }
 
+        fun onUndoPendingConfirmation(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
+            isActive = true
+            isRedoMode = false
+            isPendingConfirmation = true
+            lastActionElapsedMs = nowMs
+            activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
+        }
+
+        fun onUndoConfirmed(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
+            isPendingConfirmation = false
+            onUndoSucceeded(nowMs = nowMs, isLargeOperation = isLargeOperation)
+        }
+
+        fun onUndoConfirmationRejected(preserveUndoForRetry: Boolean = true, nowMs: Long = 0L) {
+            isPendingConfirmation = false
+            if (preserveUndoForRetry) {
+                isActive = true
+                isRedoMode = false
+                lastActionElapsedMs = nowMs
+            } else {
+                dismiss()
+            }
+        }
+
         fun onUndoSucceeded(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
             val (act, redo) = onUndoSuccess()
             isActive = act
             isRedoMode = redo
+            isPendingConfirmation = false
             lastActionElapsedMs = nowMs
             activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
+        }
+
+        fun onRedoPendingConfirmation(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
+            isActive = true
+            isRedoMode = true
+            isPendingConfirmation = true
+            lastActionElapsedMs = nowMs
+            activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
+        }
+
+        fun onRedoConfirmed(canUndoRemaining: Boolean, nowMs: Long = 0L, isLargeOperation: Boolean = false) {
+            isPendingConfirmation = false
+            onRedoSucceeded(canUndoRemaining = canUndoRemaining, nowMs = nowMs, isLargeOperation = isLargeOperation)
+        }
+
+        fun onRedoConfirmationRejected(preserveRedoForRetry: Boolean = true, nowMs: Long = 0L) {
+            isPendingConfirmation = false
+            if (preserveRedoForRetry) {
+                isActive = true
+                isRedoMode = true
+                lastActionElapsedMs = nowMs
+            } else {
+                dismiss()
+            }
         }
 
         fun onRedoSucceeded(canUndoRemaining: Boolean, nowMs: Long = 0L, isLargeOperation: Boolean = false) {
             val (act, redo) = onRedoSuccess(canUndoRemaining)
             isActive = act
             isRedoMode = redo
+            isPendingConfirmation = false
             lastActionElapsedMs = nowMs
             activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
         }
@@ -134,6 +187,9 @@ internal object PasteUndoCapsuleSpec {
             canRedoNow: Boolean
         ): Boolean {
             if (!isActive) return false
+            if (isPendingConfirmation && (nowMs - lastActionElapsedMs <= activeGraceMs)) {
+                return false
+            }
             if (hasSelection) {
                 dismiss()
                 return true
@@ -158,6 +214,7 @@ internal object PasteUndoCapsuleSpec {
             val (act, redo) = onUnrelatedAction()
             isActive = act
             isRedoMode = redo
+            isPendingConfirmation = false
             activeGraceMs = SELF_UPDATE_GRACE_MS
         }
     }

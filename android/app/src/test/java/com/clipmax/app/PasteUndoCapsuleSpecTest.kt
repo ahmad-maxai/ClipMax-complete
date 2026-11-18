@@ -357,4 +357,63 @@ class PasteUndoCapsuleSpecTest {
         assertTrue(dismissedAfterGrace)
         assertFalse(controller.isActive)
     }
+
+    @Test
+    fun testPendingConfirmationNeverTransitionsToRedoUntilConfirmedAndPreservesRetryOnRejection() {
+        val controller = PasteUndoCapsuleSpec.PasteUndoCapsuleController()
+        controller.onPasteSucceeded(nowMs = 1_000L)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+        assertFalse(controller.isPendingConfirmation)
+
+        // While waiting on host editor async undo mutation, capsule stays on Undo (NEVER Redo)
+        controller.onUndoPendingConfirmation(nowMs = 1_100L)
+        assertTrue(controller.isActive)
+        assertTrue(controller.isPendingConfirmation)
+        assertFalse(controller.isRedoMode)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+        assertEquals("Undo", controller.currentConfig.label)
+
+        // Transient selection update during confirmation grace does NOT dismiss the capsule
+        val dismissedDuringPending = controller.onEditorSelectionChanged(
+            nowMs = 1_250L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = false,
+            canRedoNow = false
+        )
+        assertFalse(dismissedDuringPending)
+        assertTrue(controller.isActive)
+
+        // If editor fails to confirm undo, capsule preserves Undo for safe retry (no false Redo!)
+        controller.onUndoConfirmationRejected(preserveUndoForRetry = true, nowMs = 1_600L)
+        assertTrue(controller.isActive)
+        assertFalse(controller.isPendingConfirmation)
+        assertFalse(controller.isRedoMode)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+
+        // Retrying and confirming mutation transitions cleanly to Redo
+        controller.onUndoPendingConfirmation(nowMs = 2_000L)
+        controller.onUndoConfirmed(nowMs = 2_050L)
+        assertTrue(controller.isActive)
+        assertFalse(controller.isPendingConfirmation)
+        assertTrue(controller.isRedoMode)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.REDO_AVAILABLE, controller.currentState)
+        assertEquals("Redo", controller.currentConfig.label)
+
+        // Symmetric Redo pending -> rejection preserves Redo -> confirmation returns to Undo
+        controller.onRedoPendingConfirmation(nowMs = 2_500L)
+        assertTrue(controller.isActive)
+        assertTrue(controller.isPendingConfirmation)
+        assertTrue(controller.isRedoMode)
+        controller.onRedoConfirmationRejected(preserveRedoForRetry = true, nowMs = 3_000L)
+        assertTrue(controller.isActive)
+        assertFalse(controller.isPendingConfirmation)
+        assertTrue(controller.isRedoMode)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.REDO_AVAILABLE, controller.currentState)
+
+        controller.onRedoConfirmed(canUndoRemaining = true, nowMs = 3_100L)
+        assertTrue(controller.isActive)
+        assertFalse(controller.isRedoMode)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+    }
 }

@@ -649,4 +649,244 @@ class InsertionHistoryManagerTest {
         assertTrue(history.redo(chatGPTGateway).success)
         assertEquals("Check this out: " + markdownFormatted, hostBuffer.toString())
     }
+
+    @Test
+    fun testChromeUrlBarElisionAndCompactSearchNewlineStripping() {
+        val history = InsertionHistoryManager()
+        val chromeTarget = InsertionHistoryManager.EditorTarget("com.android.chrome", 301, 0x11)
+        val urlBuffer = StringBuilder()
+
+        val chromeUrlBar = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = chromeTarget
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String = urlBuffer.takeLast(maxChars).toString()
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > urlBuffer.length) return false
+                urlBuffer.delete(urlBuffer.length - length, urlBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                // Chrome UrlBar elides https://www. and lowercases host
+                val elided = text.trim()
+                    .removePrefix("https://www.")
+                    .removePrefix("http://www.")
+                    .removePrefix("https://")
+                    .removePrefix("http://")
+                urlBuffer.append(elided)
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        val fullUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        assertTrue(chromeUrlBar.commitText(fullUrl))
+        assertEquals("youtube.com/watch?v=dQw4w9WgXcQ", urlBuffer.toString())
+        assertTrue(history.recordClipInsertion(chromeTarget, fullUrl, "", ""))
+        assertTrue(history.canSafelyUndo(chromeUrlBar).allowed)
+
+        assertTrue(history.undo(chromeUrlBar).success)
+        assertEquals("", urlBuffer.toString())
+        assertTrue(history.canSafelyRedo(chromeUrlBar).allowed)
+        assertTrue(history.redo(chromeUrlBar).success)
+        assertEquals("youtube.com/watch?v=dQw4w9WgXcQ", urlBuffer.toString())
+
+        // Compact single-line search bar that strips newlines completely and trims edges
+        val ytTarget = InsertionHistoryManager.EditorTarget("com.google.android.youtube", 302, 1)
+        val searchBuffer = StringBuilder()
+        val compactSearch = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = ytTarget
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String = searchBuffer.takeLast(maxChars).toString()
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > searchBuffer.length) return false
+                searchBuffer.delete(searchBuffer.length - length, searchBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                searchBuffer.append(text.replace("\r\n", "").replace("\n", "").trim())
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        val pastedMulti = "  clipmax demo\nsearch query  \n"
+        assertTrue(compactSearch.commitText(pastedMulti))
+        assertEquals("clipmax demosearch query", searchBuffer.toString())
+        assertTrue(history.recordClipInsertion(ytTarget, pastedMulti, "", ""))
+        assertTrue(history.canSafelyUndo(compactSearch).allowed)
+        assertTrue(history.undo(compactSearch).success)
+        assertEquals("", searchBuffer.toString())
+    }
+
+    @Test
+    fun testEmptySearchFieldTruncatedUniformPasteVsMovedCursor() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.google.android.youtube", 401, 1)
+        val hostBuffer = StringBuilder()
+        val largeUniform = "A".repeat(500)
+
+        val cappedEmptySearch = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String = hostBuffer.takeLast(maxChars).toString()
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                hostBuffer.append(text.take(100))
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(cappedEmptySearch.commitText(largeUniform))
+        assertTrue(history.recordClipInsertion(target, largeUniform, "", ""))
+        // Must delete exact 100 accepted chars, NOT 500
+        assertTrue(history.canSafelyUndo(cappedEmptySearch).allowed)
+        assertTrue(history.undo(cappedEmptySearch).success)
+        assertEquals("", hostBuffer.toString())
+
+        // If the full 500 chars ARE present and cursor moved back to offset 100 (after = 400 chars), must REFUSE undo
+        val movedCursorEditor = FakeHostEditorGateway(initialText = "", target = target)
+        movedCursorEditor.commitText(largeUniform)
+        val h2 = InsertionHistoryManager()
+        h2.recordClipInsertion(target, largeUniform, "", "")
+        movedCursorEditor.cursor = 100
+        assertFalse(h2.canSafelyUndo(movedCursorEditor).allowed)
+        assertFalse(h2.undo(movedCursorEditor).success)
+    }
+
+    @Test
+    fun testEmbeddedYoutubeLinkMarkdownWrappingAndInvisibleCharsInChatGPT() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 501, 0x20001)
+        val docPrefix = "Summary: "
+        val hostBuffer = StringBuilder(docPrefix)
+
+        // Case 1: Mixed text containing an embedded YouTube link that ChatGPT wraps in Markdown + zero-width space
+        val mixedClip = "Watch https://youtu.be/dQw4w9WgXcQ?si=sharetag right now"
+        val chatGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String = hostBuffer.takeLast(maxChars).toString()
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                val rendered = text.replace(
+                    "https://youtu.be/dQw4w9WgXcQ?si=sharetag",
+                    "\u200B[Rick Astley Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ)\u200B"
+                )
+                hostBuffer.append(rendered)
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(chatGateway.commitText(mixedClip))
+        assertTrue(history.recordClipInsertion(target, mixedClip, docPrefix, ""))
+        assertTrue(history.canSafelyUndo(chatGateway).allowed)
+
+        val undoRes = history.undo(chatGateway)
+        assertTrue(undoRes.success)
+        assertEquals(docPrefix, hostBuffer.toString())
+
+        assertTrue(history.canSafelyRedo(chatGateway).allowed)
+        assertTrue(history.redo(chatGateway).success)
+        assertTrue(hostBuffer.toString().contains("[Rick Astley Video]"))
+    }
+
+    @Test
+    fun testConfirmUndoAndRedoMutationPreventsFalseEmptyAnchorConfirmation() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.openai.chatgpt", 601, 1)
+        val fixedUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        val buffer = StringBuilder(fixedUrl)
+
+        // Editor returns true to deleteBeforeCursor without mutating yet (empty beforeAnchor!)
+        val delayedGateway = object : InsertionHistoryManager.HostEditorGateway {
+            var actuallyMutated = false
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int) = buffer.takeLast(maxChars).toString()
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int) = true
+            override fun commitText(text: String) = true
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(history.recordClipInsertion(target, fixedUrl, "", ""))
+        val preBefore = delayedGateway.textBeforeCursor(512)
+        val undoRes = history.undo(delayedGateway)
+        assertTrue(undoRes.success)
+        val entry = undoRes.entry!!
+
+        // Since buffer did NOT change (still contains fixedUrl), confirmation MUST reject even though beforeAnchor == ""
+        assertFalse(
+            history.confirmUndoMutation(
+                entry = entry,
+                preBefore = preBefore,
+                postBefore = delayedGateway.textBeforeCursor(512),
+                postAfter = "",
+                gateway = delayedGateway
+            )
+        )
+
+        // Rollback preserves undo for safe retry and clears Redo
+        assertTrue(history.rollbackLastUndo(entry))
+        assertFalse(history.hasAnyRedoEntries())
+        assertTrue(history.hasAnyUndoEntries())
+
+        // Retry once editor actually applies deletion
+        val preRedoCheck = delayedGateway.textBeforeCursor(512)
+        val retryUndo = history.undo(delayedGateway)
+        assertTrue(retryUndo.success)
+        buffer.clear()
+        assertTrue(
+            history.confirmUndoMutation(
+                entry = retryUndo.entry!!,
+                preBefore = preRedoCheck,
+                postBefore = delayedGateway.textBeforeCursor(512),
+                postAfter = "",
+                gateway = delayedGateway
+            )
+        )
+
+        // Confirm Redo stays unconfirmed while buffer is still empty, then confirms when restored
+        val preRedoBefore = delayedGateway.textBeforeCursor(512)
+        val redoRes = history.redo(delayedGateway)
+        assertTrue(redoRes.success)
+        assertFalse(
+            history.confirmRedoMutation(
+                entry = redoRes.entry!!,
+                preBefore = preRedoBefore,
+                postBefore = delayedGateway.textBeforeCursor(512),
+                postAfter = "",
+                gateway = delayedGateway
+            )
+        )
+        buffer.append(fixedUrl)
+        assertTrue(
+            history.confirmRedoMutation(
+                entry = redoRes.entry!!,
+                preBefore = preRedoBefore,
+                postBefore = delayedGateway.textBeforeCursor(512),
+                postAfter = "",
+                gateway = delayedGateway
+            )
+        )
+    }
 }

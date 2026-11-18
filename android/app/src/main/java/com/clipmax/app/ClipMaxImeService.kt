@@ -80,7 +80,9 @@ class ClipMaxImeService : InputMethodService() {
     private var editorSessionId = 0L
     private var lastEditorPackage: String? = null
     private var lastEditorFieldId: Int = 0
+    private var lastNonZeroEditorFieldId: Int = 0
     private var lastEditorInputType: Int = 0
+    private var lastNonZeroEditorInputClass: Int = 0
     private var pasteHistoryVerifyToken = 0
     private var pasteRestartVerifyToken = 0
     private var isInserting = false
@@ -1155,7 +1157,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(tv, tvLp)
 
             setOnClickListener {
-                if (!pasteCapsuleController.isActive) return@setOnClickListener
+                if (!pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) return@setOnClickListener
                 if (pasteCapsuleController.isRedoMode) {
                     performInsertionRedo()
                 } else {
@@ -4689,7 +4691,7 @@ class ClipMaxImeService : InputMethodService() {
                         ) {
                             pasteHistoryVerifyToken++
                             val recorded = insertionHistory.recordClipInsertion(
-                                target = startTarget,
+                                target = currentEditorTarget,
                                 insertedText = insertedText,
                                 beforeAnchor = beforeAnchor,
                                 afterAnchor = afterAnchor
@@ -4831,15 +4833,17 @@ class ClipMaxImeService : InputMethodService() {
         val pkgChanged = attribute.packageName != lastEditorPackage
         val prevInputClass = lastEditorInputType and InputFieldPolicy.TYPE_MASK_CLASS
         val nextInputClass = attribute.inputType and InputFieldPolicy.TYPE_MASK_CLASS
+        val effectivePrevFieldId = if (lastEditorFieldId != 0) lastEditorFieldId else lastNonZeroEditorFieldId
+        val effectivePrevInputClass = if (prevInputClass != 0) prevInputClass else lastNonZeroEditorInputClass
         val sameHostNonPassword = !pkgChanged && lastEditorPackage != null && !isPasswordTarget
         val fieldChanged = when {
-            attribute.fieldId == lastEditorFieldId -> false
-            sameHostNonPassword && (attribute.fieldId == 0 || lastEditorFieldId == 0) -> false
-            else -> (attribute.fieldId != 0 && lastEditorFieldId != 0 && attribute.fieldId != lastEditorFieldId)
+            attribute.fieldId == effectivePrevFieldId -> false
+            sameHostNonPassword && (attribute.fieldId == 0 || effectivePrevFieldId == 0) -> false
+            else -> (attribute.fieldId != 0 && effectivePrevFieldId != 0 && attribute.fieldId != effectivePrevFieldId)
         }
         val inputClassChanged = lastEditorPackage != null &&
-            nextInputClass != prevInputClass &&
-            !(sameHostNonPassword && (nextInputClass == 0 || prevInputClass == 0))
+            nextInputClass != effectivePrevInputClass &&
+            !(sameHostNonPassword && (nextInputClass == 0 || effectivePrevInputClass == 0))
         val hardFieldChanged = pkgChanged || fieldChanged || inputClassChanged || isPasswordTarget
 
         val nowMs = SystemClock.elapsedRealtime()
@@ -4890,7 +4894,7 @@ class ClipMaxImeService : InputMethodService() {
                 if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
                     return@postDelayed
                 }
-                if (isInserting || !pasteCapsuleController.isActive) return@postDelayed
+                if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) return@postDelayed
                 val g = buildEditorGateway()
                 val stillValid = g != null && (
                     if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g).allowed
@@ -4901,7 +4905,7 @@ class ClipMaxImeService : InputMethodService() {
                         if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
                             return@postDelayed
                         }
-                        if (isInserting || !pasteCapsuleController.isActive) return@postDelayed
+                        if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) return@postDelayed
                         val g2 = buildEditorGateway()
                         val validLate = g2 != null && (
                             if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g2).allowed
@@ -4917,6 +4921,13 @@ class ClipMaxImeService : InputMethodService() {
         }
         lastEditorPackage = attribute.packageName
         lastEditorFieldId = attribute.fieldId
+        if (pkgChanged || hardFieldChanged) {
+            lastNonZeroEditorFieldId = attribute.fieldId
+            lastNonZeroEditorInputClass = nextInputClass
+        } else {
+            if (attribute.fieldId != 0) lastNonZeroEditorFieldId = attribute.fieldId
+            if (nextInputClass != 0) lastNonZeroEditorInputClass = nextInputClass
+        }
         lastEditorInputType = attribute.inputType
         pasteHistoryVerifyToken++
         currentEditorTarget = InsertionHistoryManager.EditorTarget(
@@ -5220,7 +5231,7 @@ class ClipMaxImeService : InputMethodService() {
                     // Android S+ getSurroundingText throws IllegalArgumentException if fetchLen > 2048
                     val fetchLen = minOf(maxChars, 2048)
                     val surrounding = runCatching { ic.getSurroundingText(fetchLen, 0, 0) }.getOrNull()
-                    if (surrounding != null) {
+                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
                         val selStart = surrounding.selectionStart.coerceIn(0, surrounding.text.length)
                         val fromSurrounding = surrounding.text.subSequence(0, selStart).toString()
                         if (direct == null || fromSurrounding.length > direct.length) {
@@ -5260,7 +5271,7 @@ class ClipMaxImeService : InputMethodService() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val fetchLen = minOf(maxChars, 2048)
                     val surrounding = runCatching { ic.getSurroundingText(0, fetchLen, 0) }.getOrNull()
-                    if (surrounding != null) {
+                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
                         val selEnd = surrounding.selectionEnd.coerceIn(0, surrounding.text.length)
                         val fromSurrounding = surrounding.text.subSequence(selEnd, surrounding.text.length).toString()
                         if (direct == null || fromSurrounding.length > direct.length) {
@@ -5296,6 +5307,7 @@ class ClipMaxImeService : InputMethodService() {
                         maxStep = when {
                             maxStep > 1024 -> 1024
                             maxStep > 256 -> 256
+                            maxStep > 64 -> 64
                             else -> return false
                         }
                         continue
@@ -5340,20 +5352,8 @@ class ClipMaxImeService : InputMethodService() {
         updatePasteUndoCapsuleUI()
     }
 
-    private fun performInsertionUndo() {
-        val gateway = buildEditorGateway()
-        if (gateway == null) {
-            setStatus("Undo unavailable: no active input field.")
-            dismissPasteUndoCapsule()
-            return
-        }
-        val verifyToken = ++pasteHistoryVerifyToken
-        val pendingEntry = insertionHistory.peekUndo()
-        val checkLen = minOf(2048, maxOf(128, pendingEntry?.insertedText?.length ?: 128))
-        val preBefore = gateway.textBeforeCursor(checkLen)
-        val result = insertionHistory.undo(gateway)
-        val entry = result.entry
-        if (result.success && entry?.kind == InsertionHistoryManager.ActionKind.AUTOCORRECT) {
+    private fun applyConfirmedUndoSideEffects(entry: InsertionHistoryManager.HistoryEntry, message: String) {
+        if (entry.kind == InsertionHistoryManager.ActionKind.AUTOCORRECT) {
             if (fieldCapabilities.allowSessionLearning) {
                 suppressedAutocorrectWords.add(entry.rawOriginalWord.lowercase(Locale.ROOT))
             }
@@ -5363,36 +5363,84 @@ class ClipMaxImeService : InputMethodService() {
             clearTypingSuggestionsView()
         }
         shiftStateMachine.onNonLetterInput()
-        setStatus(result.message)
+        syncAutoCapitalization(preserveManualShift = false)
+        setStatus(message)
+    }
+
+    private fun performInsertionUndo() {
+        val gateway = buildEditorGateway()
+        if (gateway == null) {
+            setStatus("Undo waiting for active input field.")
+            if (!insertionHistory.hasAnyUndoEntries() || !inputSessionActive) {
+                dismissPasteUndoCapsule()
+            }
+            return
+        }
+        val verifyToken = ++pasteHistoryVerifyToken
+        val pendingEntry = insertionHistory.peekUndo()
+        val checkLen = minOf(2048, maxOf(128, (pendingEntry?.insertedText?.length ?: 128) + (pendingEntry?.beforeAnchor?.length ?: 0) + 64))
+        val preBefore = gateway.textBeforeCursor(checkLen)
+        val result = insertionHistory.undo(gateway)
+        val entry = result.entry
 
         if (!result.success || entry == null) {
-            dismissPasteUndoCapsule()
+            shiftStateMachine.onNonLetterInput()
+            setStatus(result.message)
+            val shouldPreserveRetry = insertionHistory.hasAnyUndoEntries() &&
+                !gateway.isPasswordField() &&
+                (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
+            if (shouldPreserveRetry) {
+                pasteCapsuleController.onUndoConfirmationRejected(
+                    preserveUndoForRetry = true,
+                    nowMs = SystemClock.elapsedRealtime()
+                )
+                updatePasteUndoCapsuleUI()
+            } else {
+                dismissPasteUndoCapsule()
+            }
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
 
         val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-        pasteCapsuleController.onUndoSucceeded(
+        val immediateBefore = gateway.textBeforeCursor(checkLen)
+        val immediateAfter = gateway.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+        val immediateConfirmed = insertionHistory.confirmUndoMutation(
+            entry = entry,
+            preBefore = preBefore,
+            postBefore = immediateBefore,
+            postAfter = immediateAfter,
+            gateway = gateway
+        )
+        if (immediateConfirmed) {
+            pasteCapsuleController.onUndoConfirmed(
+                nowMs = SystemClock.elapsedRealtime(),
+                isLargeOperation = isLargeOperation
+            )
+            updatePasteUndoCapsuleUI()
+            applyConfirmedUndoSideEffects(entry, result.message)
+            return
+        }
+
+        // Do NOT transition to Redo until host editor confirms the mutation occurred.
+        pasteCapsuleController.onUndoPendingConfirmation(
             nowMs = SystemClock.elapsedRealtime(),
             isLargeOperation = isLargeOperation
         )
         updatePasteUndoCapsuleUI()
+        setStatus("Confirming undo…")
 
-        val immediateBefore = gateway.textBeforeCursor(checkLen)
-        val immediateMutated = (preBefore != null && immediateBefore != preBefore) ||
-            insertionHistory.canSafelyRedo(gateway).allowed
-        if (immediateMutated) {
-            syncAutoCapitalization(preserveManualShift = false)
-            return
+        val verifySchedule = if (isLargeOperation) {
+            longArrayOf(50L, 150L, 300L, 500L, 750L)
+        } else {
+            longArrayOf(50L, 150L, 300L, 500L)
         }
-
-        // Optimistic/async InputConnection (e.g. Chrome / YouTube / WebView) may take several frames to reflow DOM.
-        val verifySchedule = if (isLargeOperation) longArrayOf(150L, 250L, 450L, 650L) else longArrayOf(150L, 250L)
-        scheduleUndoMutationVerification(entry, verifyToken, checkLen, preBefore, verifySchedule, 0)
+        scheduleUndoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
     }
 
     private fun scheduleUndoMutationVerification(
         entry: InsertionHistoryManager.HistoryEntry,
+        successMessage: String,
         verifyToken: Int,
         checkLen: Int,
         preBefore: String?,
@@ -5404,19 +5452,29 @@ class ClipMaxImeService : InputMethodService() {
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
             val g = buildEditorGateway()
             val after = g?.textBeforeCursor(checkLen)
-            if (g != null && ((preBefore != null && after != preBefore) || insertionHistory.canSafelyRedo(g).allowed)) {
-                syncAutoCapitalization(preserveManualShift = false)
+            val afterTrailing = g?.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+            if (g != null && insertionHistory.confirmUndoMutation(entry, preBefore, after, afterTrailing, g)) {
+                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                pasteCapsuleController.onUndoConfirmed(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    isLargeOperation = isLargeOperation
+                )
+                updatePasteUndoCapsuleUI()
+                applyConfirmedUndoSideEffects(entry, successMessage)
                 return@postDelayed
             }
             if (stepIndex + 1 < scheduleMs.size) {
-                scheduleUndoMutationVerification(entry, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
-            } else if (g != null && entry.target.isCompatibleWith(g.currentTarget())) {
-                if (preBefore != null && after == preBefore && !insertionHistory.canSafelyRedo(g).allowed) {
-                    insertionHistory.rollbackLastUndo(entry)
-                    dismissPasteUndoCapsule()
-                    syncAutoCapitalization(preserveManualShift = false)
-                    setStatus("Destination editor rejected undo.")
-                }
+                scheduleUndoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+            } else {
+                insertionHistory.rollbackLastUndo(entry)
+                val canPreserve = g != null && !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
+                pasteCapsuleController.onUndoConfirmationRejected(
+                    preserveUndoForRetry = canPreserve,
+                    nowMs = SystemClock.elapsedRealtime()
+                )
+                updatePasteUndoCapsuleUI()
+                syncAutoCapitalization(preserveManualShift = false)
+                setStatus(if (canPreserve) "Destination editor rejected undo; tap Undo to retry." else "Destination editor rejected undo.")
             }
         }, scheduleMs[stepIndex])
     }
@@ -5424,49 +5482,80 @@ class ClipMaxImeService : InputMethodService() {
     private fun performInsertionRedo() {
         val gateway = buildEditorGateway()
         if (gateway == null) {
-            setStatus("Redo unavailable: no active input field.")
-            dismissPasteUndoCapsule()
+            setStatus("Redo waiting for active input field.")
+            if (!insertionHistory.hasAnyRedoEntries() || !inputSessionActive) {
+                dismissPasteUndoCapsule()
+            }
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
         val pendingEntry = insertionHistory.peekRedo()
-        val checkLen = minOf(2048, maxOf(128, pendingEntry?.insertedText?.length ?: 128))
+        val checkLen = minOf(2048, maxOf(128, (pendingEntry?.insertedText?.length ?: 128) + (pendingEntry?.beforeAnchor?.length ?: 0) + 64))
         val preBefore = gateway.textBeforeCursor(checkLen)
         val result = insertionHistory.redo(gateway)
         val entry = result.entry
         clearTypingSuggestionsView()
         shiftStateMachine.onNonLetterInput()
-        setStatus(result.message)
 
         if (!result.success || entry == null) {
-            dismissPasteUndoCapsule()
+            setStatus(result.message)
+            val shouldPreserveRetry = insertionHistory.hasAnyRedoEntries() &&
+                !gateway.isPasswordField() &&
+                (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
+            if (shouldPreserveRetry) {
+                pasteCapsuleController.onRedoConfirmationRejected(
+                    preserveRedoForRetry = true,
+                    nowMs = SystemClock.elapsedRealtime()
+                )
+                updatePasteUndoCapsuleUI()
+            } else {
+                dismissPasteUndoCapsule()
+            }
             syncAutoCapitalization(preserveManualShift = false)
             return
         }
 
         val canUndoRemaining = insertionHistory.hasAnyUndoEntries()
         val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-        pasteCapsuleController.onRedoSucceeded(
-            canUndoRemaining = canUndoRemaining,
+        val immediateBefore = gateway.textBeforeCursor(checkLen)
+        val immediateAfter = gateway.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+        val immediateConfirmed = insertionHistory.confirmRedoMutation(
+            entry = entry,
+            preBefore = preBefore,
+            postBefore = immediateBefore,
+            postAfter = immediateAfter,
+            gateway = gateway
+        )
+        if (immediateConfirmed) {
+            pasteCapsuleController.onRedoConfirmed(
+                canUndoRemaining = canUndoRemaining,
+                nowMs = SystemClock.elapsedRealtime(),
+                isLargeOperation = isLargeOperation
+            )
+            updatePasteUndoCapsuleUI()
+            syncAutoCapitalization(preserveManualShift = false)
+            setStatus(result.message)
+            return
+        }
+
+        pasteCapsuleController.onRedoPendingConfirmation(
             nowMs = SystemClock.elapsedRealtime(),
             isLargeOperation = isLargeOperation
         )
         updatePasteUndoCapsuleUI()
+        setStatus("Confirming redo…")
 
-        val immediateBefore = gateway.textBeforeCursor(checkLen)
-        val immediateMutated = (preBefore != null && immediateBefore != preBefore) ||
-            insertionHistory.canSafelyUndo(gateway).allowed
-        if (immediateMutated) {
-            syncAutoCapitalization(preserveManualShift = false)
-            return
+        val verifySchedule = if (isLargeOperation) {
+            longArrayOf(50L, 150L, 300L, 500L, 750L)
+        } else {
+            longArrayOf(50L, 150L, 300L, 500L)
         }
-
-        val verifySchedule = if (isLargeOperation) longArrayOf(150L, 250L, 450L, 650L) else longArrayOf(150L, 250L)
-        scheduleRedoMutationVerification(entry, verifyToken, checkLen, preBefore, verifySchedule, 0)
+        scheduleRedoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
     }
 
     private fun scheduleRedoMutationVerification(
         entry: InsertionHistoryManager.HistoryEntry,
+        successMessage: String,
         verifyToken: Int,
         checkLen: Int,
         preBefore: String?,
@@ -5478,19 +5567,31 @@ class ClipMaxImeService : InputMethodService() {
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
             val g = buildEditorGateway()
             val after = g?.textBeforeCursor(checkLen)
-            if (g != null && ((preBefore != null && after != preBefore) || insertionHistory.canSafelyUndo(g).allowed)) {
+            val afterTrailing = g?.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+            if (g != null && insertionHistory.confirmRedoMutation(entry, preBefore, after, afterTrailing, g)) {
+                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                pasteCapsuleController.onRedoConfirmed(
+                    canUndoRemaining = insertionHistory.hasAnyUndoEntries(),
+                    nowMs = SystemClock.elapsedRealtime(),
+                    isLargeOperation = isLargeOperation
+                )
+                updatePasteUndoCapsuleUI()
                 syncAutoCapitalization(preserveManualShift = false)
+                setStatus(successMessage)
                 return@postDelayed
             }
             if (stepIndex + 1 < scheduleMs.size) {
-                scheduleRedoMutationVerification(entry, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
-            } else if (g != null && entry.target.isCompatibleWith(g.currentTarget())) {
-                if (preBefore != null && after == preBefore && !insertionHistory.canSafelyUndo(g).allowed) {
-                    insertionHistory.rollbackLastRedo(entry)
-                    dismissPasteUndoCapsule()
-                    syncAutoCapitalization(preserveManualShift = false)
-                    setStatus("Destination editor rejected redo.")
-                }
+                scheduleRedoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+            } else {
+                insertionHistory.rollbackLastRedo(entry)
+                val canPreserve = g != null && !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
+                pasteCapsuleController.onRedoConfirmationRejected(
+                    preserveRedoForRetry = canPreserve,
+                    nowMs = SystemClock.elapsedRealtime()
+                )
+                updatePasteUndoCapsuleUI()
+                syncAutoCapitalization(preserveManualShift = false)
+                setStatus(if (canPreserve) "Destination editor rejected redo; tap Redo to retry." else "Destination editor rejected redo.")
             }
         }, scheduleMs[stepIndex])
     }
