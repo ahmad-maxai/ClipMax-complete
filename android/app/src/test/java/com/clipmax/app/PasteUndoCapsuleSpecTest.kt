@@ -197,17 +197,29 @@ class PasteUndoCapsuleSpecTest {
         Thread.sleep(5)
         val b = store.save(null, "Second", "Second sentence for split merge check", false)
 
-        val splitUndo = UndoRedoManager()
         val mergeRes = store.merge(a.id, b.id)
-        splitUndo.record(UndoAction.Merge(mergeRes.originalFirst, mergeRes.originalSecond, mergeRes.mergedItem))
+        assertEquals(1, store.listItems().size)
+        assertEquals(a.id, mergeRes.sourceItem.id)
+        assertEquals(b.id, mergeRes.targetItem.id)
 
-        // Paste capsule controller is independent from ClipStore Split/Merge manager
+        // Paste capsule controller + InsertionHistoryManager are completely independent of ClipStore Split/Merge state
+        val history = InsertionHistoryManager()
+        val gateway = FakeEditorGateway("")
         val capsule = PasteUndoCapsuleSpec.PasteUndoCapsuleController()
         assertFalse(capsule.isActive)
-        assertTrue(splitUndo.canUndo())
+        assertFalse(history.hasAnyUndoEntries())
 
+        gateway.commitText("PastedText")
+        assertTrue(history.recordClipInsertion(gateway.currentTarget(), "PastedText", "", ""))
         capsule.onPasteSucceeded(nowMs = 500L)
         assertTrue(capsule.isActive)
-        assertTrue(splitUndo.canUndo())
+        assertTrue(history.hasAnyUndoEntries())
+
+        // Split/Merge store mutation does not dismiss or mutate paste undo stack/capsule
+        val splitRes = store.split(mergeRes.mergedItem.id)!!
+        assertEquals(2, store.listItems().size)
+        assertEquals(splitRes.part1Item.id, store.listItems().firstOrNull { it.id == splitRes.part1Item.id }?.id)
+        assertTrue(capsule.isActive)
+        assertTrue(history.hasAnyUndoEntries())
     }
 }
