@@ -69,5 +69,12 @@ class SecondaryToolbarSpecTest {
         assertNotEquals(graphite.backCircleBg, classicLight.backCircleBg)
         assertNotEquals(graphite.globeCircleBg, classicLight.globeCircleBg)
         assertNotEquals(classicLight.centerIconFg, classicLight.toolbarBg)
+
+        val neutralLight = SecondaryToolbarSpec.resolvePalette(isNightMode = false, isClassicTheme = false)
+        assertEquals(0xFFE8EAED.toInt(), neutralLight.toolbarBg)
+        assertEquals(0xFF202124.toInt(), neutralLight.backCircleBg)
+        assertEquals(0xFFFFFFFF.toInt(), neutralLight.backIconFg)
+        assertEquals(0xFF202124.toInt(), neutralLight.centerIconFg)
+        assertNotEquals(neutralLight.toolbarBg, neutralLight.centerIconFg)
     }
 }

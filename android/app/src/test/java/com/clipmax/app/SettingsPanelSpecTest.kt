@@ -10,7 +10,7 @@ class SettingsPanelSpecTest {
 
     @Test
     fun testOptionGroupsForBinaryAndThreeChoiceSettings() {
-        assertEquals(listOf("graphite" to "Graphite", "classic" to "Classic"),
+        assertEquals(listOf("system" to "System", "light" to "Light", "dark" to "Dark", "classic" to "Classic"),
             SettingsPanelSpec.THEME_OPTIONS.map { it.value to it.label })
 
         assertEquals(listOf("compact" to "Compact", "normal" to "Normal", "tall" to "Tall"),
@@ -74,5 +74,21 @@ class SettingsPanelSpecTest {
         assertFalse(classicLight.isNightMode)
         assertEquals(0xFF0D9488.toInt(), classicLight.activePillBg)
         assertEquals(0xFFECEFF1.toInt(), classicLight.panelBg)
+
+        val neutralLight = SettingsPanelSpec.resolvePillCardPalette(
+            KeyboardLayoutSpec.resolveThemePalette("light", systemNightMode = true)
+        )
+        assertFalse(neutralLight.isClassicTheme)
+        assertFalse(neutralLight.isNightMode)
+        assertEquals(0xFFF1F3F4.toInt(), neutralLight.panelBg)
+        assertEquals(0xFFFFFFFF.toInt(), neutralLight.cardBg)
+        assertEquals(0xFF202124.toInt(), neutralLight.activePillBg)
+        assertEquals(0xFFFFFFFF.toInt(), neutralLight.activePillFg)
+
+        assertEquals("system", SettingsPanelSpec.normalizeThemeValue(null))
+        assertEquals("system", SettingsPanelSpec.normalizeThemeValue(""))
+        assertEquals("dark", SettingsPanelSpec.normalizeThemeValue("graphite"))
+        assertEquals("light", SettingsPanelSpec.normalizeThemeValue("light"))
+        assertEquals("classic", SettingsPanelSpec.normalizeThemeValue("classic"))
     }
 }

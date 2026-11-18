@@ -390,4 +390,42 @@ class KeyboardLayoutSpecTest {
             }
         }
     }
+
+    @Test
+    fun testSystemLightDarkAndClassicSynchronization() {
+        // System follows Android night mode dynamically
+        val sysLight = KeyboardLayoutSpec.resolveThemePalette("system", systemNightMode = false)
+        assertFalse(sysLight.isClassicTheme)
+        assertFalse(sysLight.isNightMode)
+        assertEquals(0xFFF1F3F4.toInt(), sysLight.colorBg)
+        assertEquals(0xFFFFFFFF.toInt(), sysLight.colorKeyBg)
+        assertEquals(0xFF202124.toInt(), sysLight.colorKeyText)
+
+        val sysDark = KeyboardLayoutSpec.resolveThemePalette("system", systemNightMode = true)
+        assertFalse(sysDark.isClassicTheme)
+        assertTrue(sysDark.isNightMode)
+        assertEquals(0xFF202124.toInt(), sysDark.colorBg)
+
+        // Null/empty preference defaults to System behavior
+        assertEquals(sysLight, KeyboardLayoutSpec.resolveThemePalette(null, systemNightMode = false))
+        assertEquals(sysDark, KeyboardLayoutSpec.resolveThemePalette("", systemNightMode = true))
+
+        // Explicit Light overrides Dark system mode
+        val forcedLight = KeyboardLayoutSpec.resolveThemePalette("light", systemNightMode = true)
+        assertFalse(forcedLight.isNightMode)
+        assertFalse(forcedLight.isClassicTheme)
+        assertEquals(0xFFF1F3F4.toInt(), forcedLight.colorBg)
+
+        // Explicit Dark overrides Light system mode
+        val forcedDark = KeyboardLayoutSpec.resolveThemePalette("dark", systemNightMode = false)
+        assertTrue(forcedDark.isNightMode)
+        assertFalse(forcedDark.isClassicTheme)
+        assertEquals(0xFF202124.toInt(), forcedDark.colorBg)
+
+        // Classic stays distinct from Neutral Light/Dark while still tracking systemNightMode
+        val classicLight = KeyboardLayoutSpec.resolveThemePalette("classic", systemNightMode = false)
+        assertTrue(classicLight.isClassicTheme)
+        assertFalse(classicLight.isNightMode)
+        assertNotEquals(sysLight.colorAccent, classicLight.colorAccent)
+    }
 }

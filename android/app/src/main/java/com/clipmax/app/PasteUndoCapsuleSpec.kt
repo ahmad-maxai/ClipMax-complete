@@ -13,8 +13,8 @@ internal object PasteUndoCapsuleSpec {
     const val TEXT_SIZE_SP = 12.5f
     const val SELF_UPDATE_GRACE_MS = 350L
     const val LARGE_PASTE_CHAR_THRESHOLD = 1_500
-    const val LARGE_PASTE_GRACE_MS = 1_800L
-    const val RESTART_INPUT_SETTLE_GRACE_MS = 2_000L
+    const val LARGE_PASTE_GRACE_MS = 2_500L
+    const val RESTART_INPUT_SETTLE_GRACE_MS = 2_500L
 
     enum class CapsuleState {
         HIDDEN,

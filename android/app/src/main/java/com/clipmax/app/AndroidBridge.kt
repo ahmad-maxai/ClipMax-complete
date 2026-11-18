@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
@@ -339,8 +340,12 @@ class AndroidBridge(
     @JavascriptInterface
     fun setTheme(theme: String) {
         try {
-            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("app_theme", theme).apply()
+            val normalized = SettingsPanelSpec.normalizeThemeValue(theme)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_APP_THEME, normalized).apply()
+            mainHandler.post {
+                (context as? MainActivity)?.applySystemBarTheme()
+            }
         } catch (e: Throwable) {
             // ignore
         }
@@ -349,10 +354,21 @@ class AndroidBridge(
     @JavascriptInterface
     fun getTheme(): String {
         return try {
-            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
-            prefs.getString("app_theme", "") ?: ""
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_APP_THEME, "system")
+            SettingsPanelSpec.normalizeThemeValue(raw)
         } catch (e: Throwable) {
-            ""
+            "system"
+        }
+    }
+
+    @JavascriptInterface
+    fun isSystemNightMode(): Boolean {
+        return try {
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        } catch (e: Throwable) {
+            false
         }
     }
 }

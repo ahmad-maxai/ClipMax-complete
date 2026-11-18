@@ -7,7 +7,6 @@ import {
   ChevronUp,
   ChevronDown,
   X,
-  Keyboard,
   RotateCcw,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, ConfirmModal } from "./primitives";
@@ -282,16 +281,6 @@ export function EditorScreen({
         >
           <FileUp className="h-3.5 w-3.5 text-muted-foreground" />
           Import .txt
-        </Btn>
-        <Btn
-          variant="ghost"
-          size="sm"
-          onClick={() => nav({ name: "keyboard" })}
-          className="ml-auto h-8 text-xs text-muted-foreground hover:text-foreground"
-          title="Open ClipMax IME keyboard preview"
-        >
-          <Keyboard className="h-3.5 w-3.5" />
-          IME Picker
         </Btn>
       </div>
 

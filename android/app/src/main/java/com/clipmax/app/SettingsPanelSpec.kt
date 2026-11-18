@@ -35,9 +35,20 @@ internal object SettingsPanelSpec {
     )
 
     val THEME_OPTIONS: List<ChoiceOption<String>> = listOf(
-        ChoiceOption("graphite", "Graphite"),
+        ChoiceOption("system", "System"),
+        ChoiceOption("light", "Light"),
+        ChoiceOption("dark", "Dark"),
         ChoiceOption("classic", "Classic")
     )
+
+    fun normalizeThemeValue(savedTheme: String?): String {
+        return when (savedTheme?.trim()?.lowercase(java.util.Locale.ROOT)) {
+            "light" -> "light"
+            "dark", "graphite" -> "dark"
+            "classic", "classic_light" -> "classic"
+            else -> "system"
+        }
+    }
 
     val HEIGHT_OPTIONS: List<ChoiceOption<String>> = listOf(
         ChoiceOption("compact", "Compact"),
@@ -137,6 +148,28 @@ internal object SettingsPanelSpec {
                 actionPillBorder = palette.colorAccent,
                 actionPillFg = palette.colorKeyText,
                 pillRipple = 0x332DD4BF.toInt()
+            )
+            !palette.isNightMode -> PillCardPalette(
+                isClassicTheme = false,
+                isNightMode = false,
+                panelBg = palette.colorBg,
+                headerBg = palette.colorAltDeepBg,
+                dividerColor = palette.colorKeyBorder,
+                cardBg = 0xFFFFFFFF.toInt(),
+                cardBorder = palette.colorKeyBorder,
+                sectionTitleFg = palette.colorKeyText,
+                itemLabelFg = palette.colorKeyText,
+                subLabelFg = palette.colorHintText,
+                inactivePillBg = palette.colorModBg,
+                inactivePillBorder = palette.colorKeyBorder,
+                inactivePillFg = palette.colorModText,
+                activePillBg = 0xFF202124.toInt(),
+                activePillBorder = 0xFF202124.toInt(),
+                activePillFg = 0xFFFFFFFF.toInt(),
+                actionPillBg = palette.colorKeyBg,
+                actionPillBorder = palette.colorKeyBorder,
+                actionPillFg = palette.colorKeyText,
+                pillRipple = 0x1F202124.toInt()
             )
             else -> PillCardPalette(
                 isClassicTheme = false,

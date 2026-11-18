@@ -42,7 +42,8 @@ export type Screen =
   | { name: "library" }
   | { name: "details"; id: string }
   | { name: "editor"; id?: string }
-  | { name: "settings" }
-  | { name: "keyboard" };
+  | { name: "settings" };
 
 export type Nav = (s: Screen) => void;
+
+export type ThemeMode = "system" | "light" | "dark" | "classic";

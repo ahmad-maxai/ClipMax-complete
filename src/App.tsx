@@ -3,6 +3,7 @@ import {
   Screen,
   ClipItem,
   Retention,
+  ThemeMode,
 } from "./lib/types";
 import {
   getStoredItems,
@@ -15,53 +16,119 @@ import { LibraryScreen } from "./components/LibraryScreen";
 import { DetailsScreen } from "./components/DetailsScreen";
 import { EditorScreen } from "./components/EditorScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { KeyboardPanelScreen } from "./components/KeyboardPanelScreen";
-import { ImeKeyboardScreen } from "./components/ImeKeyboardScreen";
+
+function normalizeThemeMode(raw?: string | null): ThemeMode {
+  const val = (raw ?? "").trim().toLowerCase();
+  if (val === "light") return "light";
+  if (val === "dark" || val === "graphite") return "dark";
+  if (val === "classic" || val === "classic_light") return "classic";
+  return "system";
+}
+
+function readInitialThemeMode(): ThemeMode {
+  try {
+    if (typeof window !== "undefined" && window.ClipMaxNative?.getTheme) {
+      const nativeTheme = window.ClipMaxNative.getTheme();
+      if (nativeTheme) return normalizeThemeMode(nativeTheme);
+    }
+    const saved = localStorage.getItem("clipmax_theme");
+    if (saved) return normalizeThemeMode(saved);
+  } catch {}
+  return "system";
+}
+
+function readSystemNight(): boolean {
+  try {
+    if (typeof window !== "undefined" && window.ClipMaxNative?.isSystemNightMode) {
+      return Boolean(window.ClipMaxNative.isSystemNightMode());
+    }
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+  } catch {}
+  return false;
+}
 
 export default function App() {
-  const isImeMode =
-    typeof window !== "undefined" &&
-    (new URLSearchParams(window.location.search).get("mode") === "ime" ||
-      Boolean((window as any).isImeMode) ||
-      Boolean((window as any).ClipMaxIme));
   const [screen, setScreen] = useState<Screen>({ name: "library" });
   const [items, setItems] = useState<ClipItem[]>(() => getStoredItems());
   const [retention, setRetention] = useState<Retention>(() => getStoredRetention());
   const [captureEnabled, setCaptureEnabled] = useState<boolean>(() =>
     getStoredCaptureEnabled()
   );
-  const [dark, setDark] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("clipmax_theme");
-      if (saved) return saved === "dark";
-      return window.matchMedia("(prefers-color-scheme: dark)").matches;
-    } catch {
-      return false;
-    }
-  });
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
+  const [systemDark, setSystemDark] = useState<boolean>(() => readSystemNight());
 
-  // Sync dark class on document element and notify native Android bridge
+  const effectiveDark =
+    themeMode === "dark" ? true : themeMode === "light" ? false : systemDark;
+
+  // Apply resolved theme class to DOM and keep local/native preferences synced
   useEffect(() => {
-    if (dark) {
+    if (effectiveDark) {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
-    const themeStr = dark ? "dark" : "light";
     try {
-      localStorage.setItem("clipmax_theme", themeStr);
+      localStorage.setItem("clipmax_theme", themeMode);
     } catch {}
     if (typeof window !== "undefined" && window.ClipMaxNative?.setTheme) {
       try {
-        window.ClipMaxNative.setTheme(themeStr);
+        window.ClipMaxNative.setTheme(themeMode);
       } catch {}
     }
-  }, [dark]);
+  }, [themeMode, effectiveDark]);
+
+  // Live Android & browser system theme synchronisation
+  useEffect(() => {
+    const syncFromSystem = (explicitDark?: boolean) => {
+      if (typeof explicitDark === "boolean") {
+        setSystemDark(explicitDark);
+      } else {
+        setSystemDark(readSystemNight());
+      }
+    };
+
+    const handleSystemEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ systemDark?: boolean }>).detail;
+      syncFromSystem(detail?.systemDark);
+    };
+
+    window.addEventListener("clipmax:systemThemeChanged", handleSystemEvent);
+
+    const mq =
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+    const handleMq = (e: MediaQueryListEvent) => {
+      // Only let CSS media query drive if native bridge isn't overriding with Android uiMode
+      if (!window.ClipMaxNative?.isSystemNightMode) {
+        setSystemDark(e.matches);
+      } else {
+        syncFromSystem();
+      }
+    };
+    mq?.addEventListener?.("change", handleMq);
+
+    return () => {
+      window.removeEventListener("clipmax:systemThemeChanged", handleSystemEvent);
+      mq?.removeEventListener?.("change", handleMq);
+    };
+  }, []);
 
   // Listen for native Android events (resume refresh, edit intent from IME)
   useEffect(() => {
     const handleRefresh = () => {
       setItems(getStoredItems());
+      setSystemDark(readSystemNight());
+      if (typeof window !== "undefined" && window.ClipMaxNative?.getTheme) {
+        try {
+          const nativeTheme = window.ClipMaxNative.getTheme();
+          if (nativeTheme) {
+            setThemeMode(normalizeThemeMode(nativeTheme));
+          }
+        } catch {}
+      }
     };
 
     const handleNav = (e: Event) => {
@@ -89,19 +156,11 @@ export default function App() {
     saveStoredItems(updated);
   };
 
-  const toggleTheme = () => setDark((prev) => !prev);
+  const toggleTheme = () => {
+    setThemeMode(effectiveDark ? "light" : "dark");
+  };
 
-  // Render active screen
   const renderScreen = () => {
-    if (isImeMode) {
-      return (
-        <ImeKeyboardScreen
-          items={items}
-          onUpdateItems={handleUpdateItems}
-        />
-      );
-    }
-
     switch (screen.name) {
       case "library":
         return (
@@ -109,7 +168,7 @@ export default function App() {
             items={items}
             onUpdateItems={handleUpdateItems}
             nav={setScreen}
-            dark={dark}
+            dark={effectiveDark}
             onToggleTheme={toggleTheme}
           />
         );
@@ -140,15 +199,9 @@ export default function App() {
             onChangeRetention={setRetention}
             captureEnabled={captureEnabled}
             onChangeCaptureEnabled={setCaptureEnabled}
-            nav={setScreen}
-          />
-        );
-      case "keyboard":
-        return (
-          <KeyboardPanelScreen
-            items={items}
-            onUpdateItems={handleUpdateItems}
-            captureEnabled={captureEnabled}
+            themeMode={themeMode}
+            systemDark={systemDark}
+            onChangeThemeMode={setThemeMode}
             nav={setScreen}
           />
         );

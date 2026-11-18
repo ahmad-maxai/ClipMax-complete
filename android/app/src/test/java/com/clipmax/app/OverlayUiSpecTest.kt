@@ -22,7 +22,7 @@ class OverlayUiSpecTest {
 
     @Test
     fun testSuggestionPillPrimaryAndSecondaryDistinctionAcrossThemes() {
-        for ((theme, night) in listOf("graphite" to true, "classic" to true, "classic" to false)) {
+        for ((theme, night) in listOf("dark" to true, "light" to false, "system" to false, "classic" to true, "classic" to false)) {
             val palette = KeyboardLayoutSpec.resolveThemePalette(theme, night)
             val primary = OverlayUiSpec.resolveSuggestionPillStyle(palette, isPrimary = true, isRevert = false)
             val secondary = OverlayUiSpec.resolveSuggestionPillStyle(palette, isPrimary = false, isRevert = false)
@@ -70,5 +70,8 @@ class OverlayUiSpecTest {
 
         val classicLight = KeyboardLayoutSpec.resolveThemePalette("classic", systemNightMode = false)
         assertEquals(classicLight.colorKeyBg, OverlayUiSpec.resolveContextMenuBg(classicLight))
+
+        val neutralLight = KeyboardLayoutSpec.resolveThemePalette("light", systemNightMode = false)
+        assertEquals(0xFFFFFFFF.toInt(), OverlayUiSpec.resolveContextMenuBg(neutralLight))
     }
 }

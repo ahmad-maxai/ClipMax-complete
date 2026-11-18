@@ -142,4 +142,27 @@ class ClipboardPanelSpecTest {
         assertEquals("24h", fallbackOn.nextMode)
         assertTrue(CapturePreferences.isEnabled(fallbackOn.nextMode))
     }
+
+    @Test
+    fun testOddRowGridSpecPreventsZeroHeightCollapseForSinglePinAndOddCards() {
+        val singleRow = ClipboardPanelSpec.resolveGridRowLayout(hasSecondCard = false)
+        assertEquals(ClipboardPanelSpec.RowHeightMode.WRAP_CONTENT, singleRow.primaryCardHeightMode)
+        assertFalse(singleRow.hasSecondCard)
+        assertEquals(null, singleRow.secondaryCardHeightMode)
+
+        val pairedRow = ClipboardPanelSpec.resolveGridRowLayout(hasSecondCard = true)
+        assertEquals(ClipboardPanelSpec.RowHeightMode.MATCH_PARENT, pairedRow.primaryCardHeightMode)
+        assertTrue(pairedRow.hasSecondCard)
+        assertEquals(ClipboardPanelSpec.RowHeightMode.MATCH_PARENT, pairedRow.secondaryCardHeightMode)
+    }
+
+    @Test
+    fun testBottomMostCardAlwaysRecalculatesToHashOneAcrossMutations() {
+        // After Split (e.g. 2 -> 3 items)
+        assertEquals(listOf("#3", "#2", "#1"), (0 until 3).map { ClipboardPanelSpec.formatSerialLabel(it, 3) })
+        // After Merge / Delete (3 -> 2 items)
+        assertEquals(listOf("#2", "#1"), (0 until 2).map { ClipboardPanelSpec.formatSerialLabel(it, 2) })
+        // Single item (1 pinned clip or 1 remaining card)
+        assertEquals(listOf("#1"), (0 until 1).map { ClipboardPanelSpec.formatSerialLabel(it, 1) })
+    }
 }

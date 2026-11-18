@@ -245,14 +245,23 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
+    private var lastRenderedThemeKey: String = ""
+
     private val appTheme: String
-        get() = themePreferences.getString("app_theme", "graphite") ?: "graphite"
+        get() = SettingsPanelSpec.normalizeThemeValue(
+            runCatching { themePreferences.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
+        )
+
+    private fun isSystemNightMode(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun computeThemeStateKey(): String =
+        "${appTheme}:${isNightMode}:${isClassicTheme}"
 
     private val currentThemePalette: KeyboardLayoutSpec.ImeThemePalette
         get() {
-            val saved = runCatching { themePreferences.getString("app_theme", null) }.getOrNull()
-            val systemNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            return KeyboardLayoutSpec.resolveThemePalette(saved, systemNight)
+            val saved = runCatching { themePreferences.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
+            return KeyboardLayoutSpec.resolveThemePalette(saved, isSystemNightMode())
         }
 
     private val isClassicTheme: Boolean
@@ -329,7 +338,10 @@ class ClipMaxImeService : InputMethodService() {
         // Observe in-app theme & typing preference changes in real-time
         themePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
-                "app_theme" -> main.post { renderFullImeView() }
+                "app_theme" -> main.post {
+                    window?.window?.let { applySystemNavBarTheme(it) }
+                    renderFullImeView()
+                }
                 "typing_autocomplete", "typing_autocorrect", "typing_suggestions" -> main.post {
                     onTypingSettingsChanged()
                 }
@@ -359,11 +371,39 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    override fun onConfigureWindow(win: android.view.Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
-        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+    private fun applySystemNavBarTheme(win: android.view.Window) {
         win.navigationBarColor = colorBg
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             win.isNavigationBarContrastEnforced = false
+        }
+        val lightNav = !isNightMode
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            win.insetsController?.setSystemBarsAppearance(
+                if (lightNav) android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS else 0,
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            )
+        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            @Suppress("DEPRECATION")
+            val vis = win.decorView.systemUiVisibility
+            @Suppress("DEPRECATION")
+            win.decorView.systemUiVisibility = if (lightNav) {
+                vis or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else {
+                vis and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            }
+        }
+    }
+
+    override fun onConfigureWindow(win: android.view.Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        applySystemNavBarTheme(win)
+    }
+
+    override fun onWindowShown() {
+        super.onWindowShown()
+        window?.window?.let { applySystemNavBarTheme(it) }
+        if (imeRootFrame != null && computeThemeStateKey() != lastRenderedThemeKey) {
+            renderFullImeView()
         }
     }
 
@@ -485,6 +525,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun renderFullImeView() {
         val content = contentContainer ?: return
+        lastRenderedThemeKey = computeThemeStateKey()
         dismissContextMenu(animate = false)
         pendingRenderAfterContextMenu = false
         clipboardPanelRoot = null
@@ -812,11 +853,12 @@ class ClipMaxImeService : InputMethodService() {
 
         addView(centerFrame)
 
-        // 3. Circular navigation arrow button at far right (White circle with dark right chevron)
+        // 3. Circular navigation arrow button at far right
+        val tbPalette = SecondaryToolbarSpec.resolvePalette(isNightMode, isClassicTheme)
         val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(0xFFFFFFFF.toInt(), dp(17f), 0)
+            background = roundedRipple(tbPalette.backCircleBg, dp(17f), 0, tbPalette.rippleColor)
             contentDescription = "More actions"
-            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, 0xFF111111.toInt(), 14.5f))
+            val iv = createIconView(IconDrawable(IconType.CHEVRON_RIGHT, tbPalette.backIconFg, 14.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 switchToolbarState(1)
@@ -968,6 +1010,7 @@ class ClipMaxImeService : InputMethodService() {
                 keyboardSearchResults = emptyList()
             }
             renderFullImeView()
+            reloadItems()
         }
         actionsContainer.addView(pinBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
 
@@ -1078,9 +1121,17 @@ class ClipMaxImeService : InputMethodService() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            val capsuleBg = if (isClassicTheme) (if (isNightMode) 0xFF1F2024.toInt() else 0xFFFFFFFF.toInt()) else colorChipBg
-            val capsuleBorder = if (isNightMode) 0xD9FFFFFF.toInt() else 0xFF333338.toInt()
-            val capsuleFg = if (isClassicTheme) colorKeyText else colorAltPrimaryText
+            val capsuleBg = if (isNightMode) {
+                if (isClassicTheme) 0xFF1F2024.toInt() else colorChipBg
+            } else {
+                0xFFFFFFFF.toInt()
+            }
+            val capsuleBorder = if (isNightMode) 0xD9FFFFFF.toInt() else 0xFF202124.toInt()
+            val capsuleFg = if (isNightMode) {
+                if (isClassicTheme) colorKeyText else colorAltPrimaryText
+            } else {
+                0xFF202124.toInt()
+            }
             background = roundedRipple(capsuleBg, dp(PasteUndoCapsuleSpec.CORNER_RADIUS_DP), capsuleBorder)
 
             val iv = ImageView(this@ClipMaxImeService).apply {
@@ -1135,7 +1186,11 @@ class ClipMaxImeService : InputMethodService() {
         btn?.isEnabled = true
 
         val iconType = if (config.action == PasteUndoCapsuleSpec.CapsuleAction.REDO) IconType.REDO else IconType.UNDO
-        val capsuleFg = if (isClassicTheme) colorKeyText else colorAltPrimaryText
+        val capsuleFg = if (isNightMode) {
+            if (isClassicTheme) colorKeyText else colorAltPrimaryText
+        } else {
+            0xFF202124.toInt()
+        }
         pasteUndoCapsuleIcon?.setImageDrawable(IconDrawable(iconType, capsuleFg, PasteUndoCapsuleSpec.ICON_SIZE_DP))
         pasteUndoCapsuleText?.text = config.label
         btn?.contentDescription = if (config.action == PasteUndoCapsuleSpec.CapsuleAction.REDO) {
@@ -1759,6 +1814,13 @@ class ClipMaxImeService : InputMethodService() {
             var i = 0
             while (i < totalVisible) {
                 val hasNextRow = (i + 2) < totalVisible
+                val hasSecondCard = (i + 1) < totalVisible
+                val gridRowSpec = ClipboardPanelSpec.resolveGridRowLayout(hasSecondCard)
+                val primaryHeightLp = if (gridRowSpec.primaryCardHeightMode == ClipboardPanelSpec.RowHeightMode.MATCH_PARENT) {
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                } else {
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                }
                 val rowLayout = LinearLayout(this@ClipMaxImeService).apply {
                     orientation = LinearLayout.HORIZONTAL
                     weightSum = 2f
@@ -1773,11 +1835,11 @@ class ClipMaxImeService : InputMethodService() {
                 val item1 = visible[i]
                 val serial1 = ClipboardPanelSpec.computeSerialNumber(i, totalVisible)
                 val card1 = buildCompactCard(item1, serialNumber = serial1)
-                rowLayout.addView(card1, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                rowLayout.addView(card1, LinearLayout.LayoutParams(0, primaryHeightLp, 1f).apply {
                     rightMargin = halfGapLeft
                 })
 
-                if (i + 1 < totalVisible) {
+                if (hasSecondCard) {
                     val item2 = visible[i + 1]
                     val serial2 = ClipboardPanelSpec.computeSerialNumber(i + 1, totalVisible)
                     val card2 = buildCompactCard(item2, serialNumber = serial2)
@@ -1785,11 +1847,11 @@ class ClipMaxImeService : InputMethodService() {
                         leftMargin = halfGapRight
                     })
                 } else {
-                    // Empty spacer view for odd count so 1st card maintains exact 50% width
+                    // Empty spacer view for odd count so 1st card maintains exact 50% width without collapsing row height
                     val spacer = View(this@ClipMaxImeService).apply {
                         visibility = View.INVISIBLE
                     }
-                    rowLayout.addView(spacer, LinearLayout.LayoutParams(0, 0, 1f).apply {
+                    rowLayout.addView(spacer, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                         leftMargin = halfGapRight
                     })
                 }
@@ -4767,11 +4829,17 @@ class ClipMaxImeService : InputMethodService() {
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
 
         val pkgChanged = attribute.packageName != lastEditorPackage
-        val fieldChanged = attribute.fieldId != lastEditorFieldId &&
-            (attribute.fieldId != 0 || lastEditorFieldId != 0)
+        val prevInputClass = lastEditorInputType and InputFieldPolicy.TYPE_MASK_CLASS
+        val nextInputClass = attribute.inputType and InputFieldPolicy.TYPE_MASK_CLASS
+        val sameHostNonPassword = !pkgChanged && lastEditorPackage != null && !isPasswordTarget
+        val fieldChanged = when {
+            attribute.fieldId == lastEditorFieldId -> false
+            restarting && sameHostNonPassword && (attribute.fieldId == 0 || lastEditorFieldId == 0) -> false
+            else -> (attribute.fieldId != 0 || lastEditorFieldId != 0)
+        }
         val inputClassChanged = lastEditorPackage != null &&
-            (attribute.inputType and InputFieldPolicy.TYPE_MASK_CLASS) !=
-            (lastEditorInputType and InputFieldPolicy.TYPE_MASK_CLASS)
+            nextInputClass != prevInputClass &&
+            !(restarting && sameHostNonPassword && (nextInputClass == 0 || prevInputClass == 0))
         val hardFieldChanged = pkgChanged || fieldChanged || inputClassChanged || isPasswordTarget
 
         val nowMs = SystemClock.elapsedRealtime()
@@ -4828,11 +4896,24 @@ class ClipMaxImeService : InputMethodService() {
                     if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g).allowed
                     else insertionHistory.canSafelyUndo(g).allowed
                 )
-                if (!stillValid && g != null && g.textBeforeCursor(16) != null) {
-                    editorSessionId++
-                    dismissPasteUndoCapsule()
+                if (!stillValid && g != null && g.textBeforeCursor(32) != null) {
+                    main.postDelayed({
+                        if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
+                            return@postDelayed
+                        }
+                        if (isInserting || !pasteCapsuleController.isActive) return@postDelayed
+                        val g2 = buildEditorGateway()
+                        val validLate = g2 != null && (
+                            if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g2).allowed
+                            else insertionHistory.canSafelyUndo(g2).allowed
+                        )
+                        if (!validLate && g2 != null && g2.textBeforeCursor(32) != null) {
+                            editorSessionId++
+                            dismissPasteUndoCapsule()
+                        }
+                    }, 600L)
                 }
-            }, 950L)
+            }, 700L)
         }
         lastEditorPackage = attribute.packageName
         lastEditorFieldId = attribute.fieldId
@@ -4868,6 +4949,13 @@ class ClipMaxImeService : InputMethodService() {
             main.postDelayed(task, 250)
         }
         renderClipChips()
+        window?.window?.let { applySystemNavBarTheme(it) }
+        if (imeRootFrame != null && computeThemeStateKey() != lastRenderedThemeKey) {
+            renderFullImeView()
+        }
+        if (pasteCapsuleController.isActive && isPasswordTarget) {
+            dismissPasteUndoCapsule()
+        }
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
         syncAutoCapitalization(preserveManualShift = false)
@@ -4915,8 +5003,9 @@ class ClipMaxImeService : InputMethodService() {
         if (!inputViewActive) return
         if (pasteCapsuleController.isActive && !isInserting) {
             val gateway = buildEditorGateway()
-            val hasSelection = (newSelStart != newSelEnd) || (gateway?.hasActiveSelection() == true)
-            val cursorMoved = (oldSelStart != newSelStart) || (oldSelEnd != newSelEnd)
+            val validNewBounds = newSelStart >= 0 && newSelEnd >= 0
+            val hasSelection = (validNewBounds && newSelStart != newSelEnd) || (gateway?.hasActiveSelection() == true)
+            val cursorMoved = validNewBounds && ((oldSelStart != newSelStart) || (oldSelEnd != newSelEnd))
             val canUndoNow = gateway != null && insertionHistory.canSafelyUndo(gateway).allowed
             val canRedoNow = gateway != null && insertionHistory.canSafelyRedo(gateway).allowed
             val dismissed = pasteCapsuleController.onEditorSelectionChanged(
@@ -5045,6 +5134,7 @@ class ClipMaxImeService : InputMethodService() {
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
         super.onConfigurationChanged(newConfig)
+        window?.window?.let { applySystemNavBarTheme(it) }
         if (imeRootFrame != null) {
             renderFullImeView()
         }
@@ -5053,7 +5143,6 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        dismissPasteUndoCapsule()
         exitMergeMode(refresh = false)
         inputViewActive = false
         updateCaptureMonitoring()
@@ -5063,7 +5152,6 @@ class ClipMaxImeService : InputMethodService() {
     override fun onFinishInput() {
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
-        dismissPasteUndoCapsule()
         exitMergeMode(refresh = false)
         generation++
         inputSessionActive = false
@@ -5115,7 +5203,7 @@ class ClipMaxImeService : InputMethodService() {
                 if (!sel.isNullOrEmpty()) return true
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val surrounding = runCatching { ic.getSurroundingText(0, 0, 0) }.getOrNull()
-                    if (surrounding != null) {
+                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
                         return surrounding.selectionStart != surrounding.selectionEnd
                     }
                 }
@@ -5144,6 +5232,12 @@ class ClipMaxImeService : InputMethodService() {
                 if (maxChars > 2048) {
                     val fallbackDirect = runCatching { ic.getTextBeforeCursor(2048, 0)?.toString() }.getOrNull()
                     if (!fallbackDirect.isNullOrEmpty()) return fallbackDirect
+                }
+                if (maxChars > 512) {
+                    for (limit in intArrayOf(1024, 512)) {
+                        val fallbackSmall = runCatching { ic.getTextBeforeCursor(limit, 0)?.toString() }.getOrNull()
+                        if (!fallbackSmall.isNullOrEmpty()) return fallbackSmall
+                    }
                 }
                 if (direct != null) return direct
                 val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
@@ -5194,16 +5288,17 @@ class ClipMaxImeService : InputMethodService() {
                 if (length < 0) return false
                 if (length == 0) return true
                 var remaining = length
-                var maxStep = 16_384
+                var maxStep = 4096
                 while (remaining > 0) {
                     val step = minOf(remaining, maxStep)
                     val deleted = runCatching { ic.deleteSurroundingText(step, 0) }.getOrDefault(false)
                     if (!deleted) {
-                        if (maxStep > 4096) {
-                            maxStep = 4096
-                            continue
+                        maxStep = when {
+                            maxStep > 1024 -> 1024
+                            maxStep > 256 -> 256
+                            else -> return false
                         }
-                        return false
+                        continue
                     }
                     remaining -= step
                 }
@@ -5291,31 +5386,39 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
 
-        // Optimistic/async InputConnection (e.g. Compose / WebView) may not expose updated buffer at t=0ms.
+        // Optimistic/async InputConnection (e.g. Chrome / YouTube / WebView) may take several frames to reflow DOM.
+        val verifySchedule = if (isLargeOperation) longArrayOf(150L, 250L, 450L, 650L) else longArrayOf(150L, 250L)
+        scheduleUndoMutationVerification(entry, verifyToken, checkLen, preBefore, verifySchedule, 0)
+    }
+
+    private fun scheduleUndoMutationVerification(
+        entry: InsertionHistoryManager.HistoryEntry,
+        verifyToken: Long,
+        checkLen: Int,
+        preBefore: String?,
+        scheduleMs: LongArray,
+        stepIndex: Int
+    ) {
+        if (stepIndex >= scheduleMs.size) return
         main.postDelayed({
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-            val g1 = buildEditorGateway()
-            val after1 = g1?.textBeforeCursor(checkLen)
-            if (g1 != null && ((preBefore != null && after1 != preBefore) || insertionHistory.canSafelyRedo(g1).allowed)) {
+            val g = buildEditorGateway()
+            val after = g?.textBeforeCursor(checkLen)
+            if (g != null && ((preBefore != null && after != preBefore) || insertionHistory.canSafelyRedo(g).allowed)) {
                 syncAutoCapitalization(preserveManualShift = false)
                 return@postDelayed
             }
-            main.postDelayed({
-                if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-                val g2 = buildEditorGateway()
-                val after2 = g2?.textBeforeCursor(checkLen)
-                if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyRedo(g2).allowed)) {
+            if (stepIndex + 1 < scheduleMs.size) {
+                scheduleUndoMutationVerification(entry, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+            } else if (g != null && entry.target.isCompatibleWith(g.currentTarget())) {
+                if (preBefore != null && after == preBefore && !insertionHistory.canSafelyRedo(g).allowed) {
+                    insertionHistory.rollbackLastUndo(entry)
+                    dismissPasteUndoCapsule()
                     syncAutoCapitalization(preserveManualShift = false)
-                } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
-                    if (preBefore != null && after2 == preBefore && !insertionHistory.canSafelyRedo(g2).allowed) {
-                        insertionHistory.rollbackLastUndo(entry)
-                        dismissPasteUndoCapsule()
-                        syncAutoCapitalization(preserveManualShift = false)
-                        setStatus("Destination editor rejected undo.")
-                    }
+                    setStatus("Destination editor rejected undo.")
                 }
-            }, 250L)
-        }, 150L)
+            }
+        }, scheduleMs[stepIndex])
     }
 
     private fun performInsertionRedo() {
@@ -5358,30 +5461,38 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
 
+        val verifySchedule = if (isLargeOperation) longArrayOf(150L, 250L, 450L, 650L) else longArrayOf(150L, 250L)
+        scheduleRedoMutationVerification(entry, verifyToken, checkLen, preBefore, verifySchedule, 0)
+    }
+
+    private fun scheduleRedoMutationVerification(
+        entry: InsertionHistoryManager.HistoryEntry,
+        verifyToken: Long,
+        checkLen: Int,
+        preBefore: String?,
+        scheduleMs: LongArray,
+        stepIndex: Int
+    ) {
+        if (stepIndex >= scheduleMs.size) return
         main.postDelayed({
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-            val g1 = buildEditorGateway()
-            val after1 = g1?.textBeforeCursor(checkLen)
-            if (g1 != null && ((preBefore != null && after1 != preBefore) || insertionHistory.canSafelyUndo(g1).allowed)) {
+            val g = buildEditorGateway()
+            val after = g?.textBeforeCursor(checkLen)
+            if (g != null && ((preBefore != null && after != preBefore) || insertionHistory.canSafelyUndo(g).allowed)) {
                 syncAutoCapitalization(preserveManualShift = false)
                 return@postDelayed
             }
-            main.postDelayed({
-                if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-                val g2 = buildEditorGateway()
-                val after2 = g2?.textBeforeCursor(checkLen)
-                if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyUndo(g2).allowed)) {
+            if (stepIndex + 1 < scheduleMs.size) {
+                scheduleRedoMutationVerification(entry, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+            } else if (g != null && entry.target.isCompatibleWith(g.currentTarget())) {
+                if (preBefore != null && after == preBefore && !insertionHistory.canSafelyUndo(g).allowed) {
+                    insertionHistory.rollbackLastRedo(entry)
+                    dismissPasteUndoCapsule()
                     syncAutoCapitalization(preserveManualShift = false)
-                } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
-                    if (preBefore != null && after2 == preBefore && !insertionHistory.canSafelyUndo(g2).allowed) {
-                        insertionHistory.rollbackLastRedo(entry)
-                        dismissPasteUndoCapsule()
-                        syncAutoCapitalization(preserveManualShift = false)
-                        setStatus("Destination editor rejected redo.")
-                    }
+                    setStatus("Destination editor rejected redo.")
                 }
-            }, 250L)
-        }, 150L)
+            }
+        }, scheduleMs[stepIndex])
     }
 
     private fun onTypingSettingsChanged() {
@@ -5950,7 +6061,12 @@ class ClipMaxImeService : InputMethodService() {
         normalColor: Int,
         cornerRadiusPx: Float,
         strokeColor: Int = 0,
-        rippleColor: Int = if (isClassicTheme) (if (isNightMode) 0x332DD4BF else 0x330D9488) else 0x24FFFFFF
+        rippleColor: Int = when {
+            isClassicTheme && isNightMode -> 0x332DD4BF
+            isClassicTheme -> 0x330D9488
+            isNightMode -> 0x24FFFFFF
+            else -> 0x1F202124
+        }
     ): RippleDrawable {
         val content = if (normalColor == 0 && strokeColor == 0) {
             null

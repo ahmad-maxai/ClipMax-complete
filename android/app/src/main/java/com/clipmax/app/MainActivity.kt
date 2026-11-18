@@ -1,9 +1,13 @@
 package com.clipmax.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -30,6 +34,7 @@ class MainActivity : Activity() {
 
     private lateinit var store: ClipStore
     private lateinit var webView: WebView
+    private var rootContainer: FrameLayout? = null
     private var pendingNavId: String? = null
     private var isPageLoaded = false
     private var activityDestroyed = false
@@ -50,12 +55,8 @@ class MainActivity : Activity() {
         store = ClipStore(filesDir)
         ClipStore.addChangeListener(storeChangeListener)
 
-        // Set status and navigation bar background styling to match neutral charcoal theme (#202124)
-        window.statusBarColor = 0xFF202124.toInt()
-        window.navigationBarColor = 0xFF202124.toInt()
-
         webView = WebView(this).apply {
-            setBackgroundColor(0xFF202124.toInt())
+            setBackgroundColor(if (resolveCompanionIsDark()) 0xFF202124.toInt() else 0xFFF4F7F5.toInt())
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -135,8 +136,10 @@ class MainActivity : Activity() {
         // This physically offsets the WebView below the Android status bar (clock, battery)
         // and above the system navigation bar, preventing ANY overlap or touch interference.
         val container = FrameLayout(this).apply {
-            setBackgroundColor(0xFF202124.toInt())
+            setBackgroundColor(if (resolveCompanionIsDark()) 0xFF202124.toInt() else 0xFFF4F7F5.toInt())
         }
+        rootContainer = container
+        applySystemBarTheme()
         val layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -193,8 +196,63 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isSystemNight(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun resolveCompanionIsDark(): Boolean {
+        val prefs = getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+        val saved = runCatching { prefs.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
+        return KeyboardLayoutSpec.resolveThemePalette(saved, isSystemNight()).isNightMode
+    }
+
+    fun applySystemBarTheme() {
+        val isDark = resolveCompanionIsDark()
+        val barColor = if (isDark) 0xFF202124.toInt() else 0xFFF4F7F5.toInt()
+        window.statusBarColor = barColor
+        window.navigationBarColor = barColor
+        rootContainer?.setBackgroundColor(barColor)
+        if (::webView.isInitialized) {
+            webView.setBackgroundColor(barColor)
+        }
+        val lightBars = !isDark
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            window.insetsController?.setSystemBarsAppearance(
+                if (lightBars) mask else 0,
+                mask
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            @Suppress("DEPRECATION")
+            var vis = window.decorView.systemUiVisibility
+            @Suppress("DEPRECATION")
+            vis = if (lightBars) {
+                vis or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else {
+                vis and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            }
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = vis
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applySystemBarTheme()
+        val systemDark = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        if (!activityDestroyed && isPageLoaded && ::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('clipmax:systemThemeChanged', { detail: { systemDark: $systemDark } }))",
+                null
+            )
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        applySystemBarTheme()
         if (isPageLoaded) {
             // Inform the React UI that native state may have been updated (e.g. by IME service)
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)

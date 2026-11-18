@@ -76,6 +76,18 @@ internal object SecondaryToolbarSpec {
                 globeIconFg = 0xFFEAF1ED.toInt(),
                 rippleColor = 0x2A2DD4BF.toInt()
             )
+            !isNightMode -> ToolbarPalette(
+                toolbarBg = 0xFFE8EAED.toInt(),
+                toolbarBottomHairline = 0xFFDADCE0.toInt(),
+                backCircleBg = 0xFF202124.toInt(),
+                backIconFg = 0xFFFFFFFF.toInt(),
+                centerIconFg = 0xFF202124.toInt(),
+                centerLabelFg = 0xFF5F6368.toInt(),
+                globeCircleBg = 0xFFDCE1E7.toInt(),
+                globeCircleBorder = 0xFFDADCE0.toInt(),
+                globeIconFg = 0xFF202124.toInt(),
+                rippleColor = 0x1F202124.toInt()
+            )
             else -> ToolbarPalette(
                 toolbarBg = 0xFF303134.toInt(),
                 toolbarBottomHairline = 0x1FFFFFFF.toInt(),

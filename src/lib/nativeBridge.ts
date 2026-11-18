@@ -20,6 +20,7 @@ export interface ClipMaxNativeBridge {
   setCaptureEnabled(enabled: boolean): void;
   setTheme(theme: string): void;
   getTheme(): string;
+  isSystemNightMode(): boolean;
 }
 
 declare global {

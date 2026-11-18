@@ -32,7 +32,8 @@ internal object OverlayUiSpec {
         val bg = if (isPrimary) palette.colorActiveTabBg else palette.colorChipBg
         val border = when {
             isPrimary && palette.isClassicTheme -> palette.colorAccent
-            isPrimary -> 0x38FFFFFF.toInt() // crisp elevated border for primary suggestion
+            isPrimary && palette.isNightMode -> 0x38FFFFFF.toInt() // crisp elevated border in dark mode
+            isPrimary -> 0x33202124.toInt() // crisp neutral border in light mode
             else -> palette.colorChipBorder
         }
         val fg = when {

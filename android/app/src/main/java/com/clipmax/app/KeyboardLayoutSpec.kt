@@ -257,66 +257,138 @@ internal object KeyboardLayoutSpec {
     }
 
     fun resolveThemePalette(savedTheme: String?, systemNightMode: Boolean): ImeThemePalette {
-        val isClassic = savedTheme == "classic"
-        val isNight = when (savedTheme) {
+        val normalized = savedTheme?.trim()?.lowercase(java.util.Locale.ROOT)
+        val isClassic = normalized == "classic" || normalized == "classic_light"
+        val isNight = when (normalized) {
             "dark", "graphite" -> true
             "light", "classic_light" -> false
             "classic" -> systemNightMode
-            else -> true
+            "system", null, "" -> systemNightMode
+            else -> systemNightMode
         }
         return ImeThemePalette(
             isClassicTheme = isClassic,
             isNightMode = isNight,
-            colorBg = if (isClassic && !isNight) 0xFFECEFF1.toInt()
-                      else if (isClassic) 0xFF151C18.toInt()
-                      else 0xFF202124.toInt(),
-            colorKeyBg = if (isClassic && !isNight) 0xFFFFFFFF.toInt()
-                         else if (isClassic) 0xFF223029.toInt()
-                         else 0xFF3C4043.toInt(),
-            colorKeyBorder = if (isClassic && !isNight) 0xFFD1D9D4.toInt()
-                             else if (isClassic) 0xFF2C3D35.toInt()
-                             else 0x1FFFFFFF.toInt(), // ~12% white micro-border
-            colorKeyText = if (isClassic && !isNight) 0xFF111827.toInt()
-                           else if (isClassic) 0xFFEAF1ED.toInt()
-                           else 0xFFE8EAED.toInt(),
-            colorModBg = if (isClassic && !isNight) 0xFFDFE5E1.toInt()
-                         else if (isClassic) 0xFF1A2520.toInt()
-                         else 0xFF5F6368.toInt(),
-            colorModText = if (isClassic && !isNight) 0xFF374151.toInt()
-                           else if (isClassic) 0xFF9CB3A9.toInt()
-                           else 0xFFE8EAED.toInt(),
-            colorAccent = if (isClassic) (if (isNight) 0xFF2DD4BF.toInt() else 0xFF0D9488.toInt())
-                          else 0xFFE8EAED.toInt(),
-            colorAccentText = if (isClassic) (if (isNight) 0xFF0A1F18.toInt() else 0xFFFFFFFF.toInt())
-                              else 0xFF202124.toInt(),
-            colorHintText = if (isClassic) (if (isNight) 0xFF7A8E85.toInt() else 0xFF8A9992.toInt())
-                            else 0xFF9AA0A6.toInt(),
-            colorChipBg = if (isClassic) (if (isNight) 0xFF1E2C26.toInt() else 0xFFFFFFFF.toInt())
-                          else 0xFF303134.toInt(),
-            colorChipBorder = if (isClassic) (if (isNight) 0xFF2C3D35.toInt() else 0xFFD1D9D4.toInt())
-                              else 0x1FFFFFFF.toInt(), // ~12% white micro-border
-            colorSnippetBg = if (isClassic) (if (isNight) 0xFF141C18.toInt() else 0xFFF3F6F4.toInt())
-                             else 0xFF303134.toInt(),
-            colorSnippetBorder = if (isClassic) (if (isNight) 0xFF23322B.toInt() else 0xFFE2E8E4.toInt())
-                                 else 0x1FFFFFFF.toInt(), // ~12% white micro-border
-            colorActiveTabBg = if (isClassic) (if (isNight) 0xFF1A3A32.toInt() else 0xFFCCFBF1.toInt())
-                               else 0xFF484C52.toInt(),
-            colorActiveTabText = if (isClassic) (if (isNight) 0xFF2DD4BF.toInt() else 0xFF0F766E.toInt())
-                                 else 0xFFFFFFFF.toInt(),
-            colorDangerText = if (isClassic) (if (isNight) 0xFFF87171.toInt() else 0xFFDC2626.toInt())
-                              else 0xFFF87171.toInt(),
-            colorAltDeepBg = if (isClassic && !isNight) 0xFFE9EFEA.toInt()
-                             else if (isClassic) 0xFF141C18.toInt()
-                             else 0xFF303134.toInt(),
-            colorAltPrimaryBg = if (isClassic && !isNight) 0xFFDFE5E1.toInt()
-                                else if (isClassic) 0xFF1A2520.toInt()
-                                else 0xFF3C4043.toInt(),
-            colorAltPrimaryText = if (isClassic && !isNight) 0xFF111827.toInt()
-                                  else if (isClassic) 0xFFEAF1ED.toInt()
-                                  else 0xFFE8EAED.toInt(),
-            colorToolbarBg = if (isClassic && !isNight) 0xFFECEFF1.toInt()
-                             else if (isClassic) 0xFF151C18.toInt()
-                             else 0xFF303134.toInt()
+            colorBg = when {
+                isClassic && !isNight -> 0xFFECEFF1.toInt()
+                isClassic -> 0xFF151C18.toInt()
+                !isNight -> 0xFFF1F3F4.toInt()
+                else -> 0xFF202124.toInt()
+            },
+            colorKeyBg = when {
+                isClassic && !isNight -> 0xFFFFFFFF.toInt()
+                isClassic -> 0xFF223029.toInt()
+                !isNight -> 0xFFFFFFFF.toInt()
+                else -> 0xFF3C4043.toInt()
+            },
+            colorKeyBorder = when {
+                isClassic && !isNight -> 0xFFD1D9D4.toInt()
+                isClassic -> 0xFF2C3D35.toInt()
+                !isNight -> 0xFFDADCE0.toInt()
+                else -> 0x1FFFFFFF.toInt() // ~12% white micro-border
+            },
+            colorKeyText = when {
+                isClassic && !isNight -> 0xFF111827.toInt()
+                isClassic -> 0xFFEAF1ED.toInt()
+                !isNight -> 0xFF202124.toInt()
+                else -> 0xFFE8EAED.toInt()
+            },
+            colorModBg = when {
+                isClassic && !isNight -> 0xFFDFE5E1.toInt()
+                isClassic -> 0xFF1A2520.toInt()
+                !isNight -> 0xFFDCE1E7.toInt()
+                else -> 0xFF5F6368.toInt()
+            },
+            colorModText = when {
+                isClassic && !isNight -> 0xFF374151.toInt()
+                isClassic -> 0xFF9CB3A9.toInt()
+                !isNight -> 0xFF3C4043.toInt()
+                else -> 0xFFE8EAED.toInt()
+            },
+            colorAccent = when {
+                isClassic && isNight -> 0xFF2DD4BF.toInt()
+                isClassic -> 0xFF0D9488.toInt()
+                !isNight -> 0xFF202124.toInt()
+                else -> 0xFFE8EAED.toInt()
+            },
+            colorAccentText = when {
+                isClassic && isNight -> 0xFF0A1F18.toInt()
+                isClassic -> 0xFFFFFFFF.toInt()
+                !isNight -> 0xFFFFFFFF.toInt()
+                else -> 0xFF202124.toInt()
+            },
+            colorHintText = when {
+                isClassic && isNight -> 0xFF7A8E85.toInt()
+                isClassic -> 0xFF8A9992.toInt()
+                !isNight -> 0xFF5F6368.toInt()
+                else -> 0xFF9AA0A6.toInt()
+            },
+            colorChipBg = when {
+                isClassic && isNight -> 0xFF1E2C26.toInt()
+                isClassic -> 0xFFFFFFFF.toInt()
+                !isNight -> 0xFFFFFFFF.toInt()
+                else -> 0xFF303134.toInt()
+            },
+            colorChipBorder = when {
+                isClassic && isNight -> 0xFF2C3D35.toInt()
+                isClassic -> 0xFFD1D9D4.toInt()
+                !isNight -> 0xFFDADCE0.toInt()
+                else -> 0x1FFFFFFF.toInt() // ~12% white micro-border
+            },
+            colorSnippetBg = when {
+                isClassic && isNight -> 0xFF141C18.toInt()
+                isClassic -> 0xFFF3F6F4.toInt()
+                !isNight -> 0xFFF8F9FA.toInt()
+                else -> 0xFF303134.toInt()
+            },
+            colorSnippetBorder = when {
+                isClassic && isNight -> 0xFF23322B.toInt()
+                isClassic -> 0xFFE2E8E4.toInt()
+                !isNight -> 0xFFE1E3E6.toInt()
+                else -> 0x1FFFFFFF.toInt() // ~12% white micro-border
+            },
+            colorActiveTabBg = when {
+                isClassic && isNight -> 0xFF1A3A32.toInt()
+                isClassic -> 0xFFCCFBF1.toInt()
+                !isNight -> 0xFFE0E5EB.toInt()
+                else -> 0xFF484C52.toInt()
+            },
+            colorActiveTabText = when {
+                isClassic && isNight -> 0xFF2DD4BF.toInt()
+                isClassic -> 0xFF0F766E.toInt()
+                !isNight -> 0xFF202124.toInt()
+                else -> 0xFFFFFFFF.toInt()
+            },
+            colorDangerText = when {
+                isClassic && isNight -> 0xFFF87171.toInt()
+                isClassic -> 0xFFDC2626.toInt()
+                !isNight -> 0xFFD93025.toInt()
+                else -> 0xFFF87171.toInt()
+            },
+            colorAltDeepBg = when {
+                isClassic && !isNight -> 0xFFE9EFEA.toInt()
+                isClassic -> 0xFF141C18.toInt()
+                !isNight -> 0xFFE8EAED.toInt()
+                else -> 0xFF303134.toInt()
+            },
+            colorAltPrimaryBg = when {
+                isClassic && !isNight -> 0xFFDFE5E1.toInt()
+                isClassic -> 0xFF1A2520.toInt()
+                !isNight -> 0xFFFFFFFF.toInt()
+                else -> 0xFF3C4043.toInt()
+            },
+            colorAltPrimaryText = when {
+                isClassic && !isNight -> 0xFF111827.toInt()
+                isClassic -> 0xFFEAF1ED.toInt()
+                !isNight -> 0xFF202124.toInt()
+                else -> 0xFFE8EAED.toInt()
+            },
+            colorToolbarBg = when {
+                isClassic && !isNight -> 0xFFECEFF1.toInt()
+                isClassic -> 0xFF151C18.toInt()
+                !isNight -> 0xFFE8EAED.toInt()
+                else -> 0xFF303134.toInt()
+            }
         )
     }
 

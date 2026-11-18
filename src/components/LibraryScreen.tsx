@@ -8,7 +8,6 @@ import {
   Settings,
   Sun,
   X,
-  Keyboard,
   ChevronDown,
   Download,
 } from "lucide-react";
@@ -189,12 +188,6 @@ export function LibraryScreen({
         title={<Wordmark />}
         right={
           <>
-            <IconBtn
-              label="ClipMax Keyboard (IME)"
-              onClick={() => nav({ name: "keyboard" })}
-            >
-              <Keyboard className="h-4.5 w-4.5" />
-            </IconBtn>
             <IconBtn
               label={dark ? "Switch to light theme" : "Switch to dark theme"}
               onClick={onToggleTheme}

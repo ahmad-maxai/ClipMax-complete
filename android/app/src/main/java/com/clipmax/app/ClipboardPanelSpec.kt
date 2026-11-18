@@ -74,4 +74,37 @@ internal object ClipboardPanelSpec {
             )
         }
     }
+
+    enum class RowHeightMode {
+        WRAP_CONTENT,
+        MATCH_PARENT
+    }
+
+    data class GridRowLayoutSpec(
+        val primaryCardHeightMode: RowHeightMode,
+        val hasSecondCard: Boolean,
+        val secondaryCardHeightMode: RowHeightMode?
+    )
+
+    /**
+     * Resolves two-column grid row height behavior.
+     * Paired rows use MATCH_PARENT so adjacent cards equalize height cleanly;
+     * single-card trailing odd rows MUST use WRAP_CONTENT because Android LinearLayout
+     * collapses a MATCH_PARENT child paired with a 0-height spacer to 0px height.
+     */
+    fun resolveGridRowLayout(hasSecondCard: Boolean): GridRowLayoutSpec {
+        return if (hasSecondCard) {
+            GridRowLayoutSpec(
+                primaryCardHeightMode = RowHeightMode.MATCH_PARENT,
+                hasSecondCard = true,
+                secondaryCardHeightMode = RowHeightMode.MATCH_PARENT
+            )
+        } else {
+            GridRowLayoutSpec(
+                primaryCardHeightMode = RowHeightMode.WRAP_CONTENT,
+                hasSecondCard = false,
+                secondaryCardHeightMode = null
+            )
+        }
+    }
 }

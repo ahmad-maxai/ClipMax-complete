@@ -6,8 +6,6 @@ const STORAGE_KEY_ITEMS = "clipmax_items_v1";
 const STORAGE_KEY_RETENTION = "clipmax_retention_v1";
 const STORAGE_KEY_CAPTURE = "clipmax_capture_v1";
 const STORAGE_KEY_DRAFT = "clipmax_draft_v1";
-const STORAGE_KEY_IME_ENABLED = "clipmax_ime_enabled_v1";
-const STORAGE_KEY_IME_ACTIVE = "clipmax_ime_active_v1";
 
 const H = 3600_000;
 const now = Date.now();
@@ -132,34 +130,6 @@ export function saveStoredDraft(draft: ClipDraft): void {
 export function clearStoredDraft(): void {
   try {
     localStorage.removeItem(STORAGE_KEY_DRAFT);
-  } catch {}
-}
-
-export function getStoredKeyboardEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_IME_ENABLED);
-    if (raw !== null) return raw === "true";
-  } catch {}
-  return true; // Default to enabled so user can immediately use it
-}
-
-export function saveStoredKeyboardEnabled(enabled: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_IME_ENABLED, String(enabled));
-  } catch {}
-}
-
-export function getStoredActiveIme(): string {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_IME_ACTIVE);
-    if (raw) return raw;
-  } catch {}
-  return "clipmax";
-}
-
-export function saveStoredActiveIme(ime: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_IME_ACTIVE, ime);
   } catch {}
 }
 

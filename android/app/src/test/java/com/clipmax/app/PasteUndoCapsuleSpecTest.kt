@@ -348,7 +348,7 @@ class PasteUndoCapsuleSpecTest {
 
         // Moving cursor away after large grace period dismisses cleanly
         val dismissedAfterGrace = controller.onEditorSelectionChanged(
-            nowMs = 3_500L,
+            nowMs = 3_600L,
             hasSelection = false,
             cursorMoved = true,
             canUndoNow = false,

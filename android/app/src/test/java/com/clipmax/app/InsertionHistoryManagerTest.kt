@@ -470,4 +470,94 @@ class InsertionHistoryManagerTest {
         assertTrue(redoRes.success)
         assertEquals(docPrefix + hugeClip, buffer.toString())
     }
+
+    @Test
+    fun testChromeContentEditableNbspAndClampedSurroundingTextUndoRedo() {
+        val history = InsertionHistoryManager()
+        val initialTarget = InsertionHistoryManager.EditorTarget("com.android.chrome", 101, 1, sessionId = 42L)
+        val transientZeroTarget = InsertionHistoryManager.EditorTarget("com.android.chrome", 0, 0, sessionId = 42L)
+        assertTrue(initialTarget.isCompatibleWith(transientZeroTarget))
+
+        val docPrefix = "Prompt: "
+        val pasted = "Section A words\nLine two with spaces. ".repeat(120) // > 4,500 chars
+        val hostBuffer = StringBuilder(docPrefix)
+
+        // Simulate Chrome contenteditable mapping spaces to NBSP and clamping surrounding text to 512 chars
+        val chromeGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = transientZeroTarget
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String? {
+                if (maxChars > 512) return ""
+                val start = maxOf(0, hostBuffer.length - minOf(maxChars, 512))
+                return hostBuffer.substring(start, hostBuffer.length)
+            }
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                hostBuffer.append(text.replace(' ', '\u00A0'))
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(chromeGateway.commitText(pasted))
+        assertTrue(history.recordClipInsertion(initialTarget, pasted, docPrefix, ""))
+        assertTrue(history.canSafelyUndo(chromeGateway).allowed)
+
+        val undoRes = history.undo(chromeGateway)
+        assertTrue(undoRes.success)
+        assertEquals(docPrefix, hostBuffer.toString())
+
+        assertTrue(history.canSafelyRedo(chromeGateway).allowed)
+        val redoRes = history.redo(chromeGateway)
+        assertTrue(redoRes.success)
+        assertEquals(docPrefix + pasted.replace(' ', '\u00A0'), hostBuffer.toString())
+    }
+
+    @Test
+    fun testYoutubeSingleLineSearchNewlineToSpaceNormalizationUndoRedo() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.google.android.youtube", 55, 1, sessionId = 7L)
+        val hostBuffer = StringBuilder("query: ")
+        val multiLineClip = "first line\nsecond line\nthird line"
+
+        val youtubeSearchGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String? {
+                val start = maxOf(0, hostBuffer.length - maxChars)
+                return hostBuffer.substring(start, hostBuffer.length)
+            }
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > hostBuffer.length) return false
+                hostBuffer.delete(hostBuffer.length - length, hostBuffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                hostBuffer.append(text.replace('\n', ' '))
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(youtubeSearchGateway.commitText(multiLineClip))
+        assertTrue(history.recordClipInsertion(target, multiLineClip, "query: ", ""))
+        assertTrue(history.canSafelyUndo(youtubeSearchGateway).allowed)
+
+        val undoRes = history.undo(youtubeSearchGateway)
+        assertTrue(undoRes.success)
+        assertEquals("query: ", hostBuffer.toString())
+
+        assertTrue(history.canSafelyRedo(youtubeSearchGateway).allowed)
+        val redoRes = history.redo(youtubeSearchGateway)
+        assertTrue(redoRes.success)
+        assertEquals("query: " + multiLineClip.replace('\n', ' '), hostBuffer.toString())
+    }
 }

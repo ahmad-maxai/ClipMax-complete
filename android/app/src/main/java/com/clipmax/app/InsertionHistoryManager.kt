@@ -35,7 +35,9 @@ internal class InsertionHistoryManager(
         fun isCompatibleWith(other: EditorTarget): Boolean {
             if (packageName != other.packageName) return false
             if (sessionId != other.sessionId) return false
-            if ((inputType and InputFieldPolicy.TYPE_MASK_CLASS) != (other.inputType and InputFieldPolicy.TYPE_MASK_CLASS)) {
+            val thisClass = inputType and InputFieldPolicy.TYPE_MASK_CLASS
+            val otherClass = other.inputType and InputFieldPolicy.TYPE_MASK_CLASS
+            if (thisClass != 0 && otherClass != 0 && thisClass != otherClass) {
                 return false
             }
             if (fieldId != 0 && other.fieldId != 0 && fieldId != other.fieldId) {
@@ -160,14 +162,35 @@ internal class InsertionHistoryManager(
         return text.replace("\r\n", "\n").replace('\r', '\n')
     }
 
+    private fun normalizeHostSpacesAndLines(text: String, collapseNewlinesToSpace: Boolean = false): String {
+        var out = normalizeLineEndings(text)
+        if (out.indexOf('\u00A0') >= 0) {
+            out = out.replace('\u00A0', ' ')
+        }
+        if (out.indexOf('\u2007') >= 0) {
+            out = out.replace('\u2007', ' ')
+        }
+        if (out.indexOf('\u202F') >= 0) {
+            out = out.replace('\u202F', ' ')
+        }
+        if (collapseNewlinesToSpace && out.indexOf('\n') >= 0) {
+            out = out.replace('\n', ' ')
+        }
+        return out
+    }
+
     private fun suffixMatchesAnchor(prefix: String, anchor: String): Boolean {
         if (anchor.isEmpty()) return true
         val rawExpected = if (prefix.length >= anchor.length) anchor else anchor.takeLast(prefix.length)
         if (rawExpected.isEmpty() || prefix.endsWith(rawExpected)) return true
-        val normAnchor = normalizeLineEndings(anchor)
-        if (normAnchor != anchor) {
-            val normExpected = if (prefix.length >= normAnchor.length) normAnchor else normAnchor.takeLast(prefix.length)
-            if (normExpected.isEmpty() || prefix.endsWith(normExpected)) return true
+        val normPrefix = normalizeHostSpacesAndLines(prefix)
+        val normAnchor = normalizeHostSpacesAndLines(anchor)
+        val normExpected = if (normPrefix.length >= normAnchor.length) normAnchor else normAnchor.takeLast(normPrefix.length)
+        if (normExpected.isEmpty() || normPrefix.endsWith(normExpected)) return true
+        if (normPrefix.indexOf('\n') < 0 && normAnchor.indexOf('\n') >= 0) {
+            val singleAnchor = normalizeHostSpacesAndLines(anchor, collapseNewlinesToSpace = true)
+            val singleExpected = if (normPrefix.length >= singleAnchor.length) singleAnchor else singleAnchor.takeLast(normPrefix.length)
+            if (singleExpected.isEmpty() || normPrefix.endsWith(singleExpected)) return true
         }
         return false
     }
@@ -186,19 +209,45 @@ internal class InsertionHistoryManager(
                 return normInserted
             }
         }
-        // Clamped host editor buffer handling for large texts (thousands of chars):
-        // If the host editor exposes a limited surrounding text window (e.g. 1024 or 2048 chars),
-        // verify that the exposed window matches the trailing portion of the inserted text.
-        if (before.isNotEmpty() && before.length < entry.insertedText.length) {
-            val minSample = minOf(entry.insertedText.length, ANCHOR_LENGTH)
-            if (before.length >= minSample && entry.insertedText.endsWith(before)) {
+        // WebView / Chrome contenteditable and single-line bar normalization fallback:
+        // Chromium often maps spaces to NBSP (\u00A0) or newlines to spaces in single-line inputs.
+        val normBefore = normalizeHostSpacesAndLines(before)
+        val spaceNormInserted = normalizeHostSpacesAndLines(entry.insertedText)
+        if (normBefore.length >= spaceNormInserted.length && normBefore.endsWith(spaceNormInserted)) {
+            val prefix = normBefore.substring(0, normBefore.length - spaceNormInserted.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return spaceNormInserted
+            }
+        }
+        val singleLineEligible = before.indexOf('\n') < 0 && entry.insertedText.indexOf('\n') >= 0
+        val singleLineInserted = if (singleLineEligible) {
+            normalizeHostSpacesAndLines(entry.insertedText, collapseNewlinesToSpace = true)
+        } else null
+        if (singleLineInserted != null && normBefore.length >= singleLineInserted.length && normBefore.endsWith(singleLineInserted)) {
+            val prefix = normBefore.substring(0, normBefore.length - singleLineInserted.length)
+            if (suffixMatchesAnchor(prefix, entry.beforeAnchor)) {
+                return singleLineInserted
+            }
+        }
+        // Clamped host editor buffer handling for large texts (e.g. Chrome/WebView returning 64..2048 chars):
+        // Verify that the exposed window matches the trailing portion of the inserted text.
+        if (before.isNotEmpty()) {
+            val minSample = minOf(spaceNormInserted.length, 32)
+            if (before.length < entry.insertedText.length && before.length >= minOf(entry.insertedText.length, minSample) &&
+                entry.insertedText.endsWith(before)
+            ) {
                 return entry.insertedText
             }
-            if (normInserted != entry.insertedText && before.length >= minOf(normInserted.length, minSample)) {
-                val normBefore = normalizeLineEndings(before)
-                if (normInserted.endsWith(normBefore) || normInserted.endsWith(before)) {
-                    return normInserted
-                }
+            if (normBefore.length < spaceNormInserted.length && normBefore.length >= minSample &&
+                spaceNormInserted.endsWith(normBefore)
+            ) {
+                return spaceNormInserted
+            }
+            if (singleLineInserted != null && normBefore.length < singleLineInserted.length &&
+                normBefore.length >= minOf(singleLineInserted.length, 32) &&
+                singleLineInserted.endsWith(normBefore)
+            ) {
+                return singleLineInserted
             }
         }
         return null
@@ -234,8 +283,20 @@ internal class InsertionHistoryManager(
             return null
         }
         if (after.startsWith(afterAnchor)) return null
-        val normAnchor = normalizeLineEndings(afterAnchor)
-        if (normAnchor != afterAnchor && after.startsWith(normAnchor)) return null
+        val normAfter = normalizeHostSpacesAndLines(after)
+        val normAnchor = normalizeHostSpacesAndLines(afterAnchor)
+        if (normAfter.startsWith(normAnchor)) return null
+        if (normAfter.indexOf('\n') < 0 && normAnchor.indexOf('\n') >= 0) {
+            val singleAnchor = normalizeHostSpacesAndLines(afterAnchor, collapseNewlinesToSpace = true)
+            if (normAfter.startsWith(singleAnchor)) return null
+            if (normAfter.length < singleAnchor.length && singleAnchor.startsWith(normAfter) && normAfter.isNotEmpty()) {
+                return null
+            }
+        }
+        if (normAfter.length < normAnchor.length && normAnchor.startsWith(normAfter) && normAfter.isNotEmpty()) {
+            // Clamped trailing buffer in WebView/Chrome
+            return null
+        }
         return Availability(false, "Trailing text changed; cannot safely modify.")
     }
 
@@ -255,6 +316,9 @@ internal class InsertionHistoryManager(
         var before = gateway.textBeforeCursor(requestLen)
         if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
+        }
+        if ((before == null || (before.isEmpty() && requestLen > 512)) && requestLen > 512) {
+            before = gateway.textBeforeCursor(512)
         }
         if (before == null) {
             return Availability(false, "App did not expose surrounding text.")
@@ -310,6 +374,9 @@ internal class InsertionHistoryManager(
         var before = gateway.textBeforeCursor(requestLen)
         if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
+        }
+        if ((before == null || (before.isEmpty() && requestLen > 512)) && requestLen > 512) {
+            before = gateway.textBeforeCursor(512)
         }
         if (before == null) {
             return OperationResult(false, "App did not expose surrounding text.")
