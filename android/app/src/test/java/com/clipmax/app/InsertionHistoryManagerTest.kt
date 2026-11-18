@@ -284,18 +284,14 @@ class InsertionHistoryManagerTest {
     fun testLargeTextPasteUndoRedoThousandsOfCharacters() {
         val history = InsertionHistoryManager()
         val target = InsertionHistoryManager.EditorTarget("com.example.docs", 1, 1)
-        val initialDoc = "Document Title
-
-Paragraph 1: Background.
-"
+        val initialDoc = "Document Title\n\nParagraph 1: Background.\n"
         val editor = FakeHostEditorGateway(initialText = initialDoc, target = target)
 
         // Build large text of ~12,000 characters
         val section = "ClipMax high-performance clipboard with safe undo/redo management. "
         val largeClip = StringBuilder().apply {
             while (length < 12_000) {
-                append(section).append("Index: ").append(length).append("
-")
+                append(section).append("Index: ").append(length).append("\n")
             }
         }.toString()
         assertTrue(largeClip.length >= 12_000)
