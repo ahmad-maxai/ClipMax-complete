@@ -402,8 +402,18 @@ internal class InsertionHistoryManager(
             add(entry.insertedText)
             add(normInserted)
             add(spaceNormInserted)
-            singleLineSpaceInserted?.let { add(it) }
-            singleLineStrippedInserted?.let { add(it) }
+            singleLineSpaceInserted?.let {
+                add(it)
+                if (entry.kind == ActionKind.CLIP_INSERT) {
+                    add(it.trim())
+                }
+            }
+            singleLineStrippedInserted?.let {
+                add(it)
+                if (entry.kind == ActionKind.CLIP_INSERT) {
+                    add(it.trim())
+                }
+            }
             collapsedWsInserted?.let { add(it) }
             trimmedInserted?.let { add(it) }
             if (entry.kind == ActionKind.CLIP_INSERT) {
