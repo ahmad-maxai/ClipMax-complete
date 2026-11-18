@@ -185,6 +185,21 @@ internal class InsertionHistoryManager(
                 return normInserted
             }
         }
+        // Clamped host editor buffer handling for large texts (thousands of chars):
+        // If the host editor exposes a limited surrounding text window (e.g. 1024 or 2048 chars),
+        // verify that the exposed window matches the trailing portion of the inserted text.
+        if (before.isNotEmpty() && before.length < entry.insertedText.length) {
+            val minSample = minOf(entry.insertedText.length, ANCHOR_LENGTH)
+            if (before.length >= minSample && entry.insertedText.endsWith(before)) {
+                return entry.insertedText
+            }
+            if (normInserted != entry.insertedText && before.length >= minOf(normInserted.length, minSample)) {
+                val normBefore = normalizeLineEndings(before)
+                if (normInserted.endsWith(normBefore) || normInserted.endsWith(before)) {
+                    return normInserted
+                }
+            }
+        }
         return null
     }
 
@@ -211,7 +226,12 @@ internal class InsertionHistoryManager(
     private fun checkAfterAnchor(gateway: HostEditorGateway, afterAnchor: String): Availability? {
         if (afterAnchor.isEmpty()) return null
         val after = gateway.textAfterCursor(afterAnchor.length)
-            ?: return Availability(false, "App did not expose trailing text.")
+        if (after == null) {
+            // Uncooperative trailing context: if the host returns null for trailing text
+            // (e.g. in large documents or certain WebViews), allow proceeding if the
+            // preceding text check confirms the insertion is still at the cursor.
+            return null
+        }
         if (after.startsWith(afterAnchor)) return null
         val normAnchor = normalizeLineEndings(afterAnchor)
         if (normAnchor != afterAnchor && after.startsWith(normAnchor)) return null
@@ -231,8 +251,13 @@ internal class InsertionHistoryManager(
         }
 
         val requestLen = entry.insertedText.length + entry.beforeAnchor.length
-        val before = gateway.textBeforeCursor(requestLen)
-            ?: return Availability(false, "App did not expose surrounding text.")
+        var before = gateway.textBeforeCursor(requestLen)
+        if (before == null && requestLen > 2048) {
+            before = gateway.textBeforeCursor(2048)
+        }
+        if (before == null) {
+            return Availability(false, "App did not expose surrounding text.")
+        }
 
         val matched = resolveUndoMatchedText(before, entry)
         if (matched == null) {
@@ -281,8 +306,13 @@ internal class InsertionHistoryManager(
         }
         val entry = undoStack.peekFirst() ?: return OperationResult(false, "Nothing to undo.")
         val requestLen = entry.insertedText.length + entry.beforeAnchor.length
-        val before = gateway.textBeforeCursor(requestLen)
-            ?: return OperationResult(false, "App did not expose surrounding text.")
+        var before = gateway.textBeforeCursor(requestLen)
+        if (before == null && requestLen > 2048) {
+            before = gateway.textBeforeCursor(2048)
+        }
+        if (before == null) {
+            return OperationResult(false, "App did not expose surrounding text.")
+        }
         val matchedInserted = resolveUndoMatchedText(before, entry)
             ?: return OperationResult(false, "Inserted text or cursor position changed.")
 

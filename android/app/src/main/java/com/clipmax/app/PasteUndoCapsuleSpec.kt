@@ -105,19 +105,24 @@ internal object PasteUndoCapsuleSpec {
             canRedoNow: Boolean
         ): Boolean {
             if (!isActive) return false
-            if (nowMs - lastActionElapsedMs <= SELF_UPDATE_GRACE_MS) {
-                return false
-            }
-            if (hasSelection || cursorMoved) {
+            if (hasSelection) {
                 dismiss()
                 return true
             }
             val expectedStillValid = if (isRedoMode) canRedoNow else canUndoNow
-            if (!expectedStillValid) {
-                dismiss()
-                return true
+            if (expectedStillValid) {
+                // The paste/undo/redo operation remains completely valid and ready to be undone/redone;
+                // do not dismiss on arbitrary timers or post-paste layout reflow cursor adjustments.
+                return false
             }
-            return false
+            // If the expected operation is not yet valid immediately after action (within grace window, e.g.
+            // host editor asynchronous text layout and IPC reflow in progress), give the host time to settle.
+            if (nowMs - lastActionElapsedMs <= SELF_UPDATE_GRACE_MS) {
+                return false
+            }
+            // Operation is no longer valid (e.g. user moved cursor elsewhere, modified text, or switched field)
+            dismiss()
+            return true
         }
 
         fun dismiss() {

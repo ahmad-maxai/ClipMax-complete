@@ -222,4 +222,84 @@ class PasteUndoCapsuleSpecTest {
         assertTrue(capsule.isActive)
         assertTrue(history.hasAnyUndoEntries())
     }
+
+    @Test
+    fun testLargeTextPasteDoesNotDismissFromDelayedPostPasteSelectionUpdate() {
+        val controller = PasteUndoCapsuleSpec.PasteUndoCapsuleController()
+        val history = InsertionHistoryManager()
+        val gateway = FakeEditorGateway("Doc: ")
+
+        val largeText = "Large clipboard item content ".repeat(200)
+        gateway.commitText(largeText)
+        assertTrue(history.recordClipInsertion(gateway.currentTarget(), largeText, "Doc: ", ""))
+
+        controller.onPasteSucceeded(nowMs = 1_000L)
+        assertTrue(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+
+        // Delayed selection update arrives at 800ms (nowMs = 1,800L, > 350ms SELF_UPDATE_GRACE_MS)
+        // because host editor was formatting thousands of characters across IPC.
+        // Since canUndoNow is true, capsule MUST NOT dismiss prematurely from an arbitrary timer.
+        val dismissed = controller.onEditorSelectionChanged(
+            nowMs = 1_800L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = history.canSafelyUndo(gateway).allowed,
+            canRedoNow = history.canSafelyRedo(gateway).allowed
+        )
+        assertFalse("Capsule must not dismiss when operation is still valid", dismissed)
+        assertTrue(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.UNDO_AVAILABLE, controller.currentState)
+
+        // User taps Undo
+        val undoRes = history.undo(gateway)
+        assertTrue(undoRes.success)
+        assertEquals("Doc: ", gateway.buffer.toString())
+        controller.onUndoSucceeded(nowMs = 2_000L)
+        assertTrue(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.REDO_AVAILABLE, controller.currentState)
+
+        // Another delayed selection update after Undo
+        val dismissedAfterUndo = controller.onEditorSelectionChanged(
+            nowMs = 3_000L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = history.canSafelyUndo(gateway).allowed,
+            canRedoNow = history.canSafelyRedo(gateway).allowed
+        )
+        assertFalse(dismissedAfterUndo)
+        assertTrue(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.REDO_AVAILABLE, controller.currentState)
+
+        // Tapping elsewhere (moving cursor away) invalidates operation and dismisses
+        val dismissedOnMove = controller.onEditorSelectionChanged(
+            nowMs = 4_000L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = false,
+            canRedoNow = false
+        )
+        assertTrue(dismissedOnMove)
+        assertFalse(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.HIDDEN, controller.currentState)
+    }
+
+    @Test
+    fun testActiveTextSelectionDismissesCapsuleImmediately() {
+        val controller = PasteUndoCapsuleSpec.PasteUndoCapsuleController()
+        controller.onPasteSucceeded(nowMs = 1_000L)
+        assertTrue(controller.isActive)
+
+        // Selecting text dismisses immediately
+        val dismissed = controller.onEditorSelectionChanged(
+            nowMs = 1_050L,
+            hasSelection = true,
+            cursorMoved = false,
+            canUndoNow = true,
+            canRedoNow = false
+        )
+        assertTrue(dismissed)
+        assertFalse(controller.isActive)
+        assertEquals(PasteUndoCapsuleSpec.CapsuleState.HIDDEN, controller.currentState)
+    }
 }

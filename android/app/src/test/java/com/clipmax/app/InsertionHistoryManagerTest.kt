@@ -16,7 +16,8 @@ class InsertionHistoryManagerTest {
         var passwordField: Boolean = false,
         var selectionActive: Boolean = false,
         var exposeContext: Boolean = true,
-        var normalizeCrlf: Boolean = false
+        var normalizeCrlf: Boolean = false,
+        var maxSurroundingChars: Int? = null
     ) : InsertionHistoryManager.HostEditorGateway {
         val buffer = StringBuilder(initialText)
         var cursor = initialCursor
@@ -27,7 +28,8 @@ class InsertionHistoryManagerTest {
 
         override fun textBeforeCursor(maxChars: Int): String? {
             if (!exposeContext) return null
-            val start = (cursor - maxChars).coerceAtLeast(0)
+            val effective = maxSurroundingChars?.let { minOf(maxChars, it) } ?: maxChars
+            val start = (cursor - effective).coerceAtLeast(0)
             return buffer.substring(start, cursor)
         }
 
@@ -276,5 +278,159 @@ class InsertionHistoryManagerTest {
         assertTrue(history.rollbackLastRedo(redoRes.entry!!))
         assertFalse(history.hasAnyUndoEntries())
         assertTrue(history.hasAnyRedoEntries())
+    }
+
+    @Test
+    fun testLargeTextPasteUndoRedoThousandsOfCharacters() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.example.docs", 1, 1)
+        val initialDoc = "Document Title
+
+Paragraph 1: Background.
+"
+        val editor = FakeHostEditorGateway(initialText = initialDoc, target = target)
+
+        // Build large text of ~12,000 characters
+        val section = "ClipMax high-performance clipboard with safe undo/redo management. "
+        val largeClip = StringBuilder().apply {
+            while (length < 12_000) {
+                append(section).append("Index: ").append(length).append("
+")
+            }
+        }.toString()
+        assertTrue(largeClip.length >= 12_000)
+
+        val beforeAnchor = editor.textBeforeCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+        val afterAnchor = editor.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+
+        assertTrue(editor.commitText(largeClip))
+        assertEquals(initialDoc + largeClip, editor.buffer.toString())
+        assertTrue(history.recordClipInsertion(target, largeClip, beforeAnchor, afterAnchor))
+
+        // Undo large paste
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoRes = history.undo(editor)
+        assertTrue(undoRes.success)
+        assertEquals(initialDoc, editor.buffer.toString())
+        assertEquals(initialDoc.length, editor.cursor)
+
+        // Redo large paste
+        assertTrue(history.canSafelyRedo(editor).allowed)
+        val redoRes = history.redo(editor)
+        assertTrue(redoRes.success)
+        assertEquals(initialDoc + largeClip, editor.buffer.toString())
+
+        // Second Undo/Redo cycle
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        assertTrue(history.undo(editor).success)
+        assertEquals(initialDoc, editor.buffer.toString())
+        assertTrue(history.canSafelyRedo(editor).allowed)
+        assertTrue(history.redo(editor).success)
+        assertEquals(initialDoc + largeClip, editor.buffer.toString())
+    }
+
+    @Test
+    fun testLargeTextPasteWithClampedHostEditorBuffer() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("org.chromium.chrome", 2, 1)
+        val initial = "Note prefix: "
+        // Host editor clamps surrounding text queries to at most 1024 characters
+        val editor = FakeHostEditorGateway(
+            initialText = initial,
+            target = target,
+            maxSurroundingChars = 1024
+        )
+
+        // Large paste of 6,500 characters
+        val chunk = "Large paragraph of text with rich details and numbers 1234567890. "
+        val largeClip = chunk.repeat(100)
+        assertTrue(largeClip.length > 6_000)
+
+        val beforeAnchor = editor.textBeforeCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+        val afterAnchor = editor.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+
+        assertTrue(editor.commitText(largeClip))
+        assertTrue(history.recordClipInsertion(target, largeClip, beforeAnchor, afterAnchor))
+
+        // Clamped buffer returns only 1024 chars; history manager must match tail and allow complete undo
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoRes = history.undo(editor)
+        assertTrue(undoRes.success)
+        assertEquals(initial, editor.buffer.toString())
+        assertEquals(initial.length, editor.cursor)
+
+        // Redo restores full text even on clamped editor
+        assertTrue(history.canSafelyRedo(editor).allowed)
+        val redoRes = history.redo(editor)
+        assertTrue(redoRes.success)
+        assertEquals(initial + largeClip, editor.buffer.toString())
+    }
+
+    @Test
+    fun testLargeTextWithNormalizedCrlfPreservesExactRestoration() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.android.notepad", 3, 1)
+        val initial = "Header
+"
+        val editor = FakeHostEditorGateway(initialText = initial, target = target, normalizeCrlf = true)
+
+        // 500 lines separated by 
+
+        val crlfClip = (1..500).joinToString("
+") { "Line item number $it" }
+        assertTrue(crlfClip.contains("
+"))
+        val beforeAnchor = editor.textBeforeCursor(48).orEmpty()
+        val afterAnchor = editor.textAfterCursor(48).orEmpty()
+
+        assertTrue(editor.commitText(crlfClip))
+        assertTrue(history.recordClipInsertion(target, crlfClip, beforeAnchor, afterAnchor))
+
+        // Host editor normalized 
+ to 
+; undo must delete exact normalized length
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoRes = history.undo(editor)
+        assertTrue(undoRes.success)
+        assertEquals(initial, editor.buffer.toString())
+        assertEquals(initial.length, editor.cursor)
+
+        // Redo restores text
+        assertTrue(history.canSafelyRedo(editor).allowed)
+        assertTrue(history.redo(editor).success)
+        assertEquals(initial + crlfClip.replace("
+", "
+"), editor.buffer.toString())
+    }
+
+    @Test
+    fun testConsecutiveLargePastesUndoSequence() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.example.editor", 4, 1)
+        val editor = FakeHostEditorGateway(initialText = "Base: ", target = target)
+
+        val clipA = "FirstLargeChunk. ".repeat(150)
+        val clipB = "SecondLargeChunk. ".repeat(200)
+
+        editor.commitText(clipA)
+        assertTrue(history.recordClipInsertion(target, clipA, "Base: ", ""))
+
+        editor.commitText(clipB)
+        val tailA = clipA.takeLast(48)
+        assertTrue(history.recordClipInsertion(target, clipB, tailA, ""))
+
+        assertEquals("Base: " + clipA + clipB, editor.buffer.toString())
+
+        // Undo clipB first
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoB = history.undo(editor)
+        assertTrue(undoB.success)
+        assertEquals("Base: " + clipA, editor.buffer.toString())
+
+        // Undo clipA next
+        assertTrue(history.canSafelyUndo(editor).allowed)
+        val undoA = history.undo(editor)
+        assertTrue(undoA.success)
+        assertEquals("Base: ", editor.buffer.toString())
     }
 }

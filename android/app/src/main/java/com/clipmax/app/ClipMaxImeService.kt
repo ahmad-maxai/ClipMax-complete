@@ -4963,7 +4963,9 @@ class ClipMaxImeService : InputMethodService() {
                     return direct
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val surrounding = runCatching { ic.getSurroundingText(maxChars, 0, 0) }.getOrNull()
+                    // Android S+ getSurroundingText throws IllegalArgumentException if fetchLen > 2048
+                    val fetchLen = minOf(maxChars, 2048)
+                    val surrounding = runCatching { ic.getSurroundingText(fetchLen, 0, 0) }.getOrNull()
                     if (surrounding != null) {
                         val selStart = surrounding.selectionStart.coerceIn(0, surrounding.text.length)
                         val fromSurrounding = surrounding.text.subSequence(0, selStart).toString()
@@ -4973,6 +4975,10 @@ class ClipMaxImeService : InputMethodService() {
                     }
                 }
                 if (direct != null) return direct
+                if (maxChars > 2048) {
+                    val fallbackDirect = runCatching { ic.getTextBeforeCursor(2048, 0)?.toString() }.getOrNull()
+                    if (fallbackDirect != null) return fallbackDirect
+                }
                 val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
                 if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
                     val localSelStart = extracted.selectionStart - extracted.startOffset
@@ -4991,7 +4997,8 @@ class ClipMaxImeService : InputMethodService() {
                     return direct
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val surrounding = runCatching { ic.getSurroundingText(0, maxChars, 0) }.getOrNull()
+                    val fetchLen = minOf(maxChars, 2048)
+                    val surrounding = runCatching { ic.getSurroundingText(0, fetchLen, 0) }.getOrNull()
                     if (surrounding != null) {
                         val selEnd = surrounding.selectionEnd.coerceIn(0, surrounding.text.length)
                         val fromSurrounding = surrounding.text.subSequence(selEnd, surrounding.text.length).toString()
@@ -5001,6 +5008,10 @@ class ClipMaxImeService : InputMethodService() {
                     }
                 }
                 if (direct != null) return direct
+                if (maxChars > 2048) {
+                    val fallbackDirect = runCatching { ic.getTextAfterCursor(2048, 0)?.toString() }.getOrNull()
+                    if (fallbackDirect != null) return fallbackDirect
+                }
                 val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
                 if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
                     val localSelEnd = extracted.selectionEnd - extracted.startOffset
@@ -5017,7 +5028,7 @@ class ClipMaxImeService : InputMethodService() {
                 if (length == 0) return true
                 var remaining = length
                 while (remaining > 0) {
-                    val step = minOf(remaining, 16_384)
+                    val step = minOf(remaining, 4096)
                     val deleted = runCatching { ic.deleteSurroundingText(step, 0) }.getOrDefault(false)
                     if (!deleted) return false
                     remaining -= step
@@ -5025,8 +5036,24 @@ class ClipMaxImeService : InputMethodService() {
                 return true
             }
 
-            override fun commitText(text: String): Boolean =
-                runCatching { ic.commitText(text, 1) }.getOrDefault(false)
+            override fun commitText(text: String): Boolean {
+                if (text.isEmpty()) return true
+                if (text.length <= 16_384) {
+                    return runCatching { ic.commitText(text, 1) }.getOrDefault(false)
+                }
+                var offset = 0
+                while (offset < text.length) {
+                    var end = minOf(offset + 16_384, text.length)
+                    if (end < text.length && Character.isHighSurrogate(text[end - 1])) {
+                        end--
+                    }
+                    val chunk = text.substring(offset, end)
+                    val ok = runCatching { ic.commitText(chunk, 1) }.getOrDefault(false)
+                    if (!ok) return false
+                    offset = end
+                }
+                return true
+            }
 
             override fun runBatchEdit(block: () -> Boolean): Boolean {
                 return try {
@@ -5052,7 +5079,7 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
-        val checkLen = maxOf(256, (insertionHistory.peekUndo()?.insertedText?.length ?: 0) + 64).coerceAtMost(4096)
+        val checkLen = 128
         val preBefore = gateway.textBeforeCursor(checkLen)
         val result = insertionHistory.undo(gateway)
         val entry = result.entry
@@ -5101,13 +5128,15 @@ class ClipMaxImeService : InputMethodService() {
                 if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyRedo(g2).allowed)) {
                     syncAutoCapitalization(preserveManualShift = false)
                 } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
-                    insertionHistory.rollbackLastUndo(entry)
-                    dismissPasteUndoCapsule()
-                    syncAutoCapitalization(preserveManualShift = false)
-                    setStatus("Destination editor rejected undo.")
+                    if (preBefore != null && after2 == preBefore && !insertionHistory.canSafelyRedo(g2).allowed) {
+                        insertionHistory.rollbackLastUndo(entry)
+                        dismissPasteUndoCapsule()
+                        syncAutoCapitalization(preserveManualShift = false)
+                        setStatus("Destination editor rejected undo.")
+                    }
                 }
-            }, 140L)
-        }, 120L)
+            }, 250L)
+        }, 150L)
     }
 
     private fun performInsertionRedo() {
@@ -5118,7 +5147,7 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
-        val checkLen = maxOf(256, (insertionHistory.peekRedo()?.insertedText?.length ?: 0) + 64).coerceAtMost(4096)
+        val checkLen = 128
         val preBefore = gateway.textBeforeCursor(checkLen)
         val result = insertionHistory.redo(gateway)
         val entry = result.entry
@@ -5159,13 +5188,15 @@ class ClipMaxImeService : InputMethodService() {
                 if (g2 != null && ((preBefore != null && after2 != preBefore) || insertionHistory.canSafelyUndo(g2).allowed)) {
                     syncAutoCapitalization(preserveManualShift = false)
                 } else if (g2 != null && entry.target.isCompatibleWith(g2.currentTarget())) {
-                    insertionHistory.rollbackLastRedo(entry)
-                    dismissPasteUndoCapsule()
-                    syncAutoCapitalization(preserveManualShift = false)
-                    setStatus("Destination editor rejected redo.")
+                    if (preBefore != null && after2 == preBefore && !insertionHistory.canSafelyUndo(g2).allowed) {
+                        insertionHistory.rollbackLastRedo(entry)
+                        dismissPasteUndoCapsule()
+                        syncAutoCapitalization(preserveManualShift = false)
+                        setStatus("Destination editor rejected redo.")
+                    }
                 }
-            }, 140L)
-        }, 120L)
+            }, 250L)
+        }, 150L)
     }
 
     private fun onTypingSettingsChanged() {
