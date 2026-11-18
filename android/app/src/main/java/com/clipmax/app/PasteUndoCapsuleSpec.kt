@@ -1,16 +1,17 @@
 package com.clipmax.app
 
 /**
- * Pure JVM layout and state specifications for the contextual floating
- * Paste Undo/Redo capsule control (Phase 2B).
+ * Pure JVM layout constants and deterministic state machine for the contextual
+ * floating Paste Undo/Redo capsule (Phase 2B).
  */
 internal object PasteUndoCapsuleSpec {
     const val CORNER_RADIUS_DP = 16f
-    const val HEIGHT_DP = 32f // Slightly taller than snippet pills (~29dp)
-    const val WIDTH_DP = 86f  // Fixed width to ensure zero layout shift between Undo and Redo
-    const val RIGHT_MARGIN_DP = 42f // Offset to sit immediately left of the round navigation button
-    const val ICON_SIZE_DP = 13.5f
+    const val HEIGHT_DP = 32f // Slightly taller than clipboard snippet pills (29dp)
+    const val WIDTH_DP = 88f  // Fixed width so Undo and Redo have identical geometry
+    const val RIGHT_MARGIN_DP = 42f // Positioned immediately left of the circular > nav button
+    const val ICON_SIZE_DP = 14f
     const val TEXT_SIZE_SP = 12.5f
+    const val SELF_UPDATE_GRACE_MS = 350L
 
     enum class CapsuleState {
         HIDDEN,
@@ -43,39 +44,86 @@ internal object PasteUndoCapsuleSpec {
         }
     }
 
-    /**
-     * State transition when user successfully executes an undo on a paste item.
-     * Transitions from Undo to Redo mode in place.
-     */
-    fun onUndoSuccess(): Pair<Boolean, Boolean> {
-        // (isActive, isRedoMode)
-        return Pair(true, true)
-    }
+    fun onPasteSuccess(): Pair<Boolean, Boolean> = Pair(true, false)
+
+    fun onUndoSuccess(): Pair<Boolean, Boolean> = Pair(true, true)
+
+    fun onRedoSuccess(canUndoRemaining: Boolean): Pair<Boolean, Boolean> =
+        if (canUndoRemaining) Pair(true, false) else Pair(false, false)
+
+    fun onUnrelatedAction(): Pair<Boolean, Boolean> = Pair(false, false)
 
     /**
-     * State transition when user successfully executes a redo.
-     * If canUndoRemaining is true, restores Undo in place.
-     * Otherwise dismisses the capsule.
+     * Pure JVM state controller governing the contextual Paste Undo/Redo capsule.
+     * Ensures deterministic transitions for paste, undo, redo, failure, cursor tap,
+     * mode switch, panel switch, and typing dismissal.
      */
-    fun onRedoSuccess(canUndoRemaining: Boolean): Pair<Boolean, Boolean> {
-        return if (canUndoRemaining) {
-            Pair(true, false)
-        } else {
-            Pair(false, false)
+    class PasteUndoCapsuleController {
+        var isActive: Boolean = false
+            private set
+        var isRedoMode: Boolean = false
+            private set
+        var lastActionElapsedMs: Long = 0L
+            private set
+
+        val currentState: CapsuleState
+            get() = resolveState(isActive, isRedoMode)
+
+        val currentConfig: CapsuleConfig
+            get() = resolveConfig(isActive, isRedoMode)
+
+        fun onPasteSucceeded(nowMs: Long = 0L) {
+            val (act, redo) = onPasteSuccess()
+            isActive = act
+            isRedoMode = redo
+            lastActionElapsedMs = nowMs
         }
-    }
 
-    /**
-     * State transition when an unrelated user action occurs (typing, backspace, mode switch, panel open, focus change).
-     */
-    fun onUnrelatedAction(): Pair<Boolean, Boolean> {
-        return Pair(false, false)
-    }
+        fun onPasteFailed() {
+            dismiss()
+        }
 
-    /**
-     * State transition when a new paste operation completes.
-     */
-    fun onPasteSuccess(): Pair<Boolean, Boolean> {
-        return Pair(true, false)
+        fun onUndoSucceeded(nowMs: Long = 0L) {
+            val (act, redo) = onUndoSuccess()
+            isActive = act
+            isRedoMode = redo
+            lastActionElapsedMs = nowMs
+        }
+
+        fun onRedoSucceeded(canUndoRemaining: Boolean, nowMs: Long = 0L) {
+            val (act, redo) = onRedoSuccess(canUndoRemaining)
+            isActive = act
+            isRedoMode = redo
+            lastActionElapsedMs = nowMs
+        }
+
+        fun onEditorSelectionChanged(
+            nowMs: Long,
+            hasSelection: Boolean,
+            cursorMoved: Boolean,
+            canUndoNow: Boolean,
+            canRedoNow: Boolean
+        ): Boolean {
+            if (!isActive) return false
+            if (nowMs - lastActionElapsedMs <= SELF_UPDATE_GRACE_MS) {
+                return false
+            }
+            if (hasSelection || cursorMoved) {
+                dismiss()
+                return true
+            }
+            val expectedStillValid = if (isRedoMode) canRedoNow else canUndoNow
+            if (!expectedStillValid) {
+                dismiss()
+                return true
+            }
+            return false
+        }
+
+        fun dismiss() {
+            val (act, redo) = onUnrelatedAction()
+            isActive = act
+            isRedoMode = redo
+        }
     }
 }
