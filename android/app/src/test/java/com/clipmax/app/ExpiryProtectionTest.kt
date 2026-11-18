@@ -97,8 +97,9 @@ class ExpiryProtectionTest {
 
     @Test
     fun testBackwardCompatibleReadOfLegacyV1BinaryMetadata() {
-        val metaDir = File(tempDir, "metadata")
-        val contentDir = File(tempDir, "content")
+        val storeBase = File(tempDir, "clipmax_store")
+        val metaDir = File(storeBase, "metadata")
+        val contentDir = File(storeBase, "content")
         val legacyId = "legacy-v1-item"
         val legacyContentFile = "$legacyId-1000.txt"
         File(contentDir, legacyContentFile).writeText("Legacy plain clip", StandardCharsets.UTF_8)
@@ -106,7 +107,7 @@ class ExpiryProtectionTest {
         // Write binary header matching META_VERSION_V1 = 1 (without trailing isExpiryLocked boolean)
         val v1File = File(metaDir, "$legacyId.bin")
         DataOutputStream(FileOutputStream(v1File)).use { out ->
-            out.writeInt(0x434D4D31) // META_MAGIC
+            out.writeInt(0x434D4158) // META_MAGIC ("CMAX")
             out.writeInt(1)          // META_VERSION_V1
             out.writeUTF(legacyId)
             out.writeUTF("Legacy Clip")
