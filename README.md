@@ -1,15 +1,15 @@
 # ClipMax
 
-Official repository for **ClipMax** (v1.0.1) — a private, offline-first Android clipboard manager and system keyboard (Input Method Editor, or IME).
+Official repository for **ClipMax** (v0.5.1, `versionCode 12`) — a private, offline-first Android clipboard manager and native system keyboard (Input Method Editor, or IME).
 
-ClipMax combines a high-performance native Kotlin Input Method service with an offline-bundled management interface. It is designed to keep saved text strictly on the device, handle large payloads safely, and make text reuse seamless across any Android application.
+ClipMax combines a high-performance native Kotlin input method service with an offline-bundled companion interface. It is designed to keep saved text strictly on your device, handle long text payloads safely, provide automatic copy capture with customizable retention and per-item expiry protection, and make text reuse seamless across any Android application.
 
 ---
 
 ## Project Specifications
 
 - **Application ID / Package**: `com.clipmax.app`
-- **Current Version**: `1.0.1` (`versionCode 11`)
+- **Version**: `0.5.1` (`versionCode 12`)
 - **Minimum Supported Android**: Android 8.0 (API level 26)
 - **Target Android Version**: Android 15 (API level 35)
 - **Compile SDK**: API 35 (Android 15)
@@ -17,37 +17,88 @@ ClipMax combines a high-performance native Kotlin Input Method service with an o
 - **Android Gradle Plugin**: 8.7.3
 - **Gradle Wrapper**: 8.9
 - **JDK Compatibility**: Java 17
-- **License**: GNU General Public License v3.0 ([`LICENSE`](LICENSE))
+- **License**: GNU General Public License v3.0 or later ([`GPL-3.0-or-later`](LICENSE))
 
 ---
 
-## Architecture & Core Features
+## What ClipMax Does
 
-ClipMax employs a dual-tier architecture that separates system-critical input operations from library management:
+ClipMax gives your frequently used text snippets, links, templates, and notes a secure, local-first home on Android, allowing you to paste them directly from your keyboard without switching between apps.
 
-### 1. Native System Input Method (`ClipMaxImeService.kt`)
-- **Pure Native Kotlin Service**: Registered as an Android Input Method protected by `android.permission.BIND_INPUT_METHOD`.
-- **Gboard-Inspired Virtual Keyboard**: Complete QWERTY touch layout with responsive letter popups, symbol panels, and tactile haptic feedback. Popups render on the root overlay frame to prevent edge or toolbar clipping on row-1 keys (`Q`–`P`).
-- **50,000-Unit Chunked Text Insertion**: Large text snippets are inserted in bounded UTF-16 chunks (up to 50,000 code units per `commitText` call) to prevent Android IPC binder transaction overflows (`TransactionTooLargeException`). Includes live insertion progress and user cancellation.
-- **Compact Saved-Clips Panel**: A vertically scrollable clipboard browser designed for small viewports. Collapsed cards measure ~51dp and display single-line monospace previews with character and size metadata, ensuring at least **2 to 3 cards are simultaneously visible** at all times.
-- **Single-Card Expansion**: Tapping a card expands it to reveal equal-width, accessible action buttons: **Insert**, **Edit**, **Pin/Unpin**, and **Delete** (with inline confirmation). Only one card expands at a time to preserve vertical browsing space.
-- **Hardware-Accelerated Vector Icons**: Uses a custom `IconDrawable` engine for monochrome, theme-aware vector graphics. Zero decorative Unicode emojis.
-- **Dual Typing Modes**:
-  - `Typing: Host` (default): All keystrokes commit directly to the active destination text field.
-  - `Typing: Filter`: Keystrokes filter saved snippets in real-time without leaking text into the host application.
-- **Privacy & Automatic Capture**: Automatically captures copied text and selection updates during active non-password sessions. Automatic capture is completely suppressed in password fields (`TYPE_TEXT_VARIATION_PASSWORD`).
+### Core Capabilities:
+1. **Direct Keyboard Access**: Paste saved clips directly from the ClipMax system keyboard inside any app (messaging, browsers, forms, terminals, and note-taking apps).
+2. **Safe Large Text Insertion**: Inserts text in bounded 50,000 UTF-16 code unit chunks, preventing Android IPC transaction overflow crashes (`TransactionTooLargeException`) when pasting very large texts. Includes live insertion progress and cancellation.
+3. **Automatic Copy Capture**: Captures copied text and focused editable selections during active non-password keyboard sessions.
+4. **Customizable Retention & Expiry**: Set temporary clips to expire automatically (Off, 1h, 6h, 24h, 72h, custom minutes/hours, or Forever).
+5. **Per-Item Expiry Protection**: Lock specific clips so that automatic expiry will never delete them, even when a finite retention period is active.
+6. **Card Management Tools**: Pin favorites to float them to the top, split large items into halves, merge related clips together, or search by title and content.
+7. **Offline Backup & SAF Import**: Import plain text files (`.txt`) via Android's Storage Access Framework or create structured, verifiable ZIP backups with a 128 MiB decompression safety limit.
+8. **100% Private & Offline**: Zero network permissions declared (`android.permission.INTERNET` is completely absent). No analytics, no advertising, no telemetry, and no account requirements.
 
-### 2. Management Application & Offline Web Interface (`MainActivity.kt` & Bundled Assets)
-- **Offline WebView Container**: `MainActivity.kt` hosts a local WebView (`androidx.webkit:webkit:1.12.1`) rendering bundled React and Tailwind assets from `android/app/src/main/assets/web/`.
-- **Zero Internet Permissions**: `AndroidManifest.xml` does **not** declare `android.permission.INTERNET`. The app cannot establish network connections, send analytics, or fetch remote resources at runtime.
-- **Bidirectional Native Bridge (`AndroidBridge.kt`)**: Connects the web UI to the native Kotlin storage engine via `@JavascriptInterface` for instant clip updates, pin toggling, and theme synchronization.
-- **Storage Access Framework (SAF)**: Native file picker integration for importing plain-text files (`.txt`).
-- **ZIP Backup & Restore**: Create full archive backups of saved clips or merge-restore previous archives with a 128 MiB boundary check.
+---
 
-### 3. Storage & Persistence (`ClipStore.kt`)
-- **Atomic File Storage**: Metadata is atomically replaced, and content files are isolated to prevent partial-write corruption on sudden power loss.
-- **Newest-First Chronological Ordering**: Saved items are sorted with newest creations first (`createdAt` descending), with pinned items floating to the top. Chunks from the same capture share timestamps and preserve ascending serial order (`Chunk 001`, `Chunk 002`) via title tiebreakers.
-- **Retention & Cleanup (`CapturePreferences.kt`)**: User-selectable auto-expiry periods (Off, 1h, 6h, 24h, 72h, or Forever) managed via local preferences and inexact `AlarmManager` schedules.
+## Native System Keyboard (IME)
+
+ClipMax includes a native Android Input Method service (`ClipMaxImeService.kt`) implemented in Kotlin and protected by the system permission `android.permission.BIND_INPUT_METHOD`.
+
+### Keyboard Features:
+- **Ergonomic Touch Layout**: Refined QWERTY layout with top-row embedded long-press numbers, symbol pages, and haptic feedback.
+- **Automatic Numeric-Field Detection**: Automatically activates the dedicated numpad layout when focusing numeric input fields (`TYPE_CLASS_NUMBER`, plain, decimal, or signed), phone dialers (`TYPE_CLASS_PHONE`), date/time fields (`TYPE_CLASS_DATETIME`), and numeric PINs (`TYPE_NUMBER_VARIATION_PASSWORD`). Automatically restores standard QWERTY typing when focusing text, multiline, email, web address, search, or password fields.
+- **Clipboard Panel & Chips**: View recent clips in an interactive horizontal strip or open the full clipboard browser to scroll through all saved cards.
+- **Card Context Menu**: Long-press any clipboard card in the keyboard to reveal quick actions: **Insert**, **Edit** (opens in app editor), **Pin/Unpin**, **Lock/Unlock expiry**, **Delete**, **Merge**, and **Split**.
+- **Search Clips Keypad**: Built-in search filtering mode to find clips instantly without typing text into the host application.
+- **Paste Undo / Redo Capsule**: Contextual floating action capsule providing reliable single-tap undo and redo after clipboard insertions.
+
+### How to Enable the ClipMax Keyboard:
+1. Open **ClipMax** on your device.
+2. Complete the initial onboarding guide or navigate to **Settings → Android System Keyboard**.
+3. Tap **1. Manage System Keyboards** to open Android System Settings and toggle **ClipMax** on.
+4. Tap **2. Switch Active Input Method** and select **ClipMax** in the system input method dialog.
+
+---
+
+## What ClipMax Can and Cannot Capture
+
+ClipMax is designed with privacy and system constraints in mind:
+
+### What ClipMax Can Capture:
+- Text copied to the clipboard while the ClipMax keyboard is open or shortly before opening it.
+- Text actively selected inside a focused editable field while ClipMax is active.
+- Plain-text files (`.txt`) explicitly chosen by the user via the Storage Access Framework file picker.
+- Text manually typed or pasted into the companion app editor.
+
+### What ClipMax Cannot Capture:
+- **Password Fields**: Automatic capture and saved item suggestions are completely disabled whenever a password or PIN field is focused (`TYPE_TEXT_VARIATION_PASSWORD`, `TYPE_NUMBER_VARIATION_PASSWORD`, `WEB_PASSWORD`, etc.).
+- **Background / Inactive Monitoring**: ClipMax does not run a continuous background service to spy on the clipboard when the keyboard is closed. Clipboard checks occur only when the keyboard is invoked or the app is active.
+- **Uncopied Read-Only Text**: Selections inside read-only views (e.g. articles or web pages) cannot be read by an IME without the user explicitly invoking the source application's **Copy** command.
+- **System or IPC Overrides**: If a source app truncates its own clipboard output or refuses to expose clipboard data, ClipMax receives only what Android delivers.
+
+---
+
+## Local Storage & Persistence
+
+ClipMax persists text using an atomic file-storage engine (`ClipStore.kt`):
+- **Location**: App-private internal storage (`/data/user/0/com.clipmax.app/files/clipmax_store/`), inaccessible to other applications without root access.
+- **Atomic Architecture**: Content is written to temporary files and flushed to disk before small metadata records (`.bin`) are atomically replaced. A sudden power loss or process termination will not corrupt saved clips.
+- **Capacity Limits**: Individual saved text items support up to **16 MiB** (UTF-8 bytes). ZIP backup restores are capped at **128 MiB** of uncompressed contents to prevent zip-bomb exhaustion.
+- **Device Security**: Relies on Android's device-level File-Based Encryption (FBE). ClipMax does not add an independent custom encryption layer over its internal database files.
+
+---
+
+## Retention, Expiry, and Expiry Locking
+
+### Retention Behavior:
+ClipMax allows users to choose how long automatically captured clips remain on device:
+- Presets: **Off**, **1 hour**, **6 hours**, **24 hours**, **72 hours**, a **Custom** duration (in minutes or hours), or **Forever**.
+- Expiration cleanup runs automatically whenever the companion app or keyboard opens, and periodically via Android's local `AlarmManager` (`CaptureExpiryReceiver.kt`).
+- Timers are automatically rescheduled after device reboots via `android.permission.RECEIVE_BOOT_COMPLETED`.
+
+### How Expiry Locking Works:
+- Users can lock critical clips to prevent automatic deletion (`isExpiryLocked = true`).
+- **Exclusion from Cleanup**: Pinned items and expiry-locked items are strictly skipped by retention cleanup. They remain stored safely until explicitly deleted or unlocked by the user.
+- **Independence from Pinning**: An item can be pinned, locked, both, or neither. Locking an item does not force it to float to the top; unpinning an item does not remove its lock.
+- **Fresh Expiry Window on Unlock**: When an expiry-locked item is unlocked, ClipMax recalculates a fresh expiry window starting from the moment of unlock based on the active retention setting (or marks it as permanent if retention is set to Forever or Off). Old, expired timestamps are never reused.
+- **Contextual Reminders**: When saving new clips or importing text while a finite retention policy is active, ClipMax displays a non-blocking banner allowing users to lock the new items in one tap.
 
 ---
 
@@ -55,101 +106,103 @@ ClipMax employs a dual-tier architecture that separates system-critical input op
 
 ```text
 ClipMax-complete/
-├── android/                             # Native Android Gradle Project
+├── android/                             # Android Gradle project root
 │   ├── app/
 │   │   ├── src/main/java/com/clipmax/app/
-│   │   │   ├── ClipMaxImeService.kt    # Native IME service & keyboard
+│   │   │   ├── ClipMaxImeService.kt    # Native IME service & keyboard engine
 │   │   │   ├── MainActivity.kt         # Android Activity host & WebView
-│   │   │   ├── AndroidBridge.kt        # JS-to-Kotlin interface bridge
+│   │   │   ├── AndroidBridge.kt        # Bidirectional JS-to-Kotlin bridge
 │   │   │   ├── ClipStore.kt            # Atomic local filesystem storage
-│   │   │   ├── TextChunker.kt          # Surrogate-safe 50k UTF-16 chunking
-│   │   │   └── CapturePreferences.kt   # Retention and clipboard settings
-│   │   ├── src/main/assets/web/        # Bundled offline web UI assets
+│   │   │   ├── InputFieldPolicy.kt     # EditorInfo classification & auto-numpad
+│   │   │   ├── KeyboardLayoutSpec.kt   # Keyboard modes, layouts & themes
+│   │   │   ├── CapturePreferences.kt   # Retention, expiry & lock management
+│   │   │   └── TextChunker.kt          # Bounded 50,000 UTF-16 chunking
+│   │   ├── src/main/assets/web/        # Bundled offline web companion assets
 │   │   ├── src/main/AndroidManifest.xml# Android Manifest (zero network perms)
-│   │   └── build.gradle.kts            # App module Gradle configuration
-│   ├── build.gradle.kts                # Root Android build configuration
+│   │   └── build.gradle.kts            # App module configuration (v0.5.1, code 12)
+│   ├── build.gradle.kts                # Android root build configuration
 │   └── gradlew                         # Gradle wrapper executable
 ├── src/                                # Web UI React/TypeScript source
-│   ├── components/                     # Screens, primitives, and keyboard preview
-│   └── lib/                            # Storage, chunking, and bridge helpers
-├── fastlane/metadata/android/en-US/    # F-Droid Fastlane metadata
-├── .github/workflows/build-apk.yml     # GitHub Actions CI build workflow
+│   ├── components/                     # Screens, modals, and UI primitives
+│   └── lib/                            # Storage, backup, and native bridge helpers
+├── fastlane/metadata/android/en-US/    # F-Droid Fastlane metadata & screenshots
+├── scripts/                            # Release and consistency verification scripts
+├── com.clipmax.app.yml                 # F-Droid build recipe draft template
 ├── LICENSE                             # GNU General Public License v3.0
-└── README.md                           # Project documentation
+├── THIRD_PARTY_LICENSES.md             # Third-party attribution & notices
+├── FDROID_READINESS_CHECKLIST.md       # F-Droid compliance audit checklist
+└── README.md                           # This documentation
 ```
 
 ---
 
 ## Building from Source
 
-### Prerequisites
-- **JDK 17** (Temurin or OpenJDK recommended)
+### Prerequisites:
+- **JDK 17** (OpenJDK or Eclipse Temurin)
 - **Android SDK Platform 35** and **Build Tools 35.0.0**
-- **Node.js 20+** (only required when modifying the web UI in `src/`)
+- **Node.js 20+** (only required if modifying the companion web UI in `src/`)
 
-### Step 1: Build Web UI Assets (Optional)
-If you made changes to the React source in `src/`, compile the web assets and copy them to the Android assets directory:
-```bash
-npm install
-npm run build
-rm -rf android/app/src/main/assets/web
-cp -r dist android/app/src/main/assets/web
-```
-
-### Step 2: Build the Android Debug APK
+### 1. Build the Android Debug APK
 Run the Gradle wrapper from the repository root:
 ```bash
-chmod +x gradlew
 ./gradlew assembleDebug
 ```
-Or run directly from the `android/` directory:
+Or run directly from inside the `android/` subfolder:
 ```bash
 cd android
-chmod +x gradlew
 ./gradlew assembleDebug
 ```
 
-### Expected Output Path
+The resulting installable APK is generated at:
 ```text
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
----
-
-## Automated CI/CD (GitHub Actions)
-
-This repository includes a continuous integration workflow defined in [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml):
-- **Triggers**: On every push to `main`, pull request, or manual trigger (`workflow_dispatch`).
-- **Environment**: Ubuntu runner with OpenJDK 17.
-- **Task**: Executes `./gradlew --no-daemon assembleDebug` inside the `android/` directory.
-- **Artifact**: Uploads the resulting installable APK as a downloadable ZIP named **`ClipMax-debug-APK`** (retained for 14 days in the GitHub Actions run summary).
-
----
-
-## Licensing & Third-Party Components
-
-ClipMax is free software licensed under the **GNU General Public License v3.0** ([`LICENSE`](LICENSE)).
-
-All third-party libraries and runtime components are compatible open-source projects:
-- **AndroidX WebKit** (`androidx.webkit:webkit`): Apache License 2.0
-- **React & React DOM**: MIT License
-- **Lucide Icons** (`lucide-react`): ISC License
-- **JSZip** (`jszip`): MIT / GPL-3.0 dual license
-- **Tailwind CSS**: MIT License
-- **JUnit 4** (`junit:junit`, test-only): Eclipse Public License 1.0
-
-See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for full notices and license texts.
+### 2. Compile Web Assets (Optional)
+If you modify the companion React interface in `src/`:
+```bash
+npm install
+npm run build
+cp dist/index.html android/app/src/main/assets/web/
+rm -f android/app/src/main/assets/web/assets/index-*.js android/app/src/main/assets/web/assets/index-*.css
+cp dist/assets/index-*.js dist/assets/index-*.css android/app/src/main/assets/web/assets/
+```
 
 ---
 
-## F-Droid Readiness Status
+## Running Tests
 
-This repository is currently being prepared for submission to F-Droid:
-- [x] **Zero Tracking & Telemetry**: No analytics, trackers, or advertising SDKs.
-- [x] **Zero Network Access**: `android.permission.INTERNET` is completely omitted from `AndroidManifest.xml`.
-- [x] **Pure Open-Source Dependencies**: All build and runtime dependencies use approved FSDG-compatible licenses.
-- [x] **Fastlane Metadata**: Initial localized metadata files are populated in `fastlane/metadata/android/en-US/`.
-- [ ] **External Font Reference Cleanup**: Review and remove external Google Fonts links in `index.html` in favor of native system fonts to ensure 100% offline compliance.
-- [ ] **Release Tag & Tarball**: Create an annotated release tag matching `versionCode 11` / `versionName 1.0.1` prior to opening the F-Droid RFP / merge request.
+### 1. Execute Android JVM Unit Tests
+Run the comprehensive unit test suite (covering IME policies, layout controllers, atomic persistence, binary migration, expiry locking, and history transactions):
+```bash
+./gradlew testDebugUnitTest
+```
+Or from the `android/` directory:
+```bash
+cd android
+./gradlew testDebugUnitTest
+```
 
-Track ongoing audit tasks in [`FDROID_READINESS_CHECKLIST.md`](FDROID_READINESS_CHECKLIST.md).
+### 2. Verify Release Metadata Consistency
+Run the automated consistency check script to verify version declarations, license files, Fastlane metadata, and manifest invariants:
+```bash
+python3 scripts/check-version-consistency.py
+```
+
+---
+
+## Reporting Bugs & Contributing
+
+ClipMax is open-source software. Contributions, bug reports, and suggestions are welcome!
+
+- **Issue Tracker**: File bug reports or feature suggestions at [GitHub Issues](https://github.com/ahmad-maxai/ClipMax-complete/issues).
+- **Contributing**: Please open an issue to discuss proposed architectural changes before submitting large pull requests. Ensure all automated tests pass (`./gradlew testDebugUnitTest`) and that code adheres to the project's offline-only, zero-telemetry principles.
+
+---
+
+## Licensing
+
+ClipMax is free software licensed under the **GNU General Public License v3.0 or later** ([`GPL-3.0-or-later`](LICENSE)).
+
+All third-party libraries and runtime components are compatible open-source projects (Apache 2.0, MIT, ISC, EPL-1.0). See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for full notices and attributions.

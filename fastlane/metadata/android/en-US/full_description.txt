@@ -1,0 +1,13 @@
+ClipMax is an offline-first Android clipboard manager and native system keyboard designed to save, organize, protect, and reuse text snippets locally.
+
+Features:
+* Native Android Keyboard (IME): Insert saved clips directly into any text field without switching apps.
+* Safe Large Text Insertion: Inserts long text in bounded 50,000 UTF-16 code unit chunks, preventing Android IPC transaction overflow crashes.
+* Automatic Copy Capture: Captures copied text and selection updates during active keyboard sessions (completely disabled in password fields).
+* Customizable Retention: Set clips to expire automatically after 1 hour, 6 hours, 24 hours, 72 hours, a custom duration, or keep them forever.
+* Per-Item Expiry Protection: Lock specific clips so automatic retention cleanup will never remove them until explicitly unlocked.
+* Split and Merge: Split long text into parts or merge multiple clips together.
+* Full-Text Search: Search through titles and clip content instantly from the library or the keyboard.
+* Structured ZIP Backup & Restore: Export and restore backups locally with a 128 MiB decompression boundary check.
+* Themes & Appearance: Matches Android system dark and light modes, with a classic theme option.
+* 100% Private & Offline: Operates with zero internet permission (android.permission.INTERNET is completely absent). No analytics, no ads, no trackers, and no cloud accounts.

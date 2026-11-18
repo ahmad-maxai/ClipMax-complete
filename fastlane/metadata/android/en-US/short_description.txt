@@ -1,0 +1,1 @@
+Offline clipboard manager and native Android keyboard with custom expiry.

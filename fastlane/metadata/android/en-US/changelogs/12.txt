@@ -1,0 +1,7 @@
+ClipMax v0.5.1 (versionCode 12):
+* Added automatic numeric-field detection and numpad activation in the native keyboard.
+* Added per-item expiry protection to lock clips from automatic retention cleanup.
+* Added interactive first-launch onboarding guide for keyboard activation.
+* Added About ClipMax modal with GPL-3.0-or-later license notice and repository link.
+* Enhanced paste undo/redo compatibility across compact search and single-line text fields.
+* Updated release metadata and official GNU General Public License v3.0 license.

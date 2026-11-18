@@ -1,60 +1,60 @@
-# F-Droid Submission Guide for ClipMax
+# F-Droid Submission Guide for ClipMax (v0.5.1)
 
-Unlike Google Play (where developers upload a pre-compiled `.apk`), **F-Droid builds all applications directly from source code** on their automated, isolated build servers to ensure transparency and trust.
+Unlike Google Play (where developers upload a pre-compiled `.apk`), **F-Droid builds all applications directly from source code** on their automated, isolated build servers to ensure transparency and software freedom.
 
-Here is the exact, step-by-step path to get ClipMax listed on the official F-Droid catalog.
-
----
-
-## Step 1: Merge Your Verified Branch into `main`
-
-Your verified working branch is `chore/fdroid-readiness-and-docs`.
-
-To merge it into `main`:
-1. Open this link on your phone:
-   👉 **https://github.com/ahmad-maxai/ClipMax-complete/compare/main...chore/fdroid-readiness-and-docs**
-2. Tap **Create pull request**.
-3. Tap **Merge pull request** -> **Confirm merge**.
+Here is the step-by-step path to get ClipMax listed on the official F-Droid catalog.
 
 ---
 
-## Step 2: Tag the `v1.0.1` Release on GitHub
+## Step 1: Review and Merge `release/fdroid-v0.5.1`
 
-F-Droid requires a git tag matching your `versionName` (`1.0.1` / `versionCode 11`):
-1. Open your repository releases page:
+The F-Droid release preparation branch is `release/fdroid-v0.5.1`.
+
+Once verified by the project owner:
+1. Review the changes on GitHub against `main`.
+2. Merge the release branch into `main` with owner approval.
+
+---
+
+## Step 2: Tag the `v0.5.1` Release on GitHub
+
+F-Droid requires a git tag matching the `versionName` (`0.5.1` / `versionCode 12`):
+1. Open the repository releases page:
    👉 **https://github.com/ahmad-maxai/ClipMax-complete/releases/new**
-2. In **Choose a tag**, enter `v1.0.1` and select **Create new tag: v1.0.1 on main**.
-3. In **Release title**, enter `ClipMax 1.0.1`.
-4. Under description, paste your changelog:
+2. In **Choose a tag**, enter `v0.5.1` and select **Create new tag: v0.5.1 on main**.
+3. In **Release title**, enter `ClipMax 0.5.1`.
+4. Under description, paste the changelog:
    ```text
-   - 100% offline clipboard manager and native virtual keyboard (IME).
-   - Zero network permissions (INTERNET permission omitted).
-   - Local system font stacks for clean, private typography.
-   - Surrogate-safe 50,000-character chunking for long text insertion.
-   - Import/export backup support (.txt and .zip).
+   ClipMax v0.5.1 (versionCode 12):
+   * Added automatic numeric-field detection and numpad activation in the native keyboard.
+   * Added per-item expiry protection to lock clips from automatic retention cleanup.
+   * Added interactive first-launch onboarding guide for keyboard activation.
+   * Added About ClipMax modal with GPL-3.0-or-later license notice and repository link.
+   * Enhanced paste undo/redo compatibility across compact search and single-line text fields.
+   * Updated release metadata and official GNU General Public License v3.0 license.
    ```
-5. Tap **Publish release**.
+5. Publish release.
 
 ---
 
 ## Step 3: Submit to F-Droid (Choose Path A or Path B)
 
-### Path A: The Easiest Way (Request for Packaging — 2 Minutes)
-If you don't want to edit F-Droid git files yourself, open an RFP issue and the F-Droid team will package it:
+### Path A: Request for Packaging (RFP)
+Open an RFP issue and the F-Droid packaging team will assist with the build recipe:
 1. Go to the F-Droid RFP issue tracker:
    👉 **https://gitlab.com/fdroid/rfp/-/issues/new**
-2. Fill in the short template:
+2. Fill in the template:
    - **App Name**: ClipMax
    - **Package Name**: `com.clipmax.app`
    - **Source Code**: `https://github.com/ahmad-maxai/ClipMax-complete`
    - **License**: GPL-3.0-or-later
-   - **Description**: Offline Android clipboard manager and system keyboard (IME).
-3. Tap **Create issue**. The F-Droid inclusion team will pick it up and run the build test.
+   - **Description**: Offline Android clipboard manager and native system keyboard (IME).
+3. Submit the issue.
 
 ---
 
-### Path B: The Direct Developer Way (Submit Merge Request to `fdroiddata`)
-If you want the fastest inclusion:
+### Path B: Direct Merge Request to `fdroiddata`
+For direct submission:
 1. Fork `https://gitlab.com/fdroid/fdroiddata`.
-2. Add the file `metadata/com.clipmax.app.yml` with the contents provided in `com.clipmax.app.yml`.
+2. Add the file `metadata/com.clipmax.app.yml` using the template provided in `com.clipmax.app.yml`.
 3. Open a Merge Request against `fdroid/fdroiddata:master`.

@@ -105,7 +105,7 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
               ClipMax is developed as an open-source project. Its source code is available for people to inspect, learn from, contribute to, and help improve.
             </p>
             <p className="text-[11px] font-medium text-muted-foreground/90 pt-0.5">
-              Licensed under GNU General Public License v3.0.
+              Licensed under GNU General Public License v3.0 or later (GPL-3.0-or-later).
             </p>
           </div>
 

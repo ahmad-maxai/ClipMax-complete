@@ -1,3 +1,7 @@
+# DRAFT / TEMPLATE: This file is a reference recipe template for future submission
+# to the upstream fdroiddata repository (https://gitlab.com/fdroid/fdroiddata).
+# It is maintained here for reference and documentation; ClipMax has not yet been submitted or published on F-Droid.
+
 Categories:
   - System
   - Utilities
@@ -29,14 +33,14 @@ RepoType: git
 Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
 
 Builds:
-  - versionName: 1.0.1
-    versionCode: 11
-    commit: v1.0.1
+  - versionName: '0.5.1'
+    versionCode: 12
+    commit: 'v0.5.1' # Intended release tag when published
     subdir: android
     gradle:
       - yes
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.1
-CurrentVersionCode: 11
+CurrentVersion: '0.5.1'
+CurrentVersionCode: 12
