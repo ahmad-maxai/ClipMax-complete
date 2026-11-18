@@ -16,7 +16,8 @@ internal class InsertionHistoryManager(
 ) {
     companion object {
         const val MAX_HISTORY_ENTRIES = 25
-        const val MAX_TRACKED_INSERTION_CHARS = 100_000
+        const val MAX_TRACKED_INSERTION_CHARS = 500_000
+        const val MAX_TOTAL_TRACKED_CHARS = 1_500_000
         const val ANCHOR_LENGTH = 48
     }
 
@@ -252,7 +253,7 @@ internal class InsertionHistoryManager(
 
         val requestLen = entry.insertedText.length + entry.beforeAnchor.length
         var before = gateway.textBeforeCursor(requestLen)
-        if (before == null && requestLen > 2048) {
+        if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
         }
         if (before == null) {
@@ -307,7 +308,7 @@ internal class InsertionHistoryManager(
         val entry = undoStack.peekFirst() ?: return OperationResult(false, "Nothing to undo.")
         val requestLen = entry.insertedText.length + entry.beforeAnchor.length
         var before = gateway.textBeforeCursor(requestLen)
-        if (before == null && requestLen > 2048) {
+        if ((before == null || (before.isEmpty() && requestLen > 2048)) && requestLen > 2048) {
             before = gateway.textBeforeCursor(2048)
         }
         if (before == null) {
@@ -437,6 +438,11 @@ internal class InsertionHistoryManager(
         undoStack.addFirst(entry)
         while (undoStack.size > maxHistorySize) {
             undoStack.removeLast()
+        }
+        var totalChars = undoStack.sumOf { it.insertedText.length + it.originalText.length }
+        while (undoStack.size > 1 && totalChars > MAX_TOTAL_TRACKED_CHARS) {
+            val evicted = undoStack.removeLast()
+            totalChars -= (evicted.insertedText.length + evicted.originalText.length)
         }
     }
 

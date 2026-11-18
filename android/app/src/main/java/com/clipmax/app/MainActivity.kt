@@ -50,12 +50,12 @@ class MainActivity : Activity() {
         store = ClipStore(filesDir)
         ClipStore.addChangeListener(storeChangeListener)
 
-        // Set status and navigation bar background styling to match dark charcoal theme (#111916)
-        window.statusBarColor = 0xFF111916.toInt()
-        window.navigationBarColor = 0xFF111916.toInt()
+        // Set status and navigation bar background styling to match neutral charcoal theme (#202124)
+        window.statusBarColor = 0xFF202124.toInt()
+        window.navigationBarColor = 0xFF202124.toInt()
 
         webView = WebView(this).apply {
-            setBackgroundColor(0xFF111916.toInt())
+            setBackgroundColor(0xFF202124.toInt())
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -135,7 +135,7 @@ class MainActivity : Activity() {
         // This physically offsets the WebView below the Android status bar (clock, battery)
         // and above the system navigation bar, preventing ANY overlap or touch interference.
         val container = FrameLayout(this).apply {
-            setBackgroundColor(0xFF111916.toInt())
+            setBackgroundColor(0xFF202124.toInt())
         }
         val layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,

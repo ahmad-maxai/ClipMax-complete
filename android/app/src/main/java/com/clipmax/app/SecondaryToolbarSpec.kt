@@ -77,15 +77,15 @@ internal object SecondaryToolbarSpec {
                 rippleColor = 0x2A2DD4BF.toInt()
             )
             else -> ToolbarPalette(
-                toolbarBg = 0xFF21252B.toInt(),
-                toolbarBottomHairline = 0x14FFFFFF.toInt(),
+                toolbarBg = 0xFF303134.toInt(),
+                toolbarBottomHairline = 0x1FFFFFFF.toInt(),
                 backCircleBg = 0xFFFFFFFF.toInt(),
                 backIconFg = 0xFF111111.toInt(),
-                centerIconFg = 0xFFE1E3E6.toInt(),
-                centerLabelFg = 0xFF8A909A.toInt(),
-                globeCircleBg = 0xFF282C33.toInt(),
-                globeCircleBorder = 0x1AFFFFFF.toInt(),
-                globeIconFg = 0xFFE1E3E6.toInt(),
+                centerIconFg = 0xFFE8EAED.toInt(),
+                centerLabelFg = 0xFF9AA0A6.toInt(),
+                globeCircleBg = 0xFF3C4043.toInt(),
+                globeCircleBorder = 0x1FFFFFFF.toInt(),
+                globeIconFg = 0xFFE8EAED.toInt(),
                 rippleColor = 0x24FFFFFF.toInt()
             )
         }

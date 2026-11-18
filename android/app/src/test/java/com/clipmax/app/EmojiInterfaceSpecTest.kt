@@ -125,4 +125,63 @@ class EmojiInterfaceSpecTest {
         assertTrue(EmojiInterfaceSpec.CELL_TEXT_SIZE_SP >= 28f)
         assertTrue(EmojiInterfaceSpec.NAV_HEADER_HEIGHT_PORTRAIT_DP >= 40f)
     }
+
+    @Test
+    fun testContinuousScrollTabControllerPreventsFlickerAndHandlesBottomSection() {
+        val tops = listOf(0, 120, 460, 820, 1180, 1460)
+        val controller = EmojiInterfaceSpec.ContinuousScrollTabController(initialTabIdx = 0)
+
+        // Tapping tab 3 locks active tab while smoothScrollTo animates across earlier offsets
+        assertEquals(3, controller.onTabSelected(tabIdx = 3, targetScrollY = 820, nowMs = 1_000L))
+        assertFalse(
+            controller.onVerticalScroll(
+                sectionTops = tops,
+                scrollY = 180,
+                bottomReached = false,
+                anchorOffsetPx = 32,
+                settleTolerancePx = 4,
+                nowMs = 1_080L
+            )
+        )
+        assertEquals(3, controller.activeTabIdx)
+
+        // Settling at target scrollY completes programmatic jump cleanly
+        controller.onVerticalScroll(
+            sectionTops = tops,
+            scrollY = 820,
+            bottomReached = false,
+            anchorOffsetPx = 32,
+            settleTolerancePx = 4,
+            nowMs = 1_250L
+        )
+        assertEquals(3, controller.activeTabIdx)
+
+        // Reaching bottom highlights the final category even when its top exceeds scrollY
+        assertTrue(
+            controller.onVerticalScroll(
+                sectionTops = tops,
+                scrollY = 1260,
+                bottomReached = true,
+                anchorOffsetPx = 32,
+                settleTolerancePx = 4,
+                nowMs = 2_000L
+            )
+        )
+        assertEquals(tops.lastIndex, controller.activeTabIdx)
+
+        // Manual user touch unlocks any active programmatic scroll immediately
+        assertEquals(4, controller.onTabSelected(tabIdx = 4, targetScrollY = 1180, nowMs = 3_000L))
+        controller.onUserTouchInteraction()
+        assertTrue(
+            controller.onVerticalScroll(
+                sectionTops = tops,
+                scrollY = 150,
+                bottomReached = false,
+                anchorOffsetPx = 32,
+                settleTolerancePx = 4,
+                nowMs = 3_050L
+            )
+        )
+        assertEquals(1, controller.activeTabIdx)
+    }
 }

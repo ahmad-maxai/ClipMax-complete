@@ -275,7 +275,7 @@ internal object KeyboardLayoutSpec {
                          else 0xFF3C4043.toInt(),
             colorKeyBorder = if (isClassic && !isNight) 0xFFD1D9D4.toInt()
                              else if (isClassic) 0xFF2C3D35.toInt()
-                             else 0x1AFFFFFF.toInt(), // ~10% white micro-border
+                             else 0x1FFFFFFF.toInt(), // ~12% white micro-border
             colorKeyText = if (isClassic && !isNight) 0xFF111827.toInt()
                            else if (isClassic) 0xFFEAF1ED.toInt()
                            else 0xFFE8EAED.toInt(),
@@ -298,7 +298,7 @@ internal object KeyboardLayoutSpec {
             colorSnippetBg = if (isClassic) (if (isNight) 0xFF141C18.toInt() else 0xFFF3F6F4.toInt())
                              else 0xFF303134.toInt(),
             colorSnippetBorder = if (isClassic) (if (isNight) 0xFF23322B.toInt() else 0xFFE2E8E4.toInt())
-                                 else 0x14FFFFFF.toInt(), // ~8% white micro-border
+                                 else 0x1FFFFFFF.toInt(), // ~12% white micro-border
             colorActiveTabBg = if (isClassic) (if (isNight) 0xFF1A3A32.toInt() else 0xFFCCFBF1.toInt())
                                else 0xFF484C52.toInt(),
             colorActiveTabText = if (isClassic) (if (isNight) 0xFF2DD4BF.toInt() else 0xFF0F766E.toInt())
@@ -310,10 +310,10 @@ internal object KeyboardLayoutSpec {
                              else 0xFF303134.toInt(),
             colorAltPrimaryBg = if (isClassic && !isNight) 0xFFDFE5E1.toInt()
                                 else if (isClassic) 0xFF1A2520.toInt()
-                                else 0xFF5F6368.toInt(),
+                                else 0xFF3C4043.toInt(),
             colorAltPrimaryText = if (isClassic && !isNight) 0xFF111827.toInt()
                                   else if (isClassic) 0xFFEAF1ED.toInt()
-                                  else 0xFFFFFFFF.toInt(),
+                                  else 0xFFE8EAED.toInt(),
             colorToolbarBg = if (isClassic && !isNight) 0xFFECEFF1.toInt()
                              else if (isClassic) 0xFF151C18.toInt()
                              else 0xFF303134.toInt()

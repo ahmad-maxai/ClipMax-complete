@@ -149,4 +149,88 @@ internal object EmojiInterfaceSpec {
             }
         }
     }
+
+    /**
+     * Pure JVM coordinator for continuous emoji scroll sections and category tabs.
+     * Prevents smoothScrollTo() intermediate frames from fighting the user-selected tab highlight
+     * and highlights the final section cleanly when scrolled to the bottom.
+     */
+    class ContinuousScrollTabController(initialTabIdx: Int = 0) {
+        var activeTabIdx: Int = initialTabIdx.coerceAtLeast(0)
+            private set
+        private var programmaticTargetIdx: Int? = null
+        private var programmaticTargetScrollY: Int = 0
+        private var programmaticStartedAtMs: Long = 0L
+
+        fun reset(initialTabIdx: Int = 0) {
+            activeTabIdx = initialTabIdx.coerceAtLeast(0)
+            programmaticTargetIdx = null
+            programmaticTargetScrollY = 0
+            programmaticStartedAtMs = 0L
+        }
+
+        fun onTabSelected(tabIdx: Int, targetScrollY: Int, nowMs: Long = 0L): Int {
+            val clamped = tabIdx.coerceAtLeast(0)
+            activeTabIdx = clamped
+            programmaticTargetIdx = clamped
+            programmaticTargetScrollY = targetScrollY.coerceAtLeast(0)
+            programmaticStartedAtMs = nowMs
+            return activeTabIdx
+        }
+
+        fun onUserTouchInteraction() {
+            programmaticTargetIdx = null
+        }
+
+        fun onVerticalScroll(
+            sectionTops: List<Int>,
+            scrollY: Int,
+            bottomReached: Boolean,
+            anchorOffsetPx: Int,
+            settleTolerancePx: Int,
+            nowMs: Long = 0L
+        ): Boolean {
+            if (sectionTops.isEmpty()) return false
+            val targetIdx = programmaticTargetIdx
+            if (targetIdx != null) {
+                val reachedTarget = kotlin.math.abs(scrollY - programmaticTargetScrollY) <= settleTolerancePx ||
+                    (bottomReached && targetIdx == sectionTops.lastIndex) ||
+                    (nowMs > programmaticStartedAtMs && nowMs - programmaticStartedAtMs >= 650L)
+                if (!reachedTarget) {
+                    return false
+                }
+                programmaticTargetIdx = null
+            }
+            val resolved = resolveScrolledSectionIndex(
+                sectionTops = sectionTops,
+                scrollY = scrollY,
+                bottomReached = bottomReached,
+                anchorOffsetPx = anchorOffsetPx
+            )
+            if (resolved != activeTabIdx) {
+                activeTabIdx = resolved
+                return true
+            }
+            return false
+        }
+
+        companion object {
+            fun resolveScrolledSectionIndex(
+                sectionTops: List<Int>,
+                scrollY: Int,
+                bottomReached: Boolean,
+                anchorOffsetPx: Int
+            ): Int {
+                if (sectionTops.isEmpty()) return 0
+                if (bottomReached) return sectionTops.lastIndex
+                var bestIdx = 0
+                for (i in sectionTops.indices) {
+                    if (sectionTops[i] <= scrollY + anchorOffsetPx) {
+                        bestIdx = i
+                    }
+                }
+                return bestIdx
+            }
+        }
+    }
 }

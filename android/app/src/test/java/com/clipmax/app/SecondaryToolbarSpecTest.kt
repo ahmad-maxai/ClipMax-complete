@@ -53,12 +53,13 @@ class SecondaryToolbarSpecTest {
         )
 
         val graphite = SecondaryToolbarSpec.resolvePalette(isNightMode = true, isClassicTheme = false)
-        assertEquals(0xFF21252B.toInt(), graphite.toolbarBg)
+        assertEquals(0xFF303134.toInt(), graphite.toolbarBg)
         assertEquals(0xFFFFFFFF.toInt(), graphite.backCircleBg)
         assertEquals(0xFF111111.toInt(), graphite.backIconFg)
-        assertEquals(0xFFE1E3E6.toInt(), graphite.centerIconFg)
-        assertEquals(0xFF282C33.toInt(), graphite.globeCircleBg)
-        assertEquals(0x1AFFFFFF.toInt(), graphite.globeCircleBorder)
+        assertEquals(0xFFE8EAED.toInt(), graphite.centerIconFg)
+        assertEquals(0xFF3C4043.toInt(), graphite.globeCircleBg)
+        assertEquals(0x1FFFFFFF.toInt(), graphite.globeCircleBorder)
+        assertEquals(0xFFE8EAED.toInt(), graphite.globeIconFg)
 
         val classicDark = SecondaryToolbarSpec.resolvePalette(isNightMode = true, isClassicTheme = true)
         assertEquals(0xFF151C18.toInt(), classicDark.toolbarBg)

@@ -80,7 +80,9 @@ class ClipMaxImeService : InputMethodService() {
     private var editorSessionId = 0L
     private var lastEditorPackage: String? = null
     private var lastEditorFieldId: Int = 0
+    private var lastEditorInputType: Int = 0
     private var pasteHistoryVerifyToken = 0
+    private var pasteRestartVerifyToken = 0
     private var isInserting = false
     private var pinnedOnly = false
     private var keyboardSearchQuery = ""
@@ -196,9 +198,12 @@ class ClipMaxImeService : InputMethodService() {
     private var emojiPickerRoot: FrameLayout? = null
     private var emojiRemoveOverlay: View? = null
     private var emojiScrollView: android.widget.ScrollView? = null
+    private var emojiTabsScrollView: HorizontalScrollView? = null
     private var emojiGridContainer: LinearLayout? = null
+    private var emojiRecentSectionContainer: LinearLayout? = null
     private val emojiSectionViews = mutableListOf<View>()
     private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
+    private val emojiScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController()
     private val emojiPreferences: SharedPreferences by lazy {
         getSharedPreferences(EmojiInterfaceSpec.PREF_FILE, Context.MODE_PRIVATE)
     }
@@ -498,7 +503,10 @@ class ClipMaxImeService : InputMethodService() {
         emojiRemoveOverlay = null
         emojiPickerRoot = null
         emojiScrollView = null
+        emojiTabsScrollView = null
         emojiGridContainer = null
+        emojiRecentSectionContainer = null
+        emojiSectionViews.clear()
         emojiTabViews.clear()
         keyboardWrapper = null
         keyboardRowsContainer = null
@@ -3409,7 +3417,7 @@ class ClipMaxImeService : InputMethodService() {
         if (selectedEmojiCategoryIdx in 0..EmojiCatalog.CATEGORIES.size) {
             return selectedEmojiCategoryIdx
         }
-        selectedEmojiCategoryIdx = if (recentEmojiHistory.items().isNotEmpty()) 0 else 1
+        selectedEmojiCategoryIdx = 0
         return selectedEmojiCategoryIdx
     }
 
@@ -3475,9 +3483,9 @@ class ClipMaxImeService : InputMethodService() {
                 setOnClickListener {
                     if (recentEmojiHistory.remove(emoji)) {
                         persistRecentEmojis()
+                        refreshRecentEmojiSectionInPlace()
                     }
                     dismissEmojiRemoveOverlay()
-                    populateEmojiGrid()
                 }
             }
             addView(removeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3569,11 +3577,13 @@ class ClipMaxImeService : InputMethodService() {
             isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         }
+        emojiTabsScrollView = tabsScroll
         val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         emojiTabViews.clear()
+        emojiScrollTabController.reset(resolveActiveEmojiTabIndex())
         val tabW = dp(EmojiInterfaceSpec.TAB_WIDTH_DP).toInt()
         val tabGap = dp(EmojiInterfaceSpec.TAB_GAP_DP).toInt()
         val totalTabs = 1 + EmojiCatalog.CATEGORIES.size
@@ -3589,11 +3599,16 @@ class ClipMaxImeService : InputMethodService() {
                 addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                 setOnClickListener {
                     dismissEmojiRemoveOverlay()
-                    selectedEmojiCategoryIdx = tabIdx
-                    updateEmojiCategoryTabsUI()
                     val targetView = emojiSectionViews.getOrNull(tabIdx)
+                    val targetY = targetView?.top ?: 0
+                    selectedEmojiCategoryIdx = emojiScrollTabController.onTabSelected(
+                        tabIdx = tabIdx,
+                        targetScrollY = targetY,
+                        nowMs = SystemClock.elapsedRealtime()
+                    )
+                    updateEmojiCategoryTabsUI()
                     if (targetView != null) {
-                        emojiScrollView?.smoothScrollTo(0, targetView.top)
+                        emojiScrollView?.smoothScrollTo(0, targetY)
                     } else {
                         emojiScrollView?.scrollTo(0, 0)
                     }
@@ -3631,17 +3646,26 @@ class ClipMaxImeService : InputMethodService() {
         val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
             isVerticalScrollBarEnabled = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+                    emojiScrollTabController.onUserTouchInteraction()
+                }
+                false
+            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                    var bestIdx = 0
-                    for (i in emojiSectionViews.indices) {
-                        val v = emojiSectionViews[i]
-                        if (v.top <= scrollY + dp(32)) {
-                            bestIdx = i
-                        }
-                    }
-                    if (bestIdx != selectedEmojiCategoryIdx) {
-                        selectedEmojiCategoryIdx = bestIdx
+                setOnScrollChangeListener { v, _, scrollY, _, _ ->
+                    val tops = emojiSectionViews.map { it.top }
+                    val bottomReached = scrollY > 0 && !v.canScrollVertically(1)
+                    val changed = emojiScrollTabController.onVerticalScroll(
+                        sectionTops = tops,
+                        scrollY = scrollY,
+                        bottomReached = bottomReached,
+                        anchorOffsetPx = dp(32),
+                        settleTolerancePx = dp(4),
+                        nowMs = SystemClock.elapsedRealtime()
+                    )
+                    if (changed) {
+                        selectedEmojiCategoryIdx = emojiScrollTabController.activeTabIdx
                         updateEmojiCategoryTabsUI()
                     }
                 }
@@ -3665,8 +3689,10 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun updateEmojiCategoryTabsUI() {
         val activeIdx = resolveActiveEmojiTabIndex()
+        var activeTabView: FrameLayout? = null
         for ((tabIdx, tab) in emojiTabViews) {
             val active = (tabIdx == activeIdx)
+            if (active) activeTabView = tab
             val bg = if (active) colorActiveTabBg else 0
             val fg = if (active) colorActiveTabText else colorModText
             val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
@@ -3674,13 +3700,14 @@ class ClipMaxImeService : InputMethodService() {
             val iv = tab.tag as? ImageView
             iv?.setImageDrawable(IconDrawable(iconTypeForEmojiTab(tabIdx), fg, EmojiInterfaceSpec.TAB_ICON_SIZE_DP))
         }
+        val tabsScroll = emojiTabsScrollView
+        if (tabsScroll != null && activeTabView != null && tabsScroll.width > 0) {
+            val targetX = activeTabView.left - (tabsScroll.width - activeTabView.width) / 2
+            tabsScroll.smoothScrollTo(targetX.coerceAtLeast(0), 0)
+        }
     }
 
-        private fun populateEmojiGrid() {
-        val grid = emojiGridContainer ?: return
-        grid.removeAllViews()
-        emojiSectionViews.clear()
-
+    private fun emojiGridMetrics(): Triple<Int, Int, Int> {
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val cols = if (isLandscape) EmojiInterfaceSpec.LANDSCAPE_COLUMNS else EmojiInterfaceSpec.PORTRAIT_COLUMNS
         val cellH = dp(
@@ -3688,7 +3715,121 @@ class ClipMaxImeService : InputMethodService() {
             else EmojiInterfaceSpec.CELL_HEIGHT_PORTRAIT_DP
         ).toInt()
         val rowGap = dp(EmojiInterfaceSpec.CELL_ROW_GAP_DP).toInt()
+        return Triple(cols, cellH, rowGap)
+    }
 
+    private fun populateEmojiSectionContent(
+        sectionContainer: LinearLayout,
+        sectionIdx: Int,
+        cols: Int,
+        cellH: Int,
+        rowGap: Int
+    ) {
+        sectionContainer.removeAllViews()
+        val sectionTitle = if (sectionIdx == 0) "Recent" else EmojiCatalog.CATEGORIES[sectionIdx - 1].label
+        val emojis = if (sectionIdx == 0) {
+            recentEmojiHistory.items()
+        } else {
+            EmojiCatalog.CATEGORIES[sectionIdx - 1].emojis
+        }
+
+        val headerTv = TextView(this).apply {
+            text = sectionTitle
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorHintText)
+            setPadding(dp(12), dp(8), dp(12), dp(4))
+        }
+        sectionContainer.addView(headerTv)
+
+        if (sectionIdx == 0 && emojis.isEmpty()) {
+            val emptyTv = TextView(this).apply {
+                text = "No recent emojis yet. Tap any emoji to keep it here."
+                textSize = 12f
+                setTextColor(colorHintText)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(16), dp(16), dp(16))
+            }
+            sectionContainer.addView(emptyTv)
+            return
+        }
+
+        var i = 0
+        while (i < emojis.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
+                    bottomMargin = rowGap
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < emojis.size) {
+                    val emoji = emojis[idx]
+                    val cell = TextView(this).apply {
+                        text = emoji
+                        textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(0x00000000, dp(10f), 0)
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleEmojiPress(emoji)
+                        }
+                        if (sectionIdx == 0) {
+                            setOnLongClickListener {
+                                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                showRecentEmojiRemoveOverlay(emoji)
+                                true
+                            }
+                        }
+                    }
+                    row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                }
+            }
+            sectionContainer.addView(row)
+            i += cols
+        }
+    }
+
+    private fun refreshRecentEmojiSectionInPlace() {
+        val recentContainer = emojiRecentSectionContainer ?: return
+        val scroll = emojiScrollView
+        val oldHeight = recentContainer.height
+        val oldScrollY = scroll?.scrollY ?: 0
+        val (cols, cellH, rowGap) = emojiGridMetrics()
+        populateEmojiSectionContent(recentContainer, 0, cols, cellH, rowGap)
+
+        if (scroll != null && oldScrollY > 0 && oldHeight > 0) {
+            val vto = recentContainer.viewTreeObserver
+            if (vto.isAlive) {
+                vto.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        if (recentContainer.viewTreeObserver.isAlive) {
+                            recentContainer.viewTreeObserver.removeOnPreDrawListener(this)
+                        }
+                        val deltaH = recentContainer.height - oldHeight
+                        if (deltaH != 0) {
+                            scroll.scrollTo(0, (oldScrollY + deltaH).coerceAtLeast(0))
+                        }
+                        return true
+                    }
+                })
+            }
+        }
+    }
+
+    private fun populateEmojiGrid() {
+        val grid = emojiGridContainer ?: return
+        grid.removeAllViews()
+        emojiSectionViews.clear()
+        emojiRecentSectionContainer = null
+
+        val (cols, cellH, rowGap) = emojiGridMetrics()
         val totalSections = 1 + EmojiCatalog.CATEGORIES.size
         for (sectionIdx in 0 until totalSections) {
             val sectionContainer = LinearLayout(this).apply {
@@ -3697,80 +3838,16 @@ class ClipMaxImeService : InputMethodService() {
                     bottomMargin = dp(12)
                 }
             }
+            if (sectionIdx == 0) {
+                emojiRecentSectionContainer = sectionContainer
+            }
             emojiSectionViews.add(sectionContainer)
-
-            val sectionTitle = if (sectionIdx == 0) "Recent" else EmojiCatalog.CATEGORIES[sectionIdx - 1].label
-            val emojis = if (sectionIdx == 0) {
-                recentEmojiHistory.items()
-            } else {
-                EmojiCatalog.CATEGORIES[sectionIdx - 1].emojis
-            }
-
-            val headerTv = TextView(this).apply {
-                text = sectionTitle
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorHintText)
-                setPadding(dp(12), dp(8), dp(12), dp(4))
-            }
-            sectionContainer.addView(headerTv)
-
-            if (sectionIdx == 0 && emojis.isEmpty()) {
-                val emptyTv = TextView(this).apply {
-                    text = "No recent emojis yet. Tap any emoji to keep it here."
-                    textSize = 12f
-                    setTextColor(colorHintText)
-                    gravity = Gravity.CENTER
-                    setPadding(dp(16), dp(16), dp(16), dp(16))
-                }
-                sectionContainer.addView(emptyTv)
-            } else {
-                var i = 0
-                while (i < emojis.size) {
-                    val row = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
-                            bottomMargin = rowGap
-                        }
-                    }
-                    for (c in 0 until cols) {
-                        val idx = i + c
-                        if (idx < emojis.size) {
-                            val emoji = emojis[idx]
-                            val cell = TextView(this).apply {
-                                text = emoji
-                                textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
-                                gravity = Gravity.CENTER
-                                includeFontPadding = false
-                                isClickable = true
-                                isFocusable = true
-                                background = roundedRipple(0x00000000, dp(10f), 0)
-                                setOnClickListener {
-                                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                    handleEmojiPress(emoji, fromRecentTab = (sectionIdx == 0))
-                                }
-                                if (sectionIdx == 0) {
-                                    setOnLongClickListener {
-                                        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                                        showRecentEmojiRemoveOverlay(emoji)
-                                        true
-                                    }
-                                }
-                            }
-                            row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-                        } else {
-                            row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-                        }
-                    }
-                    sectionContainer.addView(row)
-                    i += cols
-                }
-            }
+            populateEmojiSectionContent(sectionContainer, sectionIdx, cols, cellH, rowGap)
             grid.addView(sectionContainer)
         }
     }
 
-    private fun handleEmojiPress(emoji: String, fromRecentTab: Boolean = false) {
+    private fun handleEmojiPress(emoji: String) {
         dismissPasteUndoCapsule()
         dismissEmojiRemoveOverlay()
         shiftStateMachine.onNonLetterInput()
@@ -3788,9 +3865,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         recentEmojiHistory.record(emoji)
         persistRecentEmojis()
-        if (fromRecentTab && resolveActiveEmojiTabIndex() == 0) {
-            populateEmojiGrid()
-        }
+        refreshRecentEmojiSectionInPlace()
     }
 
     // =========================================================================
@@ -4530,6 +4605,7 @@ class ClipMaxImeService : InputMethodService() {
                 val complete = source.reader.use { reader ->
                     TextChunker.forEachChunk(
                         reader = reader,
+                        chunkChars = 16_384,
                         isCancelled = { generation != token || Thread.currentThread().isInterrupted }
                     ) { chunk ->
                         val ok = deliverChunk(connection, token, chunk)
@@ -4557,24 +4633,25 @@ class ClipMaxImeService : InputMethodService() {
                                 afterAnchor = afterAnchor
                             )
                             if (recorded) {
-                                pasteCapsuleController.onPasteSucceeded(SystemClock.elapsedRealtime())
+                                val isLargeOperation = insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                                pasteCapsuleController.onPasteSucceeded(
+                                    nowMs = SystemClock.elapsedRealtime(),
+                                    isLargeOperation = isLargeOperation
+                                )
                                 if (toolbarState != 0) {
                                     switchToolbarState(0, dismissCapsule = false)
                                 }
                                 clearTypingSuggestionsView()
                                 updatePasteUndoCapsuleUI()
                                 // Compose / WebView hosts often apply commitText asynchronously on the next frame
-                                // or trigger restartInput; re-sync capsule state once host context settles.
-                                main.postDelayed({
-                                    if (!serviceDestroyed && inputViewActive && currentEditorTarget.isCompatibleWith(startTarget)) {
-                                        updatePasteUndoCapsuleUI()
-                                    }
-                                }, 80L)
-                                main.postDelayed({
-                                    if (!serviceDestroyed && inputViewActive && currentEditorTarget.isCompatibleWith(startTarget)) {
-                                        updatePasteUndoCapsuleUI()
-                                    }
-                                }, 220L)
+                                // or trigger restartInput during large-text reflow; re-sync capsule UI once host settles.
+                                for (delayMs in longArrayOf(80L, 250L, 650L)) {
+                                    main.postDelayed({
+                                        if (!serviceDestroyed && inputViewActive && currentEditorTarget.isCompatibleWith(startTarget)) {
+                                            updatePasteUndoCapsuleUI()
+                                        }
+                                    }, delayMs)
+                                }
                             } else {
                                 pasteCapsuleController.onPasteFailed()
                                 updatePasteUndoCapsuleUI()
@@ -4686,14 +4763,42 @@ class ClipMaxImeService : InputMethodService() {
     override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         dismissContextMenu(animate = false)
-        generation++
-        suggestionGeneration.incrementAndGet()
-        insertTask?.cancel(true)
-        insertTask = null
-        isInserting = false
         fieldCapabilities = InputFieldPolicy.evaluate(attribute.inputType, attribute.imeOptions)
         isPasswordTarget = fieldCapabilities.isPasswordOrPin || isSensitiveField(attribute.inputType)
-        if (!restarting) {
+
+        val pkgChanged = attribute.packageName != lastEditorPackage
+        val fieldChanged = attribute.fieldId != lastEditorFieldId &&
+            (attribute.fieldId != 0 || lastEditorFieldId != 0)
+        val inputClassChanged = lastEditorPackage != null &&
+            (attribute.inputType and InputFieldPolicy.TYPE_MASK_CLASS) !=
+            (lastEditorInputType and InputFieldPolicy.TYPE_MASK_CLASS)
+        val hardFieldChanged = pkgChanged || fieldChanged || inputClassChanged || isPasswordTarget
+
+        val nowMs = SystemClock.elapsedRealtime()
+        val tempGateway = buildEditorGateway(currentInputConnection)
+        val canPreserveViaGateway = !hardFieldChanged && pasteCapsuleController.isActive && tempGateway != null && (
+            if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(tempGateway).allowed
+            else insertionHistory.canSafelyUndo(tempGateway).allowed
+        )
+        val preserveSession = PasteUndoCapsuleSpec.shouldPreserveSessionOnStartInput(
+            restarting = restarting,
+            hardFieldChanged = hardFieldChanged,
+            isInserting = isInserting,
+            isCapsuleActive = pasteCapsuleController.isActive,
+            lastActionElapsedMs = pasteCapsuleController.lastActionElapsedMs,
+            nowMs = nowMs,
+            canPreserveViaGateway = canPreserveViaGateway
+        )
+
+        suggestionGeneration.incrementAndGet()
+        if (!preserveSession || !isInserting) {
+            generation++
+            insertTask?.cancel(true)
+            insertTask = null
+            isInserting = false
+        }
+
+        if (!restarting && !preserveSession) {
             isEmojiPickerOpen = false
         }
         if (isPasswordTarget) {
@@ -4705,14 +4810,33 @@ class ClipMaxImeService : InputMethodService() {
         modeController.onFieldFocused(fieldCapabilities, restarting)
         autoCapMode = AutoCapitalizationPolicy.resolveCapMode(attribute.inputType, isFilterMode)
         shiftStateMachine.onInputSessionReset()
-        val pkgChanged = attribute.packageName != lastEditorPackage
-        val fieldChanged = attribute.fieldId != 0 && lastEditorFieldId != 0 && attribute.fieldId != lastEditorFieldId
-        if (!restarting || pkgChanged || fieldChanged) {
+
+        if (!preserveSession && (!restarting || hardFieldChanged)) {
             editorSessionId++
             dismissPasteUndoCapsule()
+        } else if (preserveSession && !isInserting && pasteCapsuleController.isActive && !canPreserveViaGateway) {
+            // Host triggered restartInput during large-text layout reflow; re-verify once settled.
+            val verifyRestartToken = ++pasteRestartVerifyToken
+            val expectedSessionId = editorSessionId
+            main.postDelayed({
+                if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
+                    return@postDelayed
+                }
+                if (isInserting || !pasteCapsuleController.isActive) return@postDelayed
+                val g = buildEditorGateway()
+                val stillValid = g != null && (
+                    if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g).allowed
+                    else insertionHistory.canSafelyUndo(g).allowed
+                )
+                if (!stillValid && g != null && g.textBeforeCursor(16) != null) {
+                    editorSessionId++
+                    dismissPasteUndoCapsule()
+                }
+            }, 950L)
         }
         lastEditorPackage = attribute.packageName
         lastEditorFieldId = attribute.fieldId
+        lastEditorInputType = attribute.inputType
         pasteHistoryVerifyToken++
         currentEditorTarget = InsertionHistoryManager.EditorTarget(
             packageName = attribute.packageName,
@@ -4789,7 +4913,7 @@ class ClipMaxImeService : InputMethodService() {
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         if (!inputViewActive) return
-        if (pasteCapsuleController.isActive) {
+        if (pasteCapsuleController.isActive && !isInserting) {
             val gateway = buildEditorGateway()
             val hasSelection = (newSelStart != newSelEnd) || (gateway?.hasActiveSelection() == true)
             val cursorMoved = (oldSelStart != newSelStart) || (oldSelEnd != newSelEnd)
@@ -5016,11 +5140,12 @@ class ClipMaxImeService : InputMethodService() {
                         }
                     }
                 }
-                if (direct != null) return direct
+                if (direct != null && (direct.isNotEmpty() || maxChars <= 2048)) return direct
                 if (maxChars > 2048) {
                     val fallbackDirect = runCatching { ic.getTextBeforeCursor(2048, 0)?.toString() }.getOrNull()
-                    if (fallbackDirect != null) return fallbackDirect
+                    if (!fallbackDirect.isNullOrEmpty()) return fallbackDirect
                 }
+                if (direct != null) return direct
                 val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
                 if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
                     val localSelStart = extracted.selectionStart - extracted.startOffset
@@ -5069,10 +5194,17 @@ class ClipMaxImeService : InputMethodService() {
                 if (length < 0) return false
                 if (length == 0) return true
                 var remaining = length
+                var maxStep = 16_384
                 while (remaining > 0) {
-                    val step = minOf(remaining, 4096)
+                    val step = minOf(remaining, maxStep)
                     val deleted = runCatching { ic.deleteSurroundingText(step, 0) }.getOrDefault(false)
-                    if (!deleted) return false
+                    if (!deleted) {
+                        if (maxStep > 4096) {
+                            maxStep = 4096
+                            continue
+                        }
+                        return false
+                    }
                     remaining -= step
                 }
                 return true
@@ -5121,7 +5253,8 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
-        val checkLen = 128
+        val pendingEntry = insertionHistory.peekUndo()
+        val checkLen = minOf(2048, maxOf(128, pendingEntry?.insertedText?.length ?: 128))
         val preBefore = gateway.textBeforeCursor(checkLen)
         val result = insertionHistory.undo(gateway)
         val entry = result.entry
@@ -5143,7 +5276,11 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
 
-        pasteCapsuleController.onUndoSucceeded(SystemClock.elapsedRealtime())
+        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+        pasteCapsuleController.onUndoSucceeded(
+            nowMs = SystemClock.elapsedRealtime(),
+            isLargeOperation = isLargeOperation
+        )
         updatePasteUndoCapsuleUI()
 
         val immediateBefore = gateway.textBeforeCursor(checkLen)
@@ -5189,7 +5326,8 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         val verifyToken = ++pasteHistoryVerifyToken
-        val checkLen = 128
+        val pendingEntry = insertionHistory.peekRedo()
+        val checkLen = minOf(2048, maxOf(128, pendingEntry?.insertedText?.length ?: 128))
         val preBefore = gateway.textBeforeCursor(checkLen)
         val result = insertionHistory.redo(gateway)
         val entry = result.entry
@@ -5204,7 +5342,12 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         val canUndoRemaining = insertionHistory.hasAnyUndoEntries()
-        pasteCapsuleController.onRedoSucceeded(canUndoRemaining, SystemClock.elapsedRealtime())
+        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+        pasteCapsuleController.onRedoSucceeded(
+            canUndoRemaining = canUndoRemaining,
+            nowMs = SystemClock.elapsedRealtime(),
+            isLargeOperation = isLargeOperation
+        )
         updatePasteUndoCapsuleUI()
 
         val immediateBefore = gateway.textBeforeCursor(checkLen)

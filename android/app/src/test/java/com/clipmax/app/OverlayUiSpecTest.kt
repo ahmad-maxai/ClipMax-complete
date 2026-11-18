@@ -63,7 +63,7 @@ class OverlayUiSpecTest {
     @Test
     fun testContextMenuUsesHarmonizedSurfaceInGraphiteAndPreservesClassic() {
         val graphite = KeyboardLayoutSpec.resolveThemePalette("graphite", systemNightMode = true)
-        assertEquals(0xFF21252B.toInt(), OverlayUiSpec.resolveContextMenuBg(graphite))
+        assertEquals(0xFF303134.toInt(), OverlayUiSpec.resolveContextMenuBg(graphite))
 
         val classicDark = KeyboardLayoutSpec.resolveThemePalette("classic", systemNightMode = true)
         assertEquals(classicDark.colorKeyBg, OverlayUiSpec.resolveContextMenuBg(classicDark))

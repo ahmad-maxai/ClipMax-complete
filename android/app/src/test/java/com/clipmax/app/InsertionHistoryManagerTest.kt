@@ -421,4 +421,53 @@ class InsertionHistoryManagerTest {
         assertTrue(undoA.success)
         assertEquals("Base: ", editor.buffer.toString())
     }
+
+    @Test
+    fun testVeryLargeTextOver100kCharsWithEmptyLargeQueryFallbackUndoRedo() {
+        val history = InsertionHistoryManager()
+        val target = InsertionHistoryManager.EditorTarget("com.example.docs", 9, 1, sessionId = 12L)
+        val docPrefix = "Header: "
+        val buffer = StringBuilder(docPrefix)
+        // Build 130,000-char paste (> previous 100k limit)
+        val unit = "ClipMax large-document block 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ. "
+        val hugeClip = buildString(130_500) {
+            while (length < 130_000) append(unit)
+        }
+        assertTrue(hugeClip.length > 120_000)
+
+        // Host returns "" when queried with huge maxChars > 2048, and succeeds for 2048
+        val emptyHugeQueryGateway = object : InsertionHistoryManager.HostEditorGateway {
+            override fun currentTarget() = target
+            override fun isPasswordField() = false
+            override fun hasActiveSelection() = false
+            override fun textBeforeCursor(maxChars: Int): String? {
+                if (maxChars > 2048) return ""
+                return buffer.substring(maxOf(0, buffer.length - maxChars), buffer.length)
+            }
+            override fun textAfterCursor(maxChars: Int) = ""
+            override fun deleteBeforeCursor(length: Int): Boolean {
+                if (length > buffer.length) return false
+                buffer.delete(buffer.length - length, buffer.length)
+                return true
+            }
+            override fun commitText(text: String): Boolean {
+                buffer.append(text)
+                return true
+            }
+            override fun runBatchEdit(block: () -> Boolean) = block()
+        }
+
+        assertTrue(emptyHugeQueryGateway.commitText(hugeClip))
+        assertTrue(history.recordClipInsertion(target, hugeClip, docPrefix, ""))
+        assertTrue(history.canSafelyUndo(emptyHugeQueryGateway).allowed)
+
+        val undoRes = history.undo(emptyHugeQueryGateway)
+        assertTrue(undoRes.success)
+        assertEquals(docPrefix, buffer.toString())
+
+        assertTrue(history.canSafelyRedo(emptyHugeQueryGateway).allowed)
+        val redoRes = history.redo(emptyHugeQueryGateway)
+        assertTrue(redoRes.success)
+        assertEquals(docPrefix + hugeClip, buffer.toString())
+    }
 }

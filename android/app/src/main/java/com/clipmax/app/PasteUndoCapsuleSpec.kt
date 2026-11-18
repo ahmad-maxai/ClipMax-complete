@@ -12,6 +12,9 @@ internal object PasteUndoCapsuleSpec {
     const val ICON_SIZE_DP = 14f
     const val TEXT_SIZE_SP = 12.5f
     const val SELF_UPDATE_GRACE_MS = 350L
+    const val LARGE_PASTE_CHAR_THRESHOLD = 1_500
+    const val LARGE_PASTE_GRACE_MS = 1_800L
+    const val RESTART_INPUT_SETTLE_GRACE_MS = 2_000L
 
     enum class CapsuleState {
         HIDDEN,
@@ -54,6 +57,27 @@ internal object PasteUndoCapsuleSpec {
     fun onUnrelatedAction(): Pair<Boolean, Boolean> = Pair(false, false)
 
     /**
+     * Determines whether an onStartInput() callback on the host editor represents a benign
+     * restart/layout expansion on the same field (which must NOT abort an active paste or
+     * dismiss the Paste Undo/Redo capsule) versus a genuine input field switch.
+     */
+    fun shouldPreserveSessionOnStartInput(
+        restarting: Boolean,
+        hardFieldChanged: Boolean,
+        isInserting: Boolean,
+        isCapsuleActive: Boolean,
+        lastActionElapsedMs: Long,
+        nowMs: Long,
+        canPreserveViaGateway: Boolean
+    ): Boolean {
+        if (hardFieldChanged) return false
+        if (isInserting) return true
+        if (!isCapsuleActive) return false
+        if (restarting || canPreserveViaGateway) return true
+        return (nowMs - lastActionElapsedMs) in 0L..RESTART_INPUT_SETTLE_GRACE_MS
+    }
+
+    /**
      * Pure JVM state controller governing the contextual Paste Undo/Redo capsule.
      * Ensures deterministic transitions for paste, undo, redo, failure, cursor tap,
      * mode switch, panel switch, and typing dismissal.
@@ -65,6 +89,8 @@ internal object PasteUndoCapsuleSpec {
             private set
         var lastActionElapsedMs: Long = 0L
             private set
+        var activeGraceMs: Long = SELF_UPDATE_GRACE_MS
+            private set
 
         val currentState: CapsuleState
             get() = resolveState(isActive, isRedoMode)
@@ -72,29 +98,32 @@ internal object PasteUndoCapsuleSpec {
         val currentConfig: CapsuleConfig
             get() = resolveConfig(isActive, isRedoMode)
 
-        fun onPasteSucceeded(nowMs: Long = 0L) {
+        fun onPasteSucceeded(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
             val (act, redo) = onPasteSuccess()
             isActive = act
             isRedoMode = redo
             lastActionElapsedMs = nowMs
+            activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
         }
 
         fun onPasteFailed() {
             dismiss()
         }
 
-        fun onUndoSucceeded(nowMs: Long = 0L) {
+        fun onUndoSucceeded(nowMs: Long = 0L, isLargeOperation: Boolean = false) {
             val (act, redo) = onUndoSuccess()
             isActive = act
             isRedoMode = redo
             lastActionElapsedMs = nowMs
+            activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
         }
 
-        fun onRedoSucceeded(canUndoRemaining: Boolean, nowMs: Long = 0L) {
+        fun onRedoSucceeded(canUndoRemaining: Boolean, nowMs: Long = 0L, isLargeOperation: Boolean = false) {
             val (act, redo) = onRedoSuccess(canUndoRemaining)
             isActive = act
             isRedoMode = redo
             lastActionElapsedMs = nowMs
+            activeGraceMs = if (isLargeOperation) LARGE_PASTE_GRACE_MS else SELF_UPDATE_GRACE_MS
         }
 
         fun onEditorSelectionChanged(
@@ -117,7 +146,7 @@ internal object PasteUndoCapsuleSpec {
             }
             // If the expected operation is not yet valid immediately after action (within grace window, e.g.
             // host editor asynchronous text layout and IPC reflow in progress), give the host time to settle.
-            if (nowMs - lastActionElapsedMs <= SELF_UPDATE_GRACE_MS) {
+            if (nowMs - lastActionElapsedMs <= activeGraceMs) {
                 return false
             }
             // Operation is no longer valid (e.g. user moved cursor elsewhere, modified text, or switched field)
@@ -129,6 +158,7 @@ internal object PasteUndoCapsuleSpec {
             val (act, redo) = onUnrelatedAction()
             isActive = act
             isRedoMode = redo
+            activeGraceMs = SELF_UPDATE_GRACE_MS
         }
     }
 }

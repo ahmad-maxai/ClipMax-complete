@@ -302,4 +302,59 @@ class PasteUndoCapsuleSpecTest {
         assertFalse(controller.isActive)
         assertEquals(PasteUndoCapsuleSpec.CapsuleState.HIDDEN, controller.currentState)
     }
+
+    @Test
+    fun testLargePasteSurvivesReflowDelayAndStartInputRestartWithoutPrematureDismissal() {
+        val controller = PasteUndoCapsuleSpec.PasteUndoCapsuleController()
+        controller.onPasteSucceeded(nowMs = 1_000L, isLargeOperation = true)
+        assertTrue(controller.isActive)
+
+        // Transient reflow onUpdateSelection at 900ms while host IPC hasn't caught up yet (< LARGE_PASTE_GRACE_MS)
+        val dismissedDuringReflow = controller.onEditorSelectionChanged(
+            nowMs = 1_900L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = false,
+            canRedoNow = false
+        )
+        assertFalse("Large paste capsule must survive post-paste host reflow under 1s", dismissedDuringReflow)
+        assertTrue(controller.isActive)
+
+        // Benign onStartInput(restarting = false) fired by host box resize after large paste must preserve session
+        assertTrue(
+            PasteUndoCapsuleSpec.shouldPreserveSessionOnStartInput(
+                restarting = false,
+                hardFieldChanged = false,
+                isInserting = false,
+                isCapsuleActive = controller.isActive,
+                lastActionElapsedMs = 1_000L,
+                nowMs = 1_650L,
+                canPreserveViaGateway = true
+            )
+        )
+
+        // True switch to a different app/field must NOT preserve session
+        assertFalse(
+            PasteUndoCapsuleSpec.shouldPreserveSessionOnStartInput(
+                restarting = false,
+                hardFieldChanged = true,
+                isInserting = false,
+                isCapsuleActive = controller.isActive,
+                lastActionElapsedMs = 1_000L,
+                nowMs = 1_650L,
+                canPreserveViaGateway = true
+            )
+        )
+
+        // Moving cursor away after large grace period dismisses cleanly
+        val dismissedAfterGrace = controller.onEditorSelectionChanged(
+            nowMs = 3_500L,
+            hasSelection = false,
+            cursorMoved = true,
+            canUndoNow = false,
+            canRedoNow = false
+        )
+        assertTrue(dismissedAfterGrace)
+        assertFalse(controller.isActive)
+    }
 }
