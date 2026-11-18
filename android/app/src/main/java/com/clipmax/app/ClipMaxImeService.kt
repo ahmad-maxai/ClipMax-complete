@@ -5393,7 +5393,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun scheduleUndoMutationVerification(
         entry: InsertionHistoryManager.HistoryEntry,
-        verifyToken: Long,
+        verifyToken: Int,
         checkLen: Int,
         preBefore: String?,
         scheduleMs: LongArray,
@@ -5467,7 +5467,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun scheduleRedoMutationVerification(
         entry: InsertionHistoryManager.HistoryEntry,
-        verifyToken: Long,
+        verifyToken: Int,
         checkLen: Int,
         preBefore: String?,
         scheduleMs: LongArray,
