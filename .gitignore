@@ -1,27 +1,9 @@
-# Android / Gradle
-.gradle/
-build/
-app/build/
-android/app/build/
-android/.gradle/
-android/build/
-*.apk
-*.aab
-
-# Kotlin
-.kotlin/
-*.log
-
-# IDE
-.idea/
-*.iml
-.vscode/
-.DS_Store
-
-# Node / Web artifacts (if any)
 node_modules/
+build/
 dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
 .aistudio/
-*.zip
-*.bundle
-.env.local

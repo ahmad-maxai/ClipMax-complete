@@ -28,6 +28,7 @@ export async function createZipBackup(items: ClipItem[]): Promise<Blob> {
       characterCount: item.characterCount,
       sizeBytes: item.sizeBytes,
       pinned: item.pinned,
+      isExpiryLocked: Boolean(item.isExpiryLocked),
       contentFile: `${item.id}.txt`,
     };
 
@@ -134,6 +135,7 @@ export async function restoreZipBackup(
       ? `${metaObj.title || "Untitled"} (restored)`.slice(0, 200)
       : (metaObj.title || "Untitled").slice(0, 200);
 
+    const isExpiryLocked = Boolean(metaObj.isExpiryLocked);
     const restoredItem: ClipItem = {
       id: finalId,
       title: finalTitle,
@@ -143,7 +145,8 @@ export async function restoreZipBackup(
       characterCount: content.length,
       sizeBytes: byteLen,
       pinned: Boolean(metaObj.pinned),
-      expiresAt: metaObj.expiresAt || null,
+      isExpiryLocked,
+      expiresAt: isExpiryLocked || Boolean(metaObj.pinned) ? null : (metaObj.expiresAt || null),
       contentFile: `${finalId}.txt`,
     };
 

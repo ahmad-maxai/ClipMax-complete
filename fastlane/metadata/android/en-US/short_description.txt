@@ -1,1 +1,1 @@
-Save, search, and reuse text snippets with ClipMax.
+Offline clipboard manager & English/Arabic keyboard with custom clip expiry.

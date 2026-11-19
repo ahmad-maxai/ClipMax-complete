@@ -1,11 +1,15 @@
-ClipMax helps you save and organize copied text on your Android device.
-
-Use ClipMax to keep useful text snippets accessible through its clipboard interface and keyboard. Find saved clips and reuse text when you need it.
+ClipMax is an offline-first Android clipboard manager and bilingual native system keyboard designed to save, organize, protect, and reuse text snippets locally.
 
 Features:
-• Save and organize text snippets
-• Search saved clips
-• Access clips through the ClipMax keyboard
-• Keep your clipboard collection available on your device
 
-ClipMax is an independent Android project. Availability and features may vary by release.
+* Bilingual Native Keyboard (English & Arabic): Switch smoothly between full English QWERTY and standard Arabic (العربية) layouts with Arabic-Indic digit hints, dedicated auto-activating numeric keypad, symbols and emoji picker, and offline English word suggestions and autocorrection.
+* Full Bilingual UI & RTL Support: Use both the companion app and native keyboard sub-panels in English (LTR) or Arabic (العربية, RTL), toggled independently of your active keyboard typing language.
+* Direct Clip Insertion & Undo/Redo: Insert saved clips directly into any text field without switching apps, with a floating Paste Undo/Redo capsule.
+* Safe Large Text Insertion: Inserts long text in bounded 50,000 UTF-16 code unit chunks, preventing Android IPC transaction overflow crashes.
+* Automatic Copy Capture: Captures copied text and focused editable selections during active keyboard sessions (completely disabled in password and PIN fields).
+* Customizable Retention: Set clips to expire automatically after 1 hour, 6 hours, 24 hours, 72 hours, a custom duration, or keep them forever.
+* Per-Item Expiry Protection: Lock specific clips so automatic retention cleanup will never remove them until explicitly unlocked.
+* Split, Merge & Search: Split long text into parts, merge multiple clips together, pin favorites, or filter clips instantly with built-in search.
+* Structured ZIP Backup & .txt Import: Export and restore local ZIP backups (with a 128 MiB decompression safety cap) or import .txt files via Android Storage Access Framework.
+* Themes & Appearance: Matches Android system light and dark modes, with manual light/dark overrides.
+* 100% Private & Offline: Operates with zero internet permission (android.permission.INTERNET is completely absent). No analytics, no ads, no trackers, and no cloud accounts.

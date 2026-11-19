@@ -1,3 +1,7 @@
+# DRAFT / TEMPLATE: This file is a reference recipe template for future submission
+# to the upstream fdroiddata repository (https://gitlab.com/fdroid/fdroiddata).
+# It is maintained here for reference and documentation; ClipMax has not yet been submitted or published on F-Droid.
+
 Categories:
   - System
   - Utilities
@@ -10,33 +14,35 @@ Changelog: https://github.com/ahmad-maxai/ClipMax-complete/releases
 
 AutoName: ClipMax
 
-Summary: Offline clipboard manager and system keyboard
+Summary: Offline clipboard manager & bilingual English/Arabic keyboard
 
 Description: |-
-  ClipMax helps you save and organize copied text on your Android device.
-
-  Use ClipMax to keep useful text snippets accessible through its clipboard
-  interface and keyboard. Find saved clips and reuse text when you need it.
+  ClipMax helps you save, protect, and organize copied text on your Android
+  device, and insert snippets directly through its bilingual native keyboard.
 
   Features:
-  * Save and organize text snippets
-  * Search saved clips
-  * Access clips through the ClipMax keyboard
-  * Insert long text using bounded surrogate-safe chunks
-  * Keep your clipboard collection private and offline on your device
-
+  * Bilingual native keyboard (English QWERTY and Arabic العربية layouts)
+  * Full English (LTR) and Arabic (العربية, RTL) interface localization
+  * Offline English word suggestions and autocorrection (AOSP Apache-2.0 list)
+  * Auto-activating numeric keypad, symbols, and emoji picker
+  * Save, search, pin, split, merge, and lock clips against auto-expiry
+  * Insert long text safely using bounded 50,000 UTF-16 chunks with Undo/Redo
+  * Keep your clipboard collection strictly private and offline (no INTERNET perm)
 RepoType: git
 Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
 
 Builds:
-  - versionName: 1.0.1
-    versionCode: 11
-    commit: v1.0.1
+  - versionName: '0.5.1'
+    versionCode: 12
+    commit: a6d62b14fa9b3297c1db4f6afeef108b88bc804e
     subdir: android
     gradle:
       - yes
 
+# AutoUpdateMode/UpdateCheckMode assume the owner publishes annotated release tags
+# (e.g., v0.5.1) after merging release changes. No v0.5.1 tag exists yet in this
+# pre-submission draft; upstream submission must update commit to the final tagged release.
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.1
-CurrentVersionCode: 11
+CurrentVersion: '0.5.1'
+CurrentVersionCode: 12

@@ -1,5 +1,6 @@
 import React, { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../lib/utils";
+import { getUiText, useAppLocale } from "../lib/i18n";
 import logoImg from "../assets/logo.jpg";
 
 export interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -82,7 +83,7 @@ export function TopBar({
   subtitle?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm">
+    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm" dir="ltr">
       <div className="flex h-11 items-center gap-1.5 px-3">
         {left}
         <div className="min-w-0 flex-1 px-1">
@@ -168,7 +169,7 @@ export function ClipMaxLogo({
 
 export function Wordmark() {
   return (
-    <div className="flex items-center gap-1.5 select-none">
+    <div className="flex items-center gap-1.5 select-none" dir="ltr">
       <ClipMaxLogo size={24} />
       <span className="text-[15px] font-bold tracking-tight text-foreground flex items-center">
         Clip<span className="text-mint font-extrabold">Max</span>
@@ -184,8 +185,8 @@ export function ConfirmModal({
   open,
   title,
   description,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   destructive = true,
   onConfirm,
   onClose,
@@ -199,6 +200,11 @@ export function ConfirmModal({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const locale = useAppLocale();
+  const common = getUiText(locale).common;
+  const resolvedConfirm = confirmLabel ?? common.confirm;
+  const resolvedCancel = cancelLabel ?? common.cancel;
+
   if (!open) return null;
 
   return (
@@ -212,7 +218,7 @@ export function ConfirmModal({
         <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{description}</p>
         <div className="mt-5 flex justify-end gap-2">
           <Btn variant="ghost" size="sm" onClick={onClose}>
-            {cancelLabel}
+            {resolvedCancel}
           </Btn>
           <Btn
             variant={destructive ? "danger" : "primary"}
@@ -222,7 +228,7 @@ export function ConfirmModal({
               onClose();
             }}
           >
-            {confirmLabel}
+            {resolvedConfirm}
           </Btn>
         </div>
       </div>

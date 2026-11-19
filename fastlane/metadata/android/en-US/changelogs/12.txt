@@ -1,0 +1,8 @@
+ClipMax v0.5.1 (versionCode 12):
+* Added bilingual English (QWERTY) and Arabic (العربية) native keyboard layouts with quick language switching.
+* Added full Arabic (العربية) RTL UI localization across the companion app and keyboard panels, independent of keyboard typing language.
+* Added offline English word suggestions and autocorrection using a verified Apache-2.0 AOSP LatinIME word list.
+* Added automatic numeric-field detection and numpad activation in the native keyboard.
+* Added per-item expiry protection to lock clips from automatic retention cleanup.
+* Added interactive first-launch onboarding guide and About ClipMax modal with GPL-3.0-or-later license notice.
+* Enhanced paste undo/redo compatibility across browsers, chat apps, and compact search fields.

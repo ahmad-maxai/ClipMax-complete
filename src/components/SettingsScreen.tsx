@@ -7,35 +7,45 @@ import {
   Keyboard,
   ShieldCheck,
   Trash2,
-  Package,
   Sliders,
   CheckCircle2,
-  Smartphone,
-  ExternalLink,
-  Check,
-  X,
+  Info,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, Section, ConfirmModal, ClipMaxLogo } from "./primitives";
 import {
+  AppUiLocale,
+  APP_UI_LOCALE_LABELS,
   ClipItem,
+  KeyboardLanguage,
+  KEYBOARD_LANGUAGE_LABELS,
   Nav,
   Retention,
-  RETENTION_LABELS,
+  RETENTION_PRESET_KEYS,
+  ThemeMode,
 } from "../lib/types";
 import {
   saveStoredRetention,
   saveStoredCaptureEnabled,
-  getStoredKeyboardEnabled,
-  saveStoredKeyboardEnabled,
-  getStoredActiveIme,
-  saveStoredActiveIme,
   createClipItem,
+  getStoredCustomDuration,
+  saveStoredCustomDuration,
+  getStoredCustomUnit,
+  saveStoredCustomUnit,
 } from "../lib/storage";
 import { formatBytes } from "../lib/chunker";
 import { createZipBackup, restoreZipBackup, downloadFile } from "../lib/backup";
 import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
 import { isNativeAndroid } from "../lib/nativeBridge";
+import { OnboardingState } from "../lib/onboarding";
+import { KeyboardOnboardingGuide } from "./KeyboardOnboardingGuide";
+import { AboutClipMaxModal } from "./AboutClipMaxModal";
+import {
+  formatRetentionLocalized,
+  formatThemeName,
+  getUiText,
+  useAppLocale,
+} from "../lib/i18n";
 
 interface SettingsScreenProps {
   items: ClipItem[];
@@ -44,7 +54,19 @@ interface SettingsScreenProps {
   onChangeRetention: (r: Retention) => void;
   captureEnabled: boolean;
   onChangeCaptureEnabled: (v: boolean) => void;
+  themeMode: ThemeMode;
+  systemDark: boolean;
+  onChangeThemeMode: (mode: ThemeMode) => void;
+  appUiLocale: AppUiLocale;
+  onChangeAppUiLocale: (locale: AppUiLocale) => void;
+  keyboardLanguage: KeyboardLanguage;
+  onChangeKeyboardLanguage: (language: KeyboardLanguage) => void;
   nav: Nav;
+  onboardingState?: OnboardingState | null;
+  reducedMotion?: boolean;
+  onSkipOnboarding?: () => void;
+  onCompleteOnboarding?: () => void;
+  onOnboardingBack?: () => void;
 }
 
 export function SettingsScreen({
@@ -54,101 +76,169 @@ export function SettingsScreen({
   onChangeRetention,
   captureEnabled,
   onChangeCaptureEnabled,
+  themeMode,
+  systemDark,
+  onChangeThemeMode,
+  appUiLocale,
+  onChangeAppUiLocale,
+  keyboardLanguage,
+  onChangeKeyboardLanguage,
   nav,
+  onboardingState,
+  reducedMotion = false,
+  onSkipOnboarding,
+  onCompleteOnboarding,
+  onOnboardingBack,
 }: SettingsScreenProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.settings;
   const { toast, success, error } = useToast();
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [isProcessingBackup, setIsProcessingBackup] = useState(false);
+  const isCustomActive = retention === "custom" || retention.startsWith("custom:") || /^(\d+)[mh]$/i.test(retention);
+  const [customDurationInput, setCustomDurationInput] = useState<string>(() => {
+    const match = retention.match(/^(?:custom:)?(\d+)\s*([mh])$/i);
+    if (match) return match[1];
+    return String(getStoredCustomDuration());
+  });
+  const [customUnit, setCustomUnit] = useState<"m" | "h">(() => {
+    const match = retention.match(/^(?:custom:)?(\d+)\s*([mh])$/i);
+    if (match) return match[2].toLowerCase() === "h" ? "h" : "m";
+    return getStoredCustomUnit();
+  });
+  const [customInputError, setCustomInputError] = useState<string | null>(null);
 
-  // Android System Keyboard (IME) state
-  const [keyboardEnabled, setKeyboardEnabled] = useState<boolean>(() =>
-    getStoredKeyboardEnabled()
-  );
-  const [activeIme, setActiveIme] = useState<string>(() =>
-    getStoredActiveIme()
-  );
-  const [showSystemSettingsModal, setShowSystemSettingsModal] = useState(false);
-  const [showImePickerModal, setShowImePickerModal] = useState(false);
-  const [testInputText, setTestInputText] = useState("");
+  const handleSelectPreset = (r: Retention) => {
+    preserveScroll(() => {
+      setCustomInputError(null);
+      onChangeRetention(r);
+      saveStoredRetention(r);
+      toast(t.retentionToast(formatRetentionLocalized(r, locale)));
+    });
+  };
+
+  const handleSelectCustom = () => {
+    preserveScroll(() => {
+      const parsed = parseInt(customDurationInput, 10);
+      const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setCustomDurationInput("15");
+        setCustomInputError(null);
+      }
+      saveStoredCustomDuration(safeDuration);
+      saveStoredCustomUnit(customUnit);
+      const customVal = `custom:${safeDuration}${customUnit}`;
+      onChangeRetention(customVal);
+      saveStoredRetention(customVal);
+      toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, customUnit)));
+    });
+  };
+
+  const handleCustomDurationChange = (valStr: string) => {
+    setCustomDurationInput(valStr);
+    const parsed = parseInt(valStr, 10);
+    if (!valStr.trim() || isNaN(parsed) || parsed <= 0) {
+      setCustomInputError(t.customInputErr);
+      return;
+    }
+    setCustomInputError(null);
+    saveStoredCustomDuration(parsed);
+    const customVal = `custom:${parsed}${customUnit}`;
+    onChangeRetention(customVal);
+    saveStoredRetention(customVal);
+  };
+
+  const handleCustomUnitChange = (newUnit: "m" | "h") => {
+    setCustomUnit(newUnit);
+    saveStoredCustomUnit(newUnit);
+    const parsed = parseInt(customDurationInput, 10);
+    const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
+    const customVal = `custom:${safeDuration}${newUnit}`;
+    onChangeRetention(customVal);
+    saveStoredRetention(customVal);
+    toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, newUnit)));
+  };
+
+
 
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollPosRef = useRef<number>(0);
+  const keyboardSectionRef = useRef<HTMLDivElement>(null);
+  const enableImeBtnRef = useRef<HTMLDivElement>(null);
+  const selectImeBtnRef = useRef<HTMLDivElement>(null);
+  const isOnboardingActive =
+    Boolean(onboardingState) &&
+    !onboardingState?.completed &&
+    onboardingState?.step !== "INTRODUCTION";
+
+  const preserveScroll = (action: () => void) => {
+    if (scrollRef.current) scrollPosRef.current = scrollRef.current.scrollTop;
+    action();
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollPosRef.current;
+    });
+  };
 
   const totalBytes = items.reduce((acc, c) => acc + c.sizeBytes, 0);
   const pinnedCount = items.filter((c) => c.pinned).length;
 
-  // Handle Keyboard Enable toggle
-  const handleToggleKeyboardEnabled = (enabled: boolean) => {
-    setKeyboardEnabled(enabled);
-    saveStoredKeyboardEnabled(enabled);
-    if (enabled) {
-      success("ClipMax Keyboard enabled", {
-        description: "ClipMax service registered. You can now use it in any app.",
-      });
-    } else {
-      toast("ClipMax Keyboard disabled in system");
-    }
-  };
-
-  // Open Android Settings Intent with fallback simulation
+  // Open native Android Keyboard Settings
   const handleOpenAndroidSettings = () => {
     if (isNativeAndroid() && window.ClipMaxNative?.openImeSettings) {
       try {
         window.ClipMaxNative.openImeSettings();
-        toast("Opening Android Keyboard Settings...");
+        toast(t.openingAndroidSettingsToast);
         return;
       } catch {}
     }
-    try {
-      window.location.href = "intent:#Intent;action=android.settings.INPUT_METHOD_SETTINGS;end";
-    } catch {}
-    // Open in-app Android System Settings simulator modal
-    setShowSystemSettingsModal(true);
+    toast(t.fallbackAndroidSettingsToast);
   };
 
-  // Open native Android Input Method Picker or fallback simulation
+  // Open native Android Input Method Picker
   const handleOpenImePicker = () => {
     if (isNativeAndroid() && window.ClipMaxNative?.showImePicker) {
       try {
         window.ClipMaxNative.showImePicker();
-        toast("Opening Android Input Method Picker...");
+        toast(t.openingImePickerToast);
         return;
       } catch {}
     }
-    setShowImePickerModal(true);
+    toast(t.fallbackImePickerToast);
   };
 
-  // Handle selecting active IME in picker
-  const handleSelectActiveIme = (imeId: string) => {
-    setActiveIme(imeId);
-    saveStoredActiveIme(imeId);
-    setShowImePickerModal(false);
-    if (imeId === "clipmax") {
-      // Auto enable if switching to it
-      if (!keyboardEnabled) {
-        setKeyboardEnabled(true);
-        saveStoredKeyboardEnabled(true);
-      }
-      success("ClipMax set as active keyboard", {
-        description: "ClipMax is now your default keyboard across WhatsApp, Chrome, Notes, and all apps.",
-      });
-    } else {
-      toast(`Switched active keyboard to ${imeId === "gboard" ? "Gboard" : "Google Voice"}`);
-    }
+  const handleSelectTheme = (mode: ThemeMode) => {
+    preserveScroll(() => {
+      onChangeThemeMode(mode);
+      toast(t.themeToast(formatThemeName(mode, systemDark, locale)));
+    });
   };
 
-  // Handle retention switch
-  const handleSelectRetention = (r: Retention) => {
-    onChangeRetention(r);
-    saveStoredRetention(r);
-    toast(`Retention set to ${RETENTION_LABELS[r]}`);
+  const handleSelectAppUiLocale = (nextLocale: AppUiLocale) => {
+    preserveScroll(() => {
+      onChangeAppUiLocale(nextLocale);
+      const nextText = getUiText(nextLocale).settings;
+      toast(nextText.appLanguageToast(nextLocale));
+    });
+  };
+
+  const handleSelectKeyboardLanguage = (language: KeyboardLanguage) => {
+    preserveScroll(() => {
+      onChangeKeyboardLanguage(language);
+      toast(t.keyboardLanguageToast(KEYBOARD_LANGUAGE_LABELS[language]));
+    });
   };
 
   // Handle capture toggle
   const handleToggleCapture = (enabled: boolean) => {
-    onChangeCaptureEnabled(enabled);
-    saveStoredCaptureEnabled(enabled);
-    toast(enabled ? "Automatic capture enabled" : "Automatic capture disabled");
+    preserveScroll(() => {
+      onChangeCaptureEnabled(enabled);
+      saveStoredCaptureEnabled(enabled);
+      toast(enabled ? t.captureEnabledToast : t.captureDisabledToast);
+    });
   };
 
   // Export ZIP backup
@@ -158,11 +248,11 @@ export function SettingsScreen({
       const blob = await createZipBackup(items);
       const dateStr = new Date().toISOString().slice(0, 10);
       downloadFile(blob, `clipmax-backup-${dateStr}.zip`);
-      success("Backup ZIP created", {
-        description: `Exported ${items.length} items (${formatBytes(blob.size)}) in ClipMax format.`,
+      success(t.backupCreatedTitle, {
+        description: t.backupCreatedDesc(items.length, formatBytes(blob.size)),
       });
     } catch (err: any) {
-      error("Backup failed", { description: err?.message });
+      error(t.backupFailed, { description: err?.message });
     } finally {
       setIsProcessingBackup(false);
     }
@@ -183,11 +273,17 @@ export function SettingsScreen({
         const parsed = JSON.parse(text);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const newItems = parsed.map((p: any) =>
-            createClipItem(p.title || "Imported clip", p.content || "", Boolean(p.pinned))
+            createClipItem(
+              p.title || "Imported clip",
+              p.content || "",
+              Boolean(p.pinned),
+              retention,
+              Boolean(p.isExpiryLocked)
+            )
           );
           onUpdateItems([...newItems, ...items]);
-          success(`Restored ${newItems.length} items from JSON backup`, {
-            description: `${newItems.length} items added to device library.`,
+          success(t.restoredJsonTitle(newItems.length), {
+            description: t.restoredJsonDesc(newItems.length),
           });
           return;
         }
@@ -196,14 +292,14 @@ export function SettingsScreen({
       // Standard ZIP backup
       const res = await restoreZipBackup(file, items);
       onUpdateItems(res.items);
-      success(`Restored ${res.restoredCount} items from backup`, {
+      success(ui.library.restoredBackup(res.restoredCount), {
         description: res.warnings.length
-          ? `Warnings: ${res.warnings.join(", ")}`
-          : "Archive verified against 128 MiB boundary and metadata schemas.",
+          ? ui.library.restoreWarnings(res.warnings.join(", "))
+          : t.restoredZipClean,
       });
     } catch (err: any) {
-      error("Restore failed", {
-        description: err?.message || "Invalid or corrupt backup file.",
+      error(ui.library.restoreFailed, {
+        description: err?.message || ui.library.restoreFailedDesc,
       });
     } finally {
       setIsProcessingBackup(false);
@@ -214,7 +310,7 @@ export function SettingsScreen({
   // Delete all items
   const handleDeleteAll = () => {
     onUpdateItems([]);
-    toast("All saved items have been cleared from local storage.");
+    toast(t.deletedAllToast);
   };
 
   return (
@@ -229,17 +325,26 @@ export function SettingsScreen({
 
       <TopBar
         left={
-          <IconBtn label="Back" onClick={() => nav({ name: "library" })}>
-            <ArrowLeft className="h-5 w-5" />
+          <IconBtn
+            label={ui.common.back}
+            onClick={() => {
+              if (isOnboardingActive && onOnboardingBack) {
+                onOnboardingBack();
+              } else {
+                nav({ name: "library" });
+              }
+            }}
+          >
+            <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
           </IconBtn>
         }
-        title="Settings"
+        title={t.title}
       />
 
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3.5 pb-6">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3.5 pb-6 text-start">
         {/* App Info Card */}
         <Section>
-          <div className="flex items-center gap-3.5 p-3.5">
+          <div className="flex items-center gap-3.5 p-3.5" dir="ltr">
             <ClipMaxLogo size={46} className="shadow-sm" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -249,175 +354,171 @@ export function SettingsScreen({
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                com.clipmax.app · Native Android Redesign
+                {t.subtitleMeta}
               </p>
               <p className="text-[11px] text-muted-foreground/75 mt-0.5">
-                Private, local-first clipboard manager & IME
+                {t.subtitleDesc}
               </p>
             </div>
           </div>
         </Section>
 
         {/* Storage Overview */}
-        <Section title="Device Storage">
-          <div className="grid grid-cols-3 divide-x divide-border px-1 py-3 text-center">
-            <StatCard value={String(items.length)} label="Items" />
-            <StatCard value={String(pinnedCount)} label="Pinned" />
-            <StatCard value={formatBytes(totalBytes)} label="On device" />
+        <Section title={t.deviceStorage}>
+          <div className="grid grid-cols-3 divide-x rtl:divide-x-reverse divide-border px-1 py-3 text-center">
+            <StatCard value={String(items.length)} label={t.statItems} />
+            <StatCard value={String(pinnedCount)} label={t.statPinned} />
+            <StatCard value={formatBytes(totalBytes)} label={t.statOnDevice} />
           </div>
         </Section>
 
-        {/* Android System Keyboard (Use in Any App) */}
-        <Section title="Android System Keyboard (Use in Any App)">
-          {/* Status Indicator Banner */}
-          <div className="p-4 bg-surface-2 border-b border-border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <span
+        {/* Appearance & Language */}
+        <Section title={t.appearance}>
+          <div className="border-b border-border px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">{t.appLanguageTitle}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t.appLanguageDesc}
+            </p>
+            <div
+              role="radiogroup"
+              aria-label={t.appLanguageTitle}
+              className="mt-2.5 grid grid-cols-2 gap-1.5"
+            >
+              {(["en", "ar"] as const).map((uiLoc) => (
+                <button
+                  key={uiLoc}
+                  type="button"
+                  role="radio"
+                  aria-checked={appUiLocale === uiLoc}
+                  onClick={() => handleSelectAppUiLocale(uiLoc)}
                   className={cn(
-                    "grid h-8 w-8 place-items-center rounded-lg shadow-2xs font-bold text-xs",
-                    keyboardEnabled && activeIme === "clipmax"
-                      ? "bg-mint text-primary-foreground dark:text-background"
-                      : "bg-muted text-muted-foreground"
+                    "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                    appUiLocale === uiLoc
+                      ? "border-mint bg-mint-soft text-mint-foreground"
+                      : "border-border bg-surface text-foreground hover:bg-accent"
                   )}
                 >
-                  <Keyboard className="h-4.5 w-4.5" />
-                </span>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-foreground">
-                      {keyboardEnabled && activeIme === "clipmax"
-                        ? "Active System Keyboard"
-                        : keyboardEnabled
-                        ? "Enabled in System"
-                        : "Keyboard Not Activated"}
-                    </span>
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                        keyboardEnabled && activeIme === "clipmax"
-                          ? "bg-mint-soft text-mint-foreground"
-                          : keyboardEnabled
-                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                          : "bg-muted text-muted-foreground"
-                      )}
-                    >
-                      {keyboardEnabled && activeIme === "clipmax"
-                        ? "Active Everywhere"
-                        : keyboardEnabled
-                        ? "Enabled (Standby)"
-                        : "Disabled"}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {keyboardEnabled && activeIme === "clipmax"
-                      ? "ClipMax is ready to insert saved clips in WhatsApp, Chrome, Notes, and all apps."
-                      : keyboardEnabled
-                      ? "Turn on ClipMax as default in the Input Method Picker below."
-                      : "Enable ClipMax in Android System Settings to use it anywhere."}
-                  </p>
-                </div>
-              </div>
+                  {APP_UI_LOCALE_LABELS[uiLoc]}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Master Enable Toggle */}
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
-            <div className="flex-1 min-w-0">
-              <span className="block text-sm font-semibold text-foreground">
-                Enable ClipMax in System Settings
-              </span>
-              <span className="block text-xs text-muted-foreground mt-0.5">
-                Registers <code>ClipMaxImeService</code> to receive system input requests from any installed app.
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={keyboardEnabled}
-              onClick={() => handleToggleKeyboardEnabled(!keyboardEnabled)}
-              className={cn(
-                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                keyboardEnabled ? "bg-mint" : "bg-muted"
-              )}
+          <div className="px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">{t.themeTitle}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t.themeDesc(themeMode, systemDark)}
+            </p>
+            <div
+              role="radiogroup"
+              aria-label={t.themeTitle}
+              className="mt-2.5 grid grid-cols-4 gap-1.5"
             >
-              <span
-                className={cn(
-                  "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow-md ring-0 transition duration-200 ease-in-out",
-                  keyboardEnabled ? "translate-x-5" : "translate-x-0"
-                )}
-              />
-            </button>
+              {t.themeOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={themeMode === opt.value}
+                  onClick={() => handleSelectTheme(opt.value)}
+                  className={cn(
+                    "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                    themeMode === opt.value
+                      ? "border-mint bg-mint-soft text-mint-foreground"
+                      : "border-border bg-surface text-foreground hover:bg-accent"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
+        </Section>
 
-          {/* Step 1 & Step 2 Buttons */}
-          <div className="p-3.5 space-y-2">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <Btn
-                size="sm"
-                variant={keyboardEnabled ? "outline" : "mint"}
-                className="w-full justify-start text-xs font-bold gap-2 h-9.5"
-                onClick={handleOpenAndroidSettings}
-              >
-                <Sliders className="h-4 w-4 shrink-0 text-mint" />
-                <span className="truncate">1. Manage System Keyboards</span>
-              </Btn>
-
-              <Btn
-                size="sm"
-                variant={activeIme === "clipmax" ? "outline" : "mint"}
-                className="w-full justify-start text-xs font-bold gap-2 h-9.5"
-                onClick={handleOpenImePicker}
-              >
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-mint" />
-                <span className="truncate">2. Switch Active Input Method</span>
-              </Btn>
+        {/* Native Android System Keyboard Setup */}
+        <div ref={keyboardSectionRef}>
+          <Section title={t.androidKeyboardSection}>
+            <div className="p-4 bg-surface-2 border-b border-border flex items-start gap-2.5">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-mint text-primary-foreground dark:text-background shadow-2xs">
+                <Keyboard className="h-4.5 w-4.5" />
+              </span>
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-foreground block">
+                  {t.nativeKeyboardTitle}
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  {t.nativeKeyboardDesc}
+                </p>
+              </div>
             </div>
 
-            {/* Step 3: Live Verification & Testing in Settings */}
-            <div className="mt-2 rounded-xl border border-border bg-background p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-mint" /> Live System Keyboard Verification
-                </span>
-                <span className="text-[10px] font-bold text-mint">
-                  Confirmed Functional
-                </span>
+            <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div ref={enableImeBtnRef} className="w-full">
+                <Btn
+                  size="sm"
+                  variant="outline"
+                  className="w-full justify-start text-xs font-bold gap-2 h-9.5"
+                  onClick={handleOpenAndroidSettings}
+                >
+                  <Sliders className="h-4 w-4 shrink-0 text-mint" />
+                  <span className="truncate">{t.step1ManageKeyboards}</span>
+                </Btn>
               </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Test typing and snippet insertion directly below to verify ClipMax functions in any host app:
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={testInputText}
-                  onChange={(e) => setTestInputText(e.target.value)}
-                  placeholder="Tap here to test typing with ClipMax..."
-                  className="flex-1 min-w-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-mint"
-                />
+
+              <div ref={selectImeBtnRef} className="w-full">
                 <Btn
                   size="sm"
                   variant="mint"
-                  className="text-xs shrink-0 font-bold"
-                  onClick={() => nav({ name: "keyboard" })}
+                  className="w-full justify-start text-xs font-bold gap-2 h-9.5"
+                  onClick={handleOpenImePicker}
                 >
-                  <Keyboard className="h-3.5 w-3.5" />
-                  Test Panel
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{t.step2SwitchIme}</span>
                 </Btn>
               </div>
             </div>
-          </div>
-        </Section>
+
+            <div className="border-t border-border px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">{t.keyboardLanguageTitle}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t.keyboardLanguageDesc}
+              </p>
+              <div
+                role="radiogroup"
+                aria-label={t.keyboardLanguageTitle}
+                className="mt-2.5 grid grid-cols-2 gap-1.5"
+              >
+                {(["en", "ar"] as const).map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    role="radio"
+                    aria-checked={keyboardLanguage === lang}
+                    onClick={() => handleSelectKeyboardLanguage(lang)}
+                    className={cn(
+                      "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                      keyboardLanguage === lang
+                        ? "border-mint bg-mint-soft text-mint-foreground"
+                        : "border-border bg-surface text-foreground hover:bg-accent"
+                    )}
+                  >
+                    {KEYBOARD_LANGUAGE_LABELS[lang]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Section>
+        </div>
 
         {/* Capture & Retention */}
-        <Section title="Automatic Capture & Retention">
+        <Section title={t.captureSection}>
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex-1">
               <span className="block text-sm font-semibold text-foreground">
-                Automatic capture
+                {t.autoCaptureTitle}
               </span>
               <span className="block text-xs text-muted-foreground">
-                Captures selections/copies while ClipMax is active. Automatically suppressed on password fields.
+                {t.autoCaptureDesc}
               </span>
             </div>
             <button
@@ -433,48 +534,131 @@ export function SettingsScreen({
               <span
                 className={cn(
                   "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow-md ring-0 transition duration-200 ease-in-out",
-                  captureEnabled ? "translate-x-5" : "translate-x-0"
+                  captureEnabled ? "translate-x-5 rtl:-translate-x-5" : "translate-x-0"
                 )}
               />
             </button>
           </div>
 
           <div className="border-t border-border px-4 py-3">
-            <p className="text-sm font-semibold text-foreground">Retention period</p>
+            <p className="text-sm font-semibold text-foreground">{t.retentionTitle}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Pinned and manually edited items are never auto-removed.
+              {t.retentionDesc}
             </p>
             <div
               role="radiogroup"
-              aria-label="Retention duration"
-              className="mt-2.5 grid grid-cols-3 gap-1.5"
+              aria-label={t.retentionTitle}
+              className="mt-2.5 grid grid-cols-3 sm:grid-cols-4 gap-1.5"
             >
-              {(Object.keys(RETENTION_LABELS) as Retention[]).map((r) => (
+              {RETENTION_PRESET_KEYS.map((r) => (
                 <button
                   key={r}
                   type="button"
                   role="radio"
-                  aria-checked={retention === r}
-                  onClick={() => handleSelectRetention(r)}
+                  aria-checked={!isCustomActive && retention === r}
+                  onClick={() => handleSelectPreset(r)}
                   className={cn(
                     "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
-                    retention === r
+                    !isCustomActive && retention === r
                       ? "border-mint bg-mint-soft text-mint-foreground"
                       : "border-border bg-surface text-foreground hover:bg-accent"
                   )}
                 >
-                  {RETENTION_LABELS[r]}
+                  {formatRetentionLocalized(r, locale)}
                 </button>
               ))}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={isCustomActive}
+                onClick={handleSelectCustom}
+                className={cn(
+                  "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                  isCustomActive
+                    ? "border-mint bg-mint-soft text-mint-foreground"
+                    : "border-border bg-surface text-foreground hover:bg-accent"
+                )}
+              >
+                {t.customBtn}
+              </button>
             </div>
+
+            {isCustomActive && (
+              <div className="mt-3 rounded-xl border border-border bg-surface-2 p-3 space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground">{t.customDurationLabel}</span>
+                  <span className="text-[11px] font-medium text-mint">
+                    {formatRetentionLocalized(retention, locale, parseInt(customDurationInput, 10) || 15, customUnit)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={customDurationInput}
+                      onChange={(e) => handleCustomDurationChange(e.target.value)}
+                      placeholder="15"
+                      className={cn(
+                        "w-full h-9 rounded-lg border bg-surface px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-mint tap-target",
+                        customInputError ? "border-danger focus:ring-danger" : "border-border"
+                      )}
+                      aria-label={t.customDurationLabel}
+                    />
+                  </div>
+                  <div className="flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label={t.customDurationLabel}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={customUnit === "m"}
+                      onClick={() => handleCustomUnitChange("m")}
+                      className={cn(
+                        "h-8 px-3 rounded-md text-xs font-semibold transition-colors tap-target",
+                        customUnit === "m"
+                          ? "bg-mint-soft text-mint-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {t.minutesUnit}
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={customUnit === "h"}
+                      onClick={() => handleCustomUnitChange("h")}
+                      className={cn(
+                        "h-8 px-3 rounded-md text-xs font-semibold transition-colors tap-target",
+                        customUnit === "h"
+                          ? "bg-mint-soft text-mint-foreground font-bold shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {t.hoursUnit}
+                    </button>
+                  </div>
+                </div>
+                {customInputError ? (
+                  <p className="text-[11px] text-danger font-medium">{customInputError}</p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t.customExpiryHint(parseInt(customDurationInput, 10) || 15, customUnit)}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </Section>
 
         {/* Backup & Restore */}
-        <Section title="Backup & Archiving">
+        <Section title={t.backupSection}>
           <div className="p-4 space-y-2 text-xs text-muted-foreground">
             <p>
-              ZIP backups use ClipMax's structured <code>metadata/</code> and <code>content/</code> layout. Restores are protected by a 128 MiB extraction safety limit and path traversal checks.
+              {t.backupDescPrefix}
+              <code dir="ltr">metadata/</code>
+              {t.backupDescMid}
+              <code dir="ltr">content/</code>
+              {t.backupDescSuffix}
             </p>
           </div>
           <div className="flex gap-2 px-4 pb-3">
@@ -486,7 +670,7 @@ export function SettingsScreen({
               onClick={handleExportBackup}
             >
               <Download className="h-4 w-4" />
-              Create ZIP
+              {t.createZip}
             </Btn>
             <Btn
               size="sm"
@@ -496,7 +680,7 @@ export function SettingsScreen({
               onClick={() => zipInputRef.current?.click()}
             >
               <ArchiveRestore className="h-4 w-4" />
-              Restore ZIP
+              {t.restoreZip}
             </Btn>
           </div>
         </Section>
@@ -506,16 +690,16 @@ export function SettingsScreen({
           <button
             type="button"
             aria-expanded={privacyExpanded}
-            onClick={() => setPrivacyExpanded((v: boolean) => !v)}
-            className="flex w-full items-center gap-3 px-4 py-3.5 text-left tap-target"
+            onClick={() => preserveScroll(() => setPrivacyExpanded((v: boolean) => !v))}
+            className="flex w-full items-center gap-3 px-4 py-3.5 text-start tap-target"
           >
             <ShieldCheck className="h-5 w-5 text-mint shrink-0" />
             <div className="flex-1 min-w-0">
               <span className="block text-sm font-semibold text-foreground">
-                Privacy & Data Architecture
+                {t.privacyTitle}
               </span>
               <span className="block text-xs text-muted-foreground">
-                Local-first, zero telemetry, no accounts or cloud sync
+                {t.privacySubtitle}
               </span>
             </div>
             <ChevronDown
@@ -527,18 +711,18 @@ export function SettingsScreen({
           </button>
 
           {privacyExpanded && (
-            <div className="border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground space-y-2">
+            <div className="border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground space-y-2 text-start">
               <p>
-                <strong>1. Device-Only Storage:</strong> All data is stored in the app's sandboxed local storage. No accounts, advertising, or external network transmissions are permitted.
+                <strong>{t.privacyP1Title}</strong> {t.privacyP1Body}
               </p>
               <p>
-                <strong>2. Password Protection:</strong> When an editable field is marked with <code>TYPE_TEXT_VARIATION_PASSWORD</code>, ClipMax suppresses automatic capture and hides card content.
+                <strong>{t.privacyP2Title}</strong> {t.privacyP2Body}
               </p>
               <p>
-                <strong>3. Surrogate-Safe Chunking:</strong> Text inserts adhere to the strict 50,000 UTF-16 code units limit without splitting high/low surrogate pairs (e.g. emoji or CJK).
+                <strong>{t.privacyP3Title}</strong> {t.privacyP3Body}
               </p>
               <p>
-                <strong>4. Independent Backups:</strong> Android Auto Backup is explicitly disabled in the manifest; user-controlled ZIP archives give complete ownership without cloud leaks.
+                <strong>{t.privacyP4Title}</strong> {t.privacyP4Body}
               </p>
             </div>
           )}
@@ -546,7 +730,7 @@ export function SettingsScreen({
 
 
         {/* Danger Zone */}
-        <Section title="Danger Zone">
+        <Section title={t.dangerZone}>
           <div className="p-4">
             <Btn
               variant="dangerOutline"
@@ -556,267 +740,48 @@ export function SettingsScreen({
               className="w-full gap-2"
             >
               <Trash2 className="h-4 w-4" />
-              Delete All Saved Data
+              {t.deleteAllBtn}
             </Btn>
           </div>
         </Section>
 
-        <p className="text-center text-[11px] text-muted-foreground/70 pt-2">
-          ClipMax v0.5.1 Redesign · Native Android Experimental
-        </p>
+        <div className="pt-1 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setAboutOpen(true)}
+            className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/70 active:scale-[0.98] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Info className="h-3.5 w-3.5 opacity-80" />
+            <span>{t.aboutClipMax}</span>
+          </button>
+        </div>
       </div>
 
       {/* Confirm Delete All Modal */}
       <ConfirmModal
         open={confirmDeleteAll}
-        title="Delete all saved items?"
-        description={`This will permanently remove all ${items.length} saved text clips, including pinned ones, from local storage. This action cannot be reversed.`}
-        confirmLabel="Delete all"
+        title={t.deleteAllModalTitle}
+        description={t.deleteAllModalDesc(items.length)}
+        confirmLabel={t.deleteAllConfirmBtn}
         destructive={true}
         onConfirm={handleDeleteAll}
         onClose={() => setConfirmDeleteAll(false)}
       />
 
-      {/* Android System Settings Simulation Modal */}
-      {showSystemSettingsModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in"
-        >
-          <div className="w-full max-w-md rounded-t-2xl sm:rounded-2xl border border-border bg-background shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                  Android System Settings
-                </span>
-                <h3 className="text-sm font-bold text-foreground">
-                  Manage On-Screen Keyboards
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSystemSettingsModal(false)}
-                className="rounded-lg p-1 text-muted-foreground hover:bg-accent tap-target"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+      {/* About ClipMax Modal */}
+      <AboutClipMaxModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
-            <div className="p-4 space-y-3.5 overflow-y-auto">
-              <div className="rounded-xl border border-border bg-surface p-3 space-y-3">
-                {/* ClipMax Item */}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <ClipMaxLogo size={36} />
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-foreground">ClipMax Keyboard</span>
-                        <span className="rounded bg-mint-soft px-1.5 py-0.2 text-[9px] font-bold text-mint-foreground">
-                          NEW
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-muted-foreground block">
-                        com.clipmax.app/.ClipMaxImeService
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={keyboardEnabled}
-                    onClick={() => handleToggleKeyboardEnabled(!keyboardEnabled)}
-                    className={cn(
-                      "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      keyboardEnabled ? "bg-mint" : "bg-muted"
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow-md ring-0 transition duration-200 ease-in-out",
-                        keyboardEnabled ? "translate-x-5" : "translate-x-0"
-                      )}
-                    />
-                  </button>
-                </div>
-
-                <div className="border-t border-border pt-2.5 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Gboard (Multilingual)</span>
-                  <span className="text-[11px] font-semibold text-foreground">Always On</span>
-                </div>
-
-                <div className="border-t border-border pt-2.5 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Google Voice Typing</span>
-                  <span className="text-[11px] font-semibold text-foreground">Active</span>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-mint/30 bg-mint-soft p-3 text-xs text-mint-foreground space-y-1">
-                <p className="font-bold">Next: Switch Active Keyboard</p>
-                <p className="text-[11px] leading-relaxed">
-                  Once enabled, select ClipMax in the Input Method Picker so it appears when tapping any text field in other apps.
-                </p>
-              </div>
-            </div>
-
-            <div className="border-t border-border bg-surface p-3 flex gap-2">
-              <Btn
-                size="sm"
-                variant="outline"
-                className="flex-1 font-semibold text-xs"
-                onClick={() => setShowSystemSettingsModal(false)}
-              >
-                Close
-              </Btn>
-              <Btn
-                size="sm"
-                variant="mint"
-                className="flex-1 font-bold text-xs"
-                onClick={() => {
-                  setShowSystemSettingsModal(false);
-                  setShowImePickerModal(true);
-                }}
-              >
-                Switch Keyboard →
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Android "Choose Input Method" Picker Modal */}
-      {showImePickerModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in"
-        >
-          <div className="w-full max-w-sm rounded-t-2xl sm:rounded-2xl border border-border bg-background shadow-2xl overflow-hidden flex flex-col">
-            <div className="border-b border-border bg-surface px-4 py-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                Android System Dialog
-              </span>
-              <h3 className="text-sm font-bold text-foreground">
-                Choose input method
-              </h3>
-            </div>
-
-            <div className="p-3 space-y-1.5" role="radiogroup">
-              {/* Option 1: ClipMax */}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeIme === "clipmax"}
-                onClick={() => handleSelectActiveIme("clipmax")}
-                className={cn(
-                  "w-full flex items-center justify-between p-3 rounded-xl border text-left transition-colors tap-target",
-                  activeIme === "clipmax"
-                    ? "border-mint bg-mint-soft text-mint-foreground font-bold shadow-2xs"
-                    : "border-border bg-surface text-foreground hover:bg-accent"
-                )}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={cn(
-                      "grid h-5 w-5 place-items-center rounded-full border",
-                      activeIme === "clipmax"
-                        ? "border-mint bg-mint text-primary-foreground dark:text-background"
-                        : "border-muted-foreground"
-                    )}
-                  >
-                    {activeIme === "clipmax" && <Check className="h-3 w-3 stroke-[3]" />}
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold block">ClipMax Keyboard</span>
-                    <span className="text-[10px] text-muted-foreground block">
-                      ClipMax Input Method Service
-                    </span>
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-surface border border-border">
-                  Default
-                </span>
-              </button>
-
-              {/* Option 2: Gboard */}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeIme === "gboard"}
-                onClick={() => handleSelectActiveIme("gboard")}
-                className={cn(
-                  "w-full flex items-center justify-between p-3 rounded-xl border text-left transition-colors tap-target",
-                  activeIme === "gboard"
-                    ? "border-mint bg-mint-soft text-mint-foreground font-bold shadow-2xs"
-                    : "border-border bg-surface text-foreground hover:bg-accent"
-                )}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={cn(
-                      "grid h-5 w-5 place-items-center rounded-full border",
-                      activeIme === "gboard"
-                        ? "border-mint bg-mint text-primary-foreground dark:text-background"
-                        : "border-muted-foreground"
-                    )}
-                  >
-                    {activeIme === "gboard" && <Check className="h-3 w-3 stroke-[3]" />}
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold block">Gboard</span>
-                    <span className="text-[10px] text-muted-foreground block">
-                      Multilingual typing
-                    </span>
-                  </div>
-                </div>
-              </button>
-
-              {/* Option 3: Voice */}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeIme === "voice"}
-                onClick={() => handleSelectActiveIme("voice")}
-                className={cn(
-                  "w-full flex items-center justify-between p-3 rounded-xl border text-left transition-colors tap-target",
-                  activeIme === "voice"
-                    ? "border-mint bg-mint-soft text-mint-foreground font-bold shadow-2xs"
-                    : "border-border bg-surface text-foreground hover:bg-accent"
-                )}
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={cn(
-                      "grid h-5 w-5 place-items-center rounded-full border",
-                      activeIme === "voice"
-                        ? "border-mint bg-mint text-primary-foreground dark:text-background"
-                        : "border-muted-foreground"
-                    )}
-                  >
-                    {activeIme === "voice" && <Check className="h-3 w-3 stroke-[3]" />}
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold block">Google Voice Typing</span>
-                    <span className="text-[10px] text-muted-foreground block">
-                      Automatic voice transcription
-                    </span>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div className="border-t border-border bg-surface p-3 flex justify-end">
-              <Btn
-                size="sm"
-                variant="ghost"
-                className="text-xs font-bold"
-                onClick={() => setShowImePickerModal(false)}
-              >
-                Cancel
-              </Btn>
-            </div>
-          </div>
-        </div>
+      {isOnboardingActive && onboardingState && (
+        <KeyboardOnboardingGuide
+          state={onboardingState}
+          scrollContainerRef={scrollRef}
+          sectionRef={keyboardSectionRef}
+          enableBtnRef={enableImeBtnRef}
+          selectBtnRef={selectImeBtnRef}
+          reducedMotion={reducedMotion}
+          onSkip={() => onSkipOnboarding?.()}
+          onComplete={() => onCompleteOnboarding?.()}
+        />
       )}
     </div>
   );
