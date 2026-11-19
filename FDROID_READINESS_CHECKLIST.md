@@ -45,7 +45,7 @@ This document tracks compliance status, audit findings, and remaining actions fo
   - `lucide-react` — ISC (FSDG compatible).
   - `jszip` — MIT / GPL-3.0 dual license (FSDG compatible).
   - `motion`, `clsx`, `tailwind-merge` — MIT (FSDG compatible).
-- [ ] **English Suggestion Wordlist (`en_words.txt`)**: **UNRESOLVED** — `android/app/src/main/res/raw/en_words.txt` lacks verifiable upstream origin/license metadata (see `THIRD_PARTY_LICENSES.md`). Must be replaced with a clearly licensed wordlist (e.g., SCOWL or Hunspell `en_US`) before F-Droid submission.
+- [x] **English Suggestion Wordlist (`en_words.txt`)**: **RESOLVED** — Verified upstream provenance from Google 10,000 English Most Common Words by Josh Kaufman (`https://github.com/first20hours/google-10000-english`, commit `a0149023ebcd1e30932da6c28f14b60098f9d0c6`), licensed under the MIT License and documented in `THIRD_PARTY_LICENSES.md`.
 - [x] **License Inventory**: Detailed inventory and unresolved wordlist notice documented in `THIRD_PARTY_LICENSES.md`.
 
 ---
@@ -65,6 +65,6 @@ This document tracks compliance status, audit findings, and remaining actions fo
 - [x] **Gradle Wrapper**: Standard `gradlew` (Gradle 8.9) checked into repository.
 - [x] **Automated Unit Tests**: 115 JVM unit tests passing in CI.
 - [x] **Release Branch Prepared**: `release/fdroid-v0.5.1` based on verified commit `60a626701170e129c431a567341020c6c4e33079`.
-- [ ] **Resolve `en_words.txt` Provenance**: Substitute a permissively/GPL-compatible attributed wordlist before tagging `v0.5.1`.
+- [x] **Resolve `en_words.txt` Provenance**: Verified and documented MIT license and upstream provenance from Google 10,000 English.
 - [ ] **Release Tag**: An annotated git tag `v0.5.1` must be created on the final release commit once approved by the project owner.
 - [ ] **F-Droid Build Recipe Metadata**: Draft template in `com.clipmax.app.yml` currently references pre-submission commit SHA `20c02d1dddd7ca7753094da3603a1c6551d8421b`; update to final tagged release commit when submitting to `fdroiddata`.

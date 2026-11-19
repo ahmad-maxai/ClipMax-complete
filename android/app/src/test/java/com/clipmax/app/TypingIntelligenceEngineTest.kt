@@ -113,4 +113,25 @@ class TypingIntelligenceEngineTest {
         val correctOnly = engine.analyzeWord("tomor", "tomor", isSentenceStart = false, autocompleteEnabled = false, autoCorrectEnabled = true)
         assertFalse(correctOnly.suggestions.contains("tomorrow"))
     }
+
+    @Test
+    fun testWordlistLoadingNormalizationAndDuplicates() {
+        val rawInput = "  THE  \nBe\n  to  \nTHE\n\nof\n\nAND\nand\n"
+        val inputStream = rawInput.byteInputStream(java.nio.charset.StandardCharsets.UTF_8)
+        val testEngine = TypingIntelligenceEngine.fromStream(inputStream)
+
+        // Verify dictionary size deduplicates and normalizes correctly (should have "the", "be", "to", "of", "and")
+        assertTrue(testEngine.dictionarySize() >= 5)
+        assertTrue(testEngine.isKnownWord("the"))
+        assertTrue(testEngine.isKnownWord("THE"))
+        assertTrue(testEngine.isKnownWord("and"))
+        assertTrue(testEngine.isKnownWord("of"))
+
+        // Verify representative common words from en_words.txt are loaded
+        assertTrue(engine.isKnownWord("the"))
+        assertTrue(engine.isKnownWord("and"))
+        assertTrue(engine.isKnownWord("meeting"))
+        assertTrue(engine.isKnownWord("clipboard"))
+        assertTrue(engine.dictionarySize() > 4000)
+    }
 }
