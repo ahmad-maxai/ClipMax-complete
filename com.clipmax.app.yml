@@ -34,7 +34,7 @@ Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
 Builds:
   - versionName: '0.5.1'
     versionCode: 12
-    commit: a6d62b14fa9b3297c1db4f6afeef108b88bc804e
+    commit: ee1aaa0d28e96885b0b92814395e1f3bd97d6d69
     subdir: android
     gradle:
       - yes
