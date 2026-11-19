@@ -113,9 +113,9 @@ class ArabicUiLocalizationAndTranslatorTest {
         val arabicPayload = "مرحباً بكم في كليب ماكس — نص عربي مع رابط https://clipmax.app"
         val englishPayload = "Quarterly roadmap review — action items & notes"
 
-        val c1 = store.save(id = null, title = "URL Clip", content = mixedUrlPayload, pinned = true, expiryLocked = true)
-        val c2 = store.save(id = null, title = "ملاحظة عربية", content = arabicPayload, pinned = false, expiryLocked = false)
-        val c3 = store.save(id = null, title = "English Note", content = englishPayload, pinned = false, expiryLocked = true)
+        val c1 = store.save(id = null, title = "URL Clip", content = mixedUrlPayload, pinned = true, isExpiryLocked = true)
+        val c2 = store.save(id = null, title = "ملاحظة عربية", content = arabicPayload, pinned = false, isExpiryLocked = false)
+        val c3 = store.save(id = null, title = "English Note", content = englishPayload, pinned = false, isExpiryLocked = true)
 
         val beforeItems = store.listItems().associateBy { it.id }
 
@@ -136,9 +136,10 @@ class ArabicUiLocalizationAndTranslatorTest {
             assertEquals(orig.id, curr.id)
             assertEquals(orig.title, curr.title)
             assertEquals(orig.pinned, curr.pinned)
-            assertEquals(orig.expiryLocked, curr.expiryLocked)
+            assertEquals(orig.isExpiryLocked, curr.isExpiryLocked)
             assertEquals(orig.createdAt, curr.createdAt)
-            assertEquals(orig.chunkCount, curr.chunkCount)
+            assertEquals(orig.characterCount, curr.characterCount)
+            assertEquals(orig.sizeBytes, curr.sizeBytes)
             assertEquals(store.readContent(orig), store.readContent(curr))
         }
         assertEquals(mixedUrlPayload, store.readContent(afterItems[c1.id]!!))
