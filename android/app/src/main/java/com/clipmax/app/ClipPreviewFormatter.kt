@@ -61,7 +61,9 @@ internal object ClipPreviewFormatter {
         baseTitle: String,
         rawSnippet: String,
         isPasswordTarget: Boolean = false,
-        maxChars: Int = 80
+        maxChars: Int = 80,
+        blankSpacesLabel: String = "(blank spaces)",
+        emptyClipLabel: String = "(empty clip)"
     ): String {
         if (isPasswordTarget) return ""
         val normalizedContent = normalizePreviewText(rawSnippet, maxChars)
@@ -74,8 +76,8 @@ internal object ClipPreviewFormatter {
         }
         return when {
             normalizedContent.isNotEmpty() -> normalizedContent
-            rawSnippet.isNotEmpty() -> "(blank spaces)"
-            else -> "(empty clip)"
+            rawSnippet.isNotEmpty() -> blankSpacesLabel
+            else -> emptyClipLabel
         }
     }
 }

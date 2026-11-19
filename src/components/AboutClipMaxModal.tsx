@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import { Code2, ExternalLink, Github, ShieldCheck, X } from "lucide-react";
 import { Btn, ClipMaxLogo, IconBtn } from "./primitives";
 import { isNativeAndroid, nativeOpenExternalUrl } from "../lib/nativeBridge";
+import { getUiText, useAppLocale } from "../lib/i18n";
 
 export const CLIPMAX_GITHUB_URL = "https://github.com/ahmad-maxai/ClipMax-complete";
 
@@ -11,6 +12,10 @@ interface AboutClipMaxModalProps {
 }
 
 export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.about;
+
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -46,36 +51,32 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
         <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 border-b border-border/70">
           <div className="flex items-center gap-3 min-w-0">
             <ClipMaxLogo size={46} className="shadow-xs" />
-            <div className="min-w-0">
+            <div className="min-w-0 text-start">
               <h2
                 id="about-clipmax-title"
                 className="text-base font-bold tracking-tight text-foreground leading-tight"
               >
-                About ClipMax
+                {t.title}
               </h2>
               <p className="text-[11px] font-medium text-muted-foreground mt-0.5">
-                Open-source · GPL-3.0-or-later
+                {t.licenseSubtitle}
               </p>
             </div>
           </div>
           <IconBtn
-            label="Close About ClipMax"
+            label={t.closeAria}
             onClick={onClose}
-            className="-mr-1.5 -mt-1.5 h-9 w-9 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-foreground"
+            className="-me-1.5 -mt-1.5 h-9 w-9 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-foreground"
           >
             <X className="h-4.5 w-4.5" />
           </IconBtn>
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3.5 text-left">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3.5 text-start">
           <div className="space-y-2 text-[13px] leading-relaxed text-muted-foreground">
-            <p className="text-foreground/95">
-              ClipMax is an independent, open-source clipboard and keyboard project built to make everyday copying and pasting simpler.
-            </p>
-            <p>
-              It gives your frequently used text, links, and snippets a reliable home, while bringing your saved clips directly into your Android keyboard.
-            </p>
+            <p className="text-foreground/95">{t.introP1}</p>
+            <p>{t.introP2}</p>
           </div>
 
           <div className="rounded-2xl border border-border bg-surface-2 p-3.5 space-y-1.5">
@@ -84,11 +85,11 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
                 <ShieldCheck className="h-3.5 w-3.5 text-mint" />
               </span>
               <h3 className="text-xs font-bold text-foreground">
-                Built with a local-first philosophy
+                {t.localFirstTitle}
               </h3>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Your clips stay on your device. ClipMax is designed without accounts, unnecessary cloud uploads, or telemetry.
+              {t.localFirstDesc}
             </p>
           </div>
 
@@ -98,14 +99,14 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
                 <Code2 className="h-3.5 w-3.5 text-mint" />
               </span>
               <h3 className="text-xs font-bold text-foreground">
-                Open source. Built to improve.
+                {t.openSourceTitle}
               </h3>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              ClipMax is developed as an open-source project. Its source code is available for people to inspect, learn from, contribute to, and help improve.
+              {t.openSourceDesc}
             </p>
             <p className="text-[11px] font-medium text-muted-foreground/90 pt-0.5">
-              Licensed under GNU General Public License v3.0 or later (GPL-3.0-or-later).
+              {t.licenseDetail}
             </p>
           </div>
 
@@ -120,12 +121,12 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
             >
               <span className="flex items-center gap-2 min-w-0">
                 <Github className="h-4 w-4 shrink-0 text-mint" />
-                <span className="truncate">View source on GitHub</span>
+                <span className="truncate">{t.viewOnGithub}</span>
               </span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground rtl:-scale-x-100" />
             </a>
             <p className="text-center text-[11px] text-muted-foreground">
-              Explore the code, report issues, or contribute.
+              {t.githubCaption}
             </p>
           </div>
         </div>
@@ -138,7 +139,7 @@ export function AboutClipMaxModal({ open, onClose }: AboutClipMaxModalProps) {
             onClick={onClose}
             className="h-10 w-full rounded-xl font-semibold"
           >
-            Close
+            {ui.common.close}
           </Btn>
         </div>
       </div>

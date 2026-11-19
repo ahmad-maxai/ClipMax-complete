@@ -1,4 +1,4 @@
-import { ClipItem, ClipDraft, KeyboardLanguage, Retention, SortKey } from "./types";
+import { ClipItem, ClipDraft, AppUiLocale, KeyboardLanguage, Retention, SortKey } from "./types";
 import { utf8ByteLength, MAX_ITEM_BYTES } from "./chunker";
 import { isNativeAndroid } from "./nativeBridge";
 
@@ -9,6 +9,7 @@ const STORAGE_KEY_CUSTOM_UNIT = "clipmax_custom_retention_unit";
 const STORAGE_KEY_CAPTURE = "clipmax_capture_v1";
 const STORAGE_KEY_DRAFT = "clipmax_draft_v1";
 const STORAGE_KEY_LANGUAGE = "clipmax_keyboard_language";
+const STORAGE_KEY_UI_LOCALE = "clipmax_app_ui_locale";
 
 const H = 3600_000;
 const now = Date.now();
@@ -223,6 +224,50 @@ export function saveStoredKeyboardLanguage(language: KeyboardLanguage): void {
   } catch {}
 }
 
+export function normalizeAppUiLocale(raw?: string | null): AppUiLocale {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (
+    clean === "ar" ||
+    clean.startsWith("ar-") ||
+    clean.startsWith("ar_") ||
+    clean === "arabic" ||
+    clean === "العربية"
+  ) {
+    return "ar";
+  }
+  return "en";
+}
+
+export function getStoredAppUiLocale(): AppUiLocale {
+  if (isNativeAndroid() && window.ClipMaxNative?.getAppUiLocale) {
+    try {
+      const nativeLocale = window.ClipMaxNative.getAppUiLocale();
+      if (nativeLocale) {
+        return normalizeAppUiLocale(nativeLocale);
+      }
+    } catch {}
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_UI_LOCALE);
+    if (saved) {
+      return normalizeAppUiLocale(saved);
+    }
+  } catch {}
+  return "en";
+}
+
+export function saveStoredAppUiLocale(locale: AppUiLocale): void {
+  const normalized = normalizeAppUiLocale(locale);
+  if (isNativeAndroid() && window.ClipMaxNative?.setAppUiLocale) {
+    try {
+      window.ClipMaxNative.setAppUiLocale(normalized);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_UI_LOCALE, normalized);
+  } catch {}
+}
+
 export function getStoredDraft(): ClipDraft | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DRAFT);
@@ -392,9 +437,18 @@ export function filterClips(list: ClipItem[], query: string, pinnedOnly: boolean
   });
 }
 
-export function relTime(timestamp: number): string {
+export function relTime(timestamp: number, locale: AppUiLocale = "en"): string {
   const delta = Date.now() - timestamp;
   const m = Math.round(delta / 60000);
+  if (locale === "ar") {
+    if (m < 1) return "الآن";
+    if (m < 60) return `منذ ${m} د`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `منذ ${h} س`;
+    const days = Math.round(h / 24);
+    if (days < 7) return `منذ ${days} ي`;
+    return new Date(timestamp).toLocaleDateString("ar", { month: "short", day: "numeric" });
+  }
   if (m < 1) return "Just now";
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
@@ -404,8 +458,8 @@ export function relTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function fullDateTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
+export function fullDateTime(timestamp: number, locale: AppUiLocale = "en"): string {
+  return new Date(timestamp).toLocaleString(locale === "ar" ? "ar" : undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   });

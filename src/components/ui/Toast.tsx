@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { getUiText, useAppLocale } from "../../lib/i18n";
 
 export type ToastType = "success" | "error" | "info";
 
@@ -23,6 +24,8 @@ type ToastContextType = {
 const ToastContext = createContext<ToastContextType | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const locale = useAppLocale();
+  const common = getUiText(locale).common;
   const [toasts, setToasts] = useState<Toast[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -85,7 +88,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {t.type === "error" && <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
             {t.type === "info" && <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
 
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 text-start">
               <p className="text-[13px] font-medium leading-snug">{t.message}</p>
               {t.description && (
                 <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">{t.description}</p>
@@ -109,7 +112,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => removeToast(t.id)}
               className="text-muted-foreground hover:text-foreground"
-              aria-label="Close notification"
+              aria-label={common.closeNotification}
             >
               <X className="h-3.5 w-3.5" />
             </button>

@@ -7,7 +7,6 @@ import {
   ChevronUp,
   ChevronDown,
   X,
-  RotateCcw,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, ConfirmModal } from "./primitives";
 import { ClipItem, Nav } from "../lib/types";
@@ -20,6 +19,7 @@ import {
 } from "../lib/storage";
 import { formatBytes, utf8ByteLength, MAX_ITEM_BYTES } from "../lib/chunker";
 import { useToast } from "./ui/Toast";
+import { getUiText, useAppLocale } from "../lib/i18n";
 
 interface EditorScreenProps {
   id?: string;
@@ -36,6 +36,9 @@ export function EditorScreen({
   onClipsAdded,
   nav,
 }: EditorScreenProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.editor;
   const { toast, success, error } = useToast();
   const existing = id ? items.find((c) => c.id === id) : undefined;
 
@@ -63,8 +66,10 @@ export function EditorScreen({
     if (!id) {
       const draft = getStoredDraft();
       if (draft && draft.content && (draft.content !== content || draft.title !== title)) {
-        toast("Recovered unsaved draft", {
-          description: `Loaded previous draft from ${new Date(draft.timestamp).toLocaleTimeString()}`,
+        toast(t.recoveredDraft, {
+          description: t.recoveredDraftDesc(
+            new Date(draft.timestamp).toLocaleTimeString(locale === "ar" ? "ar" : undefined)
+          ),
         });
         setTitle(draft.title);
         setContent(draft.content);
@@ -132,8 +137,8 @@ export function EditorScreen({
         const text = await navigator.clipboard.readText();
         if (text) {
           insertTextAtCursor(text);
-          toast("Pasted clipboard text", {
-            description: `${text.length.toLocaleString()} characters`,
+          toast(t.pastedToast, {
+            description: t.pastedToastDesc(text.length),
           });
           return;
         }
@@ -142,7 +147,7 @@ export function EditorScreen({
       // Permission denied or not supported
     }
     // Fallback: prompt user
-    const manual = window.prompt("Paste text below:");
+    const manual = window.prompt(t.manualPastePrompt);
     if (manual) {
       insertTextAtCursor(manual);
     }
@@ -160,7 +165,7 @@ export function EditorScreen({
       if (!title.trim()) {
         setTitle(file.name.replace(/\.txt$/i, ""));
       }
-      success(`Imported text from "${file.name}"`);
+      success(t.importedFromTxt(file.name));
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -169,21 +174,21 @@ export function EditorScreen({
   // Save changes
   const handleSave = () => {
     if (!content.trim() && !title.trim()) {
-      error("Cannot save empty clip", {
-        description: "Please provide either a title or some text content.",
+      error(t.cannotSaveEmpty, {
+        description: t.cannotSaveEmptyDesc,
       });
       return;
     }
 
     if (currentBytes > MAX_ITEM_BYTES) {
-      error("Storage limit exceeded", {
-        description: `This item is ${formatBytes(currentBytes)}, exceeding the 16 MiB maximum.`,
+      error(t.storageLimitTitle, {
+        description: t.storageLimitDesc(formatBytes(currentBytes)),
       });
       return;
     }
 
-    const t = Date.now();
-    const cleanTitle = (title.trim() || "Untitled").slice(0, 200);
+    const timeNow = Date.now();
+    const cleanTitle = (title.trim() || ui.common.untitled).slice(0, 200);
 
     if (currentId) {
       // Update existing (preserves pinned, isExpiryLocked, expiresAt)
@@ -195,7 +200,7 @@ export function EditorScreen({
               content,
               characterCount: content.length,
               sizeBytes: currentBytes,
-              modifiedAt: t,
+              modifiedAt: timeNow,
             }
           : c
       );
@@ -211,7 +216,7 @@ export function EditorScreen({
 
     setSavedInitial({ title, content });
     clearStoredDraft();
-    success("Changes saved locally");
+    success(t.savedLocally);
   };
 
   const handleBack = () => {
@@ -234,18 +239,18 @@ export function EditorScreen({
 
       <TopBar
         left={
-          <IconBtn label="Back" onClick={handleBack}>
-            <ArrowLeft className="h-5 w-5" />
+          <IconBtn label={ui.common.back} onClick={handleBack}>
+            <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
           </IconBtn>
         }
         title={
           <div className="flex items-center gap-2">
             <span className="text-[15px] font-semibold text-foreground">
-              {existing ? "Edit item" : "New item"}
+              {existing ? t.editItem : t.newItem}
             </span>
             {dirty && (
               <span className="rounded-full bg-mint-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-mint-foreground">
-                Unsaved
+                {t.unsaved}
               </span>
             )}
           </div>
@@ -257,7 +262,7 @@ export function EditorScreen({
             onClick={handleSave}
             disabled={!dirty}
           >
-            Save
+            {ui.common.save}
           </Btn>
         }
       />
@@ -266,7 +271,7 @@ export function EditorScreen({
       <div className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-1.5">
         <Btn variant="ghost" size="sm" onClick={handlePaste} className="h-8 text-xs">
           <ClipboardPaste className="h-3.5 w-3.5 text-muted-foreground" />
-          Paste
+          {t.paste}
         </Btn>
         <Btn
           variant="ghost"
@@ -276,7 +281,7 @@ export function EditorScreen({
           className="h-8 text-xs"
         >
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
-          Find
+          {t.find}
         </Btn>
         <Btn
           variant="ghost"
@@ -285,7 +290,7 @@ export function EditorScreen({
           className="h-8 text-xs"
         >
           <FileUp className="h-3.5 w-3.5 text-muted-foreground" />
-          Import .txt
+          {t.importTxt}
         </Btn>
       </div>
 
@@ -294,7 +299,8 @@ export function EditorScreen({
         <div className="flex items-center gap-1.5 border-b border-border bg-surface px-3 py-2 animate-in slide-in-from-top-1">
           <input
             autoFocus
-            aria-label="Find in text content"
+            dir="auto"
+            aria-label={t.findInputAria}
             value={findQuery}
             onChange={(e) => {
               setFindQuery(e.target.value);
@@ -306,7 +312,7 @@ export function EditorScreen({
                 goMatch(1);
               }
             }}
-            placeholder="Find in content…"
+            placeholder={t.findPlaceholder}
             className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-xs outline-none focus:border-mint"
           />
           <span
@@ -318,7 +324,7 @@ export function EditorScreen({
               : ""}
           </span>
           <IconBtn
-            label="Previous occurrence"
+            label={t.prevOccurrence}
             size="iconSm"
             onClick={() => goMatch(-1)}
             disabled={!matches.length}
@@ -326,7 +332,7 @@ export function EditorScreen({
             <ChevronUp className="h-4 w-4" />
           </IconBtn>
           <IconBtn
-            label="Next occurrence"
+            label={t.nextOccurrence}
             size="iconSm"
             onClick={() => goMatch(1)}
             disabled={!matches.length}
@@ -334,7 +340,7 @@ export function EditorScreen({
             <ChevronDown className="h-4 w-4" />
           </IconBtn>
           <IconBtn
-            label="Close find bar"
+            label={t.closeFindBar}
             size="iconSm"
             onClick={() => {
               setFindOpen(false);
@@ -349,26 +355,28 @@ export function EditorScreen({
       {/* Text Area and Title */}
       <div className="flex flex-1 min-h-0 flex-col px-4 pt-2.5 pb-2 overflow-hidden">
         <label className="sr-only" htmlFor="editor-title-input">
-          Title
+          {ui.details.titleLabel}
         </label>
         <input
           id="editor-title-input"
+          dir="auto"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Title (optional)"
+          placeholder={t.titlePlaceholder}
           maxLength={200}
           className="h-10 shrink-0 w-full border-b border-border bg-transparent text-base sm:text-lg font-bold text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-mint"
         />
 
         <label className="sr-only" htmlFor="editor-content-textarea">
-          Content
+          {ui.details.contentMeta}
         </label>
         <textarea
           ref={textareaRef}
           id="editor-content-textarea"
+          dir="auto"
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="Type or paste text snippet here…"
+          placeholder={t.contentPlaceholder}
           className="flex-1 w-full resize-none bg-transparent pt-2.5 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50 select-text font-sans overflow-y-auto"
         />
       </div>
@@ -378,22 +386,22 @@ export function EditorScreen({
         className="shrink-0 flex items-center justify-between border-t border-border bg-background px-4 py-2 font-mono text-xs text-muted-foreground"
         aria-live="polite"
       >
-        <span>{content.length.toLocaleString()} characters</span>
+        <span>{t.charsCount(content.length)}</span>
         <span
           className={
             currentBytes > MAX_ITEM_BYTES ? "text-destructive font-semibold" : ""
           }
         >
-          {formatBytes(currentBytes)} stored
+          {t.storedBytes(formatBytes(currentBytes))}
         </span>
       </div>
 
       {/* Discard Changes Modal */}
       <ConfirmModal
         open={confirmLeave}
-        title="Discard unsaved changes?"
-        description="You have edits that haven't been saved to local storage. Leaving now will discard them."
-        confirmLabel="Discard"
+        title={t.discardTitle}
+        description={t.discardDesc}
+        confirmLabel={t.discardBtn}
         destructive={true}
         onConfirm={() => {
           clearStoredDraft();

@@ -8,6 +8,9 @@ internal object SettingsPanelSpec {
 
     const val PREF_FILE = "clipmax_theme_prefs"
     const val PREF_APP_THEME = "app_theme"
+    const val PREF_APP_UI_LOCALE = "app_ui_locale"
+    const val UI_LOCALE_ENGLISH = "en"
+    const val UI_LOCALE_ARABIC = "ar"
     const val PREF_KEYBOARD_LANGUAGE = "keyboard_language"
     const val LANG_ENGLISH = "en"
     const val LANG_ARABIC = "ar"
@@ -16,6 +19,19 @@ internal object SettingsPanelSpec {
     const val PREF_AUTOCOMPLETE = "typing_autocomplete"
     const val PREF_AUTOCORRECT = "typing_autocorrect"
     const val PREF_SUGGESTIONS = "typing_suggestions"
+
+    fun normalizeAppUiLocale(savedLocale: String?): String {
+        val raw = savedLocale?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+        if (raw == UI_LOCALE_ARABIC ||
+            raw.startsWith("ar-") ||
+            raw.startsWith("ar_") ||
+            raw == "arabic" ||
+            raw == "العربية"
+        ) {
+            return UI_LOCALE_ARABIC
+        }
+        return UI_LOCALE_ENGLISH
+    }
 
     const val HEADER_HEIGHT_DP = 36f
     const val CARD_CORNER_RADIUS_DP = 12f

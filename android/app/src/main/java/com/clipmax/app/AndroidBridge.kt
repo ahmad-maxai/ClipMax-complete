@@ -438,6 +438,31 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
+    fun getAppUiLocale(): String {
+        return try {
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_APP_UI_LOCALE, SettingsPanelSpec.UI_LOCALE_ENGLISH)
+            SettingsPanelSpec.normalizeAppUiLocale(raw)
+        } catch (e: Throwable) {
+            SettingsPanelSpec.UI_LOCALE_ENGLISH
+        }
+    }
+
+    @JavascriptInterface
+    fun setAppUiLocale(locale: String) {
+        try {
+            val normalized = SettingsPanelSpec.normalizeAppUiLocale(locale)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_APP_UI_LOCALE, normalized).apply()
+            mainHandler.post {
+                (context as? MainActivity)?.refreshTranslatorButtonUi()
+            }
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
     fun isSystemNightMode(): Boolean {
         return try {
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==

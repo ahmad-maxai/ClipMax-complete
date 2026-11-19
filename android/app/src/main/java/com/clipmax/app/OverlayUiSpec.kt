@@ -49,27 +49,75 @@ internal object OverlayUiSpec {
         )
     }
 
-    // Context menu sizing & ergonomics (Pin, Edit, Delete, Merge, Split)
-    const val CONTEXT_MENU_TARGET_ROW_HEIGHT_DP = 48f
+    // Context menu sizing & ergonomics (Pin, Lock expiry, Edit, Delete, Merge, Split)
+    const val CONTEXT_MENU_TARGET_ROW_HEIGHT_DP = 46f
+    const val CONTEXT_MENU_MIN_ROW_HEIGHT_DP = 28f
+    const val CONTEXT_MENU_MAX_ROW_HEIGHT_DP = 48f
     const val CONTEXT_MENU_MIN_WIDTH_DP = 152f
     const val CONTEXT_MENU_MAX_WIDTH_DP = 188f
-    const val CONTEXT_MENU_PADDING_H_DP = 16f
+    const val CONTEXT_MENU_ARABIC_MIN_WIDTH_DP = 168f
+    const val CONTEXT_MENU_ARABIC_MAX_WIDTH_DP = 212f
+    const val CONTEXT_MENU_PADDING_H_DP = 14f
     const val CONTEXT_MENU_PADDING_V_DP = 4f
     const val CONTEXT_MENU_ICON_SIZE_DP = 17f
-    const val CONTEXT_MENU_ICON_GAP_DP = 12f
+    const val CONTEXT_MENU_ICON_GAP_DP = 11f
     const val CONTEXT_MENU_TEXT_SP = 14f
     const val CONTEXT_MENU_CORNER_DP = 12f
-    const val CONTEXT_MENU_ACTION_COUNT = 5
+    const val CONTEXT_MENU_ACTION_COUNT = 6
+
+    data class ContextMenuLayoutSpec(
+        val panelWidthDp: Float,
+        val rowHeightDp: Float,
+        val verticalPaddingDp: Float,
+        val dividerHeightDp: Float,
+        val totalHeightDp: Float,
+        val maxMenuHeightDp: Float,
+        val fitsWithoutScrolling: Boolean
+    )
 
     fun resolveContextMenuBg(palette: KeyboardLayoutSpec.ImeThemePalette): Int {
         return if (palette.isClassicTheme) palette.colorKeyBg else palette.colorChipBg
     }
 
-    fun resolveContextMenuPanelWidthDp(surfaceWidthDp: Float): Float {
-        return (surfaceWidthDp * 0.52f).coerceIn(CONTEXT_MENU_MIN_WIDTH_DP, CONTEXT_MENU_MAX_WIDTH_DP)
+    fun resolveContextMenuPanelWidthDp(surfaceWidthDp: Float, isArabic: Boolean = false): Float {
+        return if (isArabic) {
+            (surfaceWidthDp * 0.56f).coerceIn(CONTEXT_MENU_ARABIC_MIN_WIDTH_DP, CONTEXT_MENU_ARABIC_MAX_WIDTH_DP)
+        } else {
+            (surfaceWidthDp * 0.52f).coerceIn(CONTEXT_MENU_MIN_WIDTH_DP, CONTEXT_MENU_MAX_WIDTH_DP)
+        }
     }
 
     fun resolveContextMenuMaxHeightDp(surfaceHeightDp: Float): Float {
-        return (surfaceHeightDp - 8f).coerceAtLeast(CONTEXT_MENU_TARGET_ROW_HEIGHT_DP * 3f)
+        return (surfaceHeightDp - 8f).coerceAtLeast(CONTEXT_MENU_MIN_ROW_HEIGHT_DP * CONTEXT_MENU_ACTION_COUNT)
+    }
+
+    /**
+     * Dynamically sizes all 6 ClipCard context menu rows (Pin, Lock expiry, Edit, Delete, Merge, Split)
+     * so every action including Split is immediately visible on first open without vertical scrolling
+     * and without clipping on compact/normal/tall/landscape IME viewports.
+     */
+    fun resolveContextMenuLayout(
+        surfaceWidthDp: Float,
+        surfaceHeightDp: Float,
+        isArabic: Boolean = false,
+        dividerHeightDp: Float = 1f
+    ): ContextMenuLayoutSpec {
+        val widthDp = resolveContextMenuPanelWidthDp(surfaceWidthDp, isArabic)
+        val maxMenuH = (surfaceHeightDp - 8f).coerceAtLeast(160f)
+        val dividerTotal = dividerHeightDp * (CONTEXT_MENU_ACTION_COUNT - 1)
+        val vPad = if (maxMenuH >= 240f) CONTEXT_MENU_PADDING_V_DP else 2f
+        val availableForRows = (maxMenuH - vPad * 2f - dividerTotal).coerceAtLeast(120f)
+        val rawRowH = availableForRows / CONTEXT_MENU_ACTION_COUNT.toFloat()
+        val rowH = rawRowH.coerceIn(22f, CONTEXT_MENU_MAX_ROW_HEIGHT_DP)
+        val totalH = vPad * 2f + dividerTotal + rowH * CONTEXT_MENU_ACTION_COUNT
+        return ContextMenuLayoutSpec(
+            panelWidthDp = widthDp,
+            rowHeightDp = rowH,
+            verticalPaddingDp = vPad,
+            dividerHeightDp = dividerHeightDp,
+            totalHeightDp = totalH,
+            maxMenuHeightDp = maxMenuH,
+            fitsWithoutScrolling = totalH <= maxMenuH + 0.5f
+        )
     }
 }

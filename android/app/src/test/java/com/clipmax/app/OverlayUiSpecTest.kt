@@ -39,25 +39,39 @@ class OverlayUiSpecTest {
 
     @Test
     fun testContextMenuErgonomicDimensionsAndAdaptiveClamping() {
-        assertEquals(48f, OverlayUiSpec.CONTEXT_MENU_TARGET_ROW_HEIGHT_DP, 0.001f)
+        assertEquals(46f, OverlayUiSpec.CONTEXT_MENU_TARGET_ROW_HEIGHT_DP, 0.001f)
         assertTrue(OverlayUiSpec.CONTEXT_MENU_PADDING_H_DP >= 14f)
         assertTrue(OverlayUiSpec.CONTEXT_MENU_ICON_GAP_DP >= 10f)
         assertTrue(OverlayUiSpec.CONTEXT_MENU_TEXT_SP >= 13.5f)
-        assertEquals(5, OverlayUiSpec.CONTEXT_MENU_ACTION_COUNT)
+        assertEquals(6, OverlayUiSpec.CONTEXT_MENU_ACTION_COUNT)
 
-        // Width scales proportionally and stays within comfortable bounds
-        val portraitWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(360f)
+        // Width scales proportionally and stays within comfortable bounds for English & Arabic
+        val portraitWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(360f, isArabic = false)
         assertEquals(187.2f, portraitWidth, 0.5f)
-        val smallWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(260f)
+        val portraitArabicWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(360f, isArabic = true)
+        assertEquals(201.6f, portraitArabicWidth, 0.5f)
+        val smallWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(260f, isArabic = false)
         assertEquals(OverlayUiSpec.CONTEXT_MENU_MIN_WIDTH_DP, smallWidth, 0.001f)
-        val wideWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(720f)
+        val wideWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(720f, isArabic = false)
         assertEquals(OverlayUiSpec.CONTEXT_MENU_MAX_WIDTH_DP, wideWidth, 0.001f)
+        val wideArabicWidth = OverlayUiSpec.resolveContextMenuPanelWidthDp(720f, isArabic = true)
+        assertEquals(OverlayUiSpec.CONTEXT_MENU_ARABIC_MAX_WIDTH_DP, wideArabicWidth, 0.001f)
 
-        // Height fits all 5 x 48dp rows in tall portrait without clipping & safely caps on short landscape
-        val tallPortraitMaxH = OverlayUiSpec.resolveContextMenuMaxHeightDp(260f)
-        assertTrue(tallPortraitMaxH >= 48f * 5f + 8f)
-        val shortLandscapeMaxH = OverlayUiSpec.resolveContextMenuMaxHeightDp(170f)
-        assertEquals(162f, shortLandscapeMaxH, 0.001f)
+        // All 6 options fit inside compact, normal, tall, and landscape IME viewports without scrolling
+        for (surfaceHeightDp in listOf(228f, 255f, 272f, 180f)) {
+            for (isArabic in listOf(false, true)) {
+                val layout = OverlayUiSpec.resolveContextMenuLayout(
+                    surfaceWidthDp = 360f,
+                    surfaceHeightDp = surfaceHeightDp,
+                    isArabic = isArabic
+                )
+                assertTrue("Expected non-scrolling fit at height $surfaceHeightDp (ar=$isArabic)", layout.fitsWithoutScrolling)
+                assertTrue(layout.totalHeightDp <= layout.maxMenuHeightDp + 0.5f)
+                assertTrue(layout.rowHeightDp >= 22f)
+            }
+        }
+        val tallLayout = OverlayUiSpec.resolveContextMenuLayout(360f, 300f, isArabic = false)
+        assertTrue(tallLayout.rowHeightDp in 44f..48f)
     }
 
     @Test

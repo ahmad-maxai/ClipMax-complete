@@ -24,6 +24,8 @@ export interface ClipMaxNativeBridge {
   setCaptureEnabled(enabled: boolean): void;
   setTheme(theme: string): void;
   getTheme(): string;
+  getAppUiLocale?(): string;
+  setAppUiLocale?(locale: string): void;
   getKeyboardLanguage?(): string;
   setKeyboardLanguage?(language: string): void;
   isSystemNightMode(): boolean;

@@ -33,12 +33,17 @@ internal object ClipboardPanelSpec {
      * Resolves the unified card's second-row preview strictly from the beginning of the
      * original clipboard content (never generic titles, copy labels, chunk labels, or byte sizes).
      */
-    fun resolveCardContentPreview(rawContent: String, maxChars: Int = 220): String {
+    fun resolveCardContentPreview(
+        rawContent: String,
+        maxChars: Int = 220,
+        blankSpacesLabel: String = "(blank spaces)",
+        emptyClipLabel: String = "(empty clip)"
+    ): String {
         val normalized = ClipPreviewFormatter.normalizePreviewText(rawContent, maxChars)
         return when {
             normalized.isNotEmpty() -> normalized
-            rawContent.isNotEmpty() -> "(blank spaces)"
-            else -> "(empty clip)"
+            rawContent.isNotEmpty() -> blankSpacesLabel
+            else -> emptyClipLabel
         }
     }
 

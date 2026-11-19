@@ -3,6 +3,7 @@ import { AlertCircle, ArrowUp, CheckCircle2, Keyboard } from "lucide-react";
 import { motion } from "motion/react";
 import { Btn } from "./primitives";
 import { OnboardingState } from "../lib/onboarding";
+import { getUiText, useAppLocale } from "../lib/i18n";
 
 interface KeyboardOnboardingGuideProps {
   state: OnboardingState;
@@ -32,6 +33,9 @@ export function KeyboardOnboardingGuide({
   onSkip,
   onComplete,
 }: KeyboardOnboardingGuideProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.onboardingGuide;
   const maskId = useId();
   const [targetRect, setTargetRect] = useState<TargetRect | null>(null);
   const [viewport, setViewport] = useState(() => ({
@@ -267,7 +271,7 @@ export function KeyboardOnboardingGuide({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="ClipMax keyboard setup complete"
+        aria-label={t.setupCompleteAria}
         className="fixed inset-0 z-50 flex items-center justify-center bg-[#B3000000] p-5"
       >
         <motion.div
@@ -285,10 +289,10 @@ export function KeyboardOnboardingGuide({
           </div>
 
           <h2 className="mt-4 text-xl font-bold tracking-tight text-foreground">
-            You're all set!
+            {t.allSetTitle}
           </h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            ClipMax is ready. Your saved clips are now within reach whenever you use your keyboard.
+            {t.allSetDesc}
           </p>
 
           <Btn
@@ -297,7 +301,7 @@ export function KeyboardOnboardingGuide({
             onClick={onComplete}
           >
             <Keyboard className="h-4 w-4" />
-            <span>Start using ClipMax</span>
+            <span>{t.startUsingBtn}</span>
           </Btn>
         </motion.div>
       </div>
@@ -309,14 +313,14 @@ export function KeyboardOnboardingGuide({
     return (
       <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
         <div className="pointer-events-auto flex w-full max-w-sm items-center justify-between gap-2 rounded-2xl border border-border bg-surface/95 px-3.5 py-2.5 shadow-xl backdrop-blur-md">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 text-start">
             <p className="text-xs font-bold text-foreground truncate">
               {state.step === "SELECT_KEYBOARD"
-                ? "Step 2: Choose active keyboard"
-                : "Step 1: Enable ClipMax keyboard"}
+                ? t.step2ReturnTitle
+                : t.step1ReturnTitle}
             </p>
             <p className="text-[11px] text-muted-foreground truncate">
-              Scroll back to continue setup
+              {t.scrollBackSubtitle}
             </p>
           </div>
           <Btn
@@ -326,14 +330,14 @@ export function KeyboardOnboardingGuide({
             onClick={() => setReturnRequestCount((c) => c + 1)}
           >
             <ArrowUp className="h-3.5 w-3.5" />
-            <span>Return</span>
+            <span>{t.returnBtn}</span>
           </Btn>
           <button
             type="button"
             onClick={onSkip}
             className="min-h-[36px] px-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
           >
-            Skip
+            {ui.common.skip}
           </button>
         </div>
       </div>
@@ -357,23 +361,19 @@ export function KeyboardOnboardingGuide({
   const placeCardAbove = sectionTop > 230;
 
   const stepLabel =
-    state.step === "SELECT_KEYBOARD" ? "Step 2 of 2" : "Step 1 of 2";
+    state.step === "SELECT_KEYBOARD" ? t.step2Badge : t.step1Badge;
   const heading =
-    state.step === "SELECT_KEYBOARD"
-      ? "One more step!"
-      : "Let's make ClipMax available as your keyboard.";
+    state.step === "SELECT_KEYBOARD" ? t.step2Heading : t.step1Heading;
   const bodyCopy =
-    state.step === "SELECT_KEYBOARD"
-      ? "Choose ClipMax whenever you want to use your saved clips from your keyboard."
-      : "Open your keyboard settings and switch on ClipMax.";
+    state.step === "SELECT_KEYBOARD" ? t.step2Body : t.step1Body;
 
   const retryNotice =
     state.step === "ENABLE_KEYBOARD" && state.attemptedEnable && !state.imeEnabled
-      ? "ClipMax is still switched off. Tap the highlighted button below, turn ClipMax on, then return here."
+      ? t.retryEnableNotice
       : state.step === "SELECT_KEYBOARD" &&
         state.attemptedSelect &&
         !state.imeSelected
-      ? "ClipMax isn't selected yet. Tap \"2. Switch Active Input Method\" below and choose ClipMax."
+      ? t.retrySelectNotice
       : null;
 
   // Hand pointer anchor near bottom-right corner of the highlighted button
@@ -458,7 +458,7 @@ export function KeyboardOnboardingGuide({
                   top: Math.min(viewport.height - 170, cutY + cutH + 46),
                 }
           }
-          className="pointer-events-auto fixed inset-x-4 mx-auto max-w-md rounded-2xl border border-border bg-surface p-4 shadow-2xl"
+          className="pointer-events-auto fixed inset-x-4 mx-auto max-w-md rounded-2xl border border-border bg-surface p-4 shadow-2xl text-start"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="inline-flex items-center rounded-md bg-mint-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-mint-foreground">
@@ -469,14 +469,14 @@ export function KeyboardOnboardingGuide({
               onClick={onSkip}
               className="min-h-[32px] px-2 rounded-md text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
-              Skip
+              {ui.common.skip}
             </button>
           </div>
 
           {justEnabledAck && state.step === "SELECT_KEYBOARD" && (
             <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-mint-soft/75 px-3 py-2 text-xs font-semibold text-mint-foreground">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-mint" />
-              <span>Great! ClipMax is now available.</span>
+              <span>{t.justEnabledAck}</span>
             </div>
           )}
 

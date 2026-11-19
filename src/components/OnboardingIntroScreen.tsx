@@ -3,6 +3,7 @@ import { ArrowRight, ClipboardList, Keyboard, Lock } from "lucide-react";
 import { motion } from "motion/react";
 import { KeyboardLanguage, KEYBOARD_LANGUAGE_LABELS } from "../lib/types";
 import { cn } from "../lib/utils";
+import { getUiText, useAppLocale } from "../lib/i18n";
 import { Btn, ClipMaxLogo } from "./primitives";
 
 interface OnboardingIntroScreenProps {
@@ -13,23 +14,11 @@ interface OnboardingIntroScreenProps {
   onSkip: () => void;
 }
 
-const INTRO_HIGHLIGHTS = [
-  {
-    icon: ClipboardList,
-    title: "Your clips, always ready",
-    description: "Save snippets, links, and templates once and find them instantly.",
-  },
-  {
-    icon: Keyboard,
-    title: "Built right into your keyboard",
-    description: "Paste saved clips directly inside Chrome, YouTube, messages, and more.",
-  },
-  {
-    icon: Lock,
-    title: "Private on your device",
-    description: "No accounts, no cloud uploads — everything stays safely on your phone.",
-  },
-] as const;
+const HIGHLIGHT_ICONS = {
+  clips: ClipboardList,
+  keyboard: Keyboard,
+  privacy: Lock,
+} as const;
 
 const CYCLE_DURATION_MS = 5000;
 
@@ -40,6 +29,10 @@ export function OnboardingIntroScreen({
   onNext,
   onSkip,
 }: OnboardingIntroScreenProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.onboardingIntro;
+  const highlights = t.highlights;
   const [activeIndex, setActiveIndex] = useState(0);
   const [cycleProgress, setCycleProgress] = useState(0);
 
@@ -61,14 +54,14 @@ export function OnboardingIntroScreen({
       if (elapsed >= CYCLE_DURATION_MS) {
         start = now;
         setCycleProgress(0);
-        setActiveIndex((prev) => (prev + 1) % INTRO_HIGHLIGHTS.length);
+        setActiveIndex((prev) => (prev + 1) % highlights.length);
       }
       rafId = requestAnimationFrame(tick);
     };
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [reducedMotion]);
+  }, [reducedMotion, highlights.length]);
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background text-foreground overflow-hidden">
@@ -88,7 +81,7 @@ export function OnboardingIntroScreen({
           onClick={onSkip}
           className="min-h-[44px] min-w-[44px] px-3 rounded-lg text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Skip
+          {ui.common.skip}
         </button>
       </div>
 
@@ -124,10 +117,10 @@ export function OnboardingIntroScreen({
           className="mt-5 text-center max-w-sm"
         >
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Welcome to ClipMax
+            {t.welcomeTitle}
           </h1>
           <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-            Save text you reuse every day and paste it in a single tap right from your keyboard.
+            {t.welcomeDesc}
           </p>
         </motion.div>
 
@@ -142,12 +135,12 @@ export function OnboardingIntroScreen({
           }
           className="mt-6 w-full max-w-sm space-y-2.5"
         >
-          {INTRO_HIGHLIGHTS.map((item, idx) => {
-            const Icon = item.icon;
+          {highlights.map((item, idx) => {
+            const Icon = HIGHLIGHT_ICONS[item.id as keyof typeof HIGHLIGHT_ICONS] ?? ClipboardList;
             const isHighlighted = !reducedMotion && activeIndex === idx;
             return (
               <div
-                key={item.title}
+                key={item.id}
                 onClick={() => {
                   setActiveIndex(idx);
                   setCycleProgress(0);
@@ -167,7 +160,7 @@ export function OnboardingIntroScreen({
                 >
                   <Icon className="h-4 w-4" />
                 </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 text-start">
                   <p className="text-[13px] font-semibold text-foreground leading-snug">
                     {item.title}
                   </p>
@@ -179,18 +172,18 @@ export function OnboardingIntroScreen({
             );
           })}
 
-          <div className="rounded-2xl border border-border bg-surface/90 px-3.5 py-3">
+          <div className="rounded-2xl border border-border bg-surface/90 px-3.5 py-3 text-start">
             <div className="flex items-center justify-between gap-2">
               <p className="text-[13px] font-semibold text-foreground leading-snug">
-                Keyboard language
+                {t.keyboardLangLabel}
               </p>
               <span className="text-[11px] font-medium text-muted-foreground">
-                Default: English
+                {t.defaultEnglishBadge}
               </span>
             </div>
             <div
               role="radiogroup"
-              aria-label="Onboarding keyboard language"
+              aria-label={t.keyboardLangLabel}
               className="mt-2 grid grid-cols-2 gap-1.5"
             >
               {(["en", "ar"] as const).map((lang) => (
@@ -221,9 +214,9 @@ export function OnboardingIntroScreen({
           {/* Subtle non-blocking 5s highlight cycle progress */}
           <div className="flex items-center gap-2 px-1" aria-hidden>
             <div className="flex items-center gap-1.5">
-              {INTRO_HIGHLIGHTS.map((_, idx) => (
+              {highlights.map((item, idx) => (
                 <span
-                  key={idx}
+                  key={item.id}
                   className={`h-1.5 rounded-full transition-all duration-300 ${
                     activeIndex === idx ? "w-5 bg-mint" : "w-1.5 bg-border"
                   }`}
@@ -243,8 +236,8 @@ export function OnboardingIntroScreen({
             className="h-12 w-full rounded-xl text-sm font-bold shadow-md"
             onClick={onNext}
           >
-            <span>Next</span>
-            <ArrowRight className="h-4 w-4" />
+            <span>{ui.common.next}</span>
+            <ArrowRight className="h-4 w-4 rtl:rotate-180" />
           </Btn>
         </div>
       </div>

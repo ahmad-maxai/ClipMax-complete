@@ -27,6 +27,7 @@ import { downloadFile } from "../lib/backup";
 import { nativeCopy, nativeShare } from "../lib/nativeBridge";
 import { useToast } from "./ui/Toast";
 import { cn } from "../lib/utils";
+import { getUiText, useAppLocale } from "../lib/i18n";
 
 interface DetailsScreenProps {
   id: string;
@@ -43,6 +44,9 @@ export function DetailsScreen({
   onUpdateItems,
   nav,
 }: DetailsScreenProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.details;
   const { toast, success } = useToast();
   const clip = items.find((c) => c.id === id);
 
@@ -54,9 +58,9 @@ export function DetailsScreen({
   if (!clip) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-6 text-center text-sm text-muted-foreground">
-        <p className="font-medium">This item no longer exists.</p>
+        <p className="font-medium">{t.missingItem}</p>
         <Btn className="mt-4" onClick={() => nav({ name: "library" })}>
-          Back to library
+          {t.backToLibrary}
         </Btn>
       </div>
     );
@@ -83,7 +87,7 @@ export function DetailsScreen({
         : c
     );
     onUpdateItems(updated);
-    toast(clip.pinned ? "Unpinned from top" : "Pinned to top");
+    toast(clip.pinned ? t.unpinnedToast : t.pinnedToast);
   };
 
   // Toggle Expiry Protection Lock (completely independent of pinning)
@@ -95,37 +99,37 @@ export function DetailsScreen({
     );
     onUpdateItems(updated);
     if (nextLocked) {
-      toast("Locked from expiry", {
-        description: "Automatic expiry will not remove this clip.",
+      toast(t.lockedToast, {
+        description: t.lockedToastDesc,
       });
     } else {
-      toast("Expiry protection unlocked", {
+      toast(t.unlockedToast, {
         description:
           !clip.pinned && hasFiniteRetention(retention)
-            ? "A fresh expiry window has started from now."
-            : "This clip is now unlocked.",
+            ? t.unlockedFreshDesc
+            : t.unlockedDoneDesc,
       });
     }
   };
 
   // Duplicate item
   const handleDuplicate = () => {
-    const t = Date.now();
+    const timeNow = Date.now();
     const copyId = `clip-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
     const copyItem: ClipItem = {
       ...clip,
       id: copyId,
-      title: `${clip.title} (copy)`.slice(0, 200),
+      title: `${clip.title} ${t.copySuffix}`.slice(0, 200),
       pinned: false,
       isExpiryLocked: false,
-      expiresAt: computeExpiry(retention, t),
-      createdAt: t,
-      modifiedAt: t,
+      expiresAt: computeExpiry(retention, timeNow),
+      createdAt: timeNow,
+      modifiedAt: timeNow,
     };
     onUpdateItems([copyItem, ...items]);
-    success("Item duplicated", {
+    success(t.duplicatedToast, {
       action: {
-        label: "Open copy",
+        label: t.openCopyAction,
         onClick: () => nav({ name: "details", id: copyId }),
       },
     });
@@ -136,8 +140,8 @@ export function DetailsScreen({
     const blob = new Blob([clip.content], { type: "text/plain;charset=utf-8" });
     const filename = `${clip.title.replace(/[/\\?%*:|"<>]/g, "_") || "clip"}.txt`;
     downloadFile(blob, filename);
-    success(`Exported "${filename}"`, {
-      description: "Downloaded using document export.",
+    success(t.exportedToast(filename), {
+      description: t.exportedDesc,
     });
   };
 
@@ -146,8 +150,8 @@ export function DetailsScreen({
     nativeCopy(clip.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    success("Copied to clipboard", {
-      description: `${clip.characterCount.toLocaleString()} characters copied.`,
+    success(t.copiedToast, {
+      description: t.copiedToastDesc(clip.characterCount),
     });
   };
 
@@ -174,29 +178,29 @@ export function DetailsScreen({
     );
     onUpdateItems(updated);
     setRenaming(false);
-    toast("Item renamed");
+    toast(t.renamedToast);
   };
 
   // Delete commit
   const handleDeleteCommit = () => {
     onUpdateItems(items.filter((c) => c.id !== id));
     nav({ name: "library" });
-    toast("Item deleted");
+    toast(t.deletedToast);
   };
 
   const actionButtons = [
     {
-      label: "Edit",
+      label: t.actionEdit,
       icon: Pencil,
       onClick: () => nav({ name: "editor", id: clip.id }),
     },
     {
-      label: clip.pinned ? "Unpin" : "Pin",
+      label: clip.pinned ? t.actionUnpin : t.actionPin,
       icon: clip.pinned ? PinOff : Pin,
       onClick: handleTogglePinned,
     },
     {
-      label: "Rename",
+      label: t.actionRename,
       icon: Type,
       onClick: () => {
         setNewTitle(clip.title);
@@ -204,17 +208,17 @@ export function DetailsScreen({
       },
     },
     {
-      label: "Duplicate",
+      label: t.actionDuplicate,
       icon: CopyPlus,
       onClick: handleDuplicate,
     },
     {
-      label: "Export .txt",
+      label: t.actionExportTxt,
       icon: Download,
       onClick: handleExportTxt,
     },
     {
-      label: "Share",
+      label: t.actionShare,
       icon: Share2,
       onClick: handleShare,
     },
@@ -224,14 +228,14 @@ export function DetailsScreen({
     <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
       <TopBar
         left={
-          <IconBtn label="Back" onClick={() => nav({ name: "library" })}>
-            <ArrowLeft className="h-5 w-5" />
+          <IconBtn label={ui.common.back} onClick={() => nav({ name: "library" })}>
+            <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
           </IconBtn>
         }
-        title="Details"
+        title={t.title}
         right={
           <IconBtn
-            label="Delete item"
+            label={t.deleteItemAria}
             className="text-destructive hover:bg-destructive/10"
             onClick={() => setConfirmDelete(true)}
           >
@@ -240,24 +244,24 @@ export function DetailsScreen({
         }
       />
 
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3 text-start">
         {/* Title, Expiry Lock, and Pin status */}
         <div>
           <div className="flex flex-wrap items-start gap-2">
-            <h1 className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
+            <h1 dir="auto" className="min-w-0 flex-1 text-xl font-bold leading-snug tracking-tight text-foreground">
               {clip.title}
             </h1>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 shrink-0">
               {clip.isExpiryLocked && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-foreground/90">
                   <Lock className="h-3 w-3 text-mint" aria-hidden />
-                  Locked
+                  {t.lockedBadge}
                 </span>
               )}
               {clip.pinned && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-mint-soft px-2.5 py-0.5 text-xs font-semibold text-mint-foreground">
                   <Pin className="h-3 w-3" />
-                  Pinned
+                  {t.pinnedBadge}
                 </span>
               )}
             </div>
@@ -265,15 +269,15 @@ export function DetailsScreen({
 
           {/* 4-Grid Metadata */}
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border border-border bg-surface p-3 text-xs">
-            <MetaItem label="Modified" value={fullDateTime(clip.modifiedAt)} />
-            <MetaItem label="Created" value={fullDateTime(clip.createdAt)} />
+            <MetaItem label={t.modified} value={fullDateTime(clip.modifiedAt, locale)} />
+            <MetaItem label={t.created} value={fullDateTime(clip.createdAt, locale)} />
             <MetaItem
-              label="Size"
-              value={`${clip.characterCount.toLocaleString()} chars · ${formatBytes(clip.sizeBytes)}`}
+              label={t.size}
+              value={t.sizeValue(clip.characterCount, formatBytes(clip.sizeBytes))}
             />
             <MetaItem
-              label="Content"
-              value={`${words.toLocaleString()} words · ${lines.toLocaleString()} lines`}
+              label={t.contentMeta}
+              value={t.contentValue(words, lines)}
             />
           </dl>
 
@@ -296,18 +300,18 @@ export function DetailsScreen({
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-foreground">
-                  {clip.isExpiryLocked ? "Expiry protection locked" : "Expiry protection"}
+                  {clip.isExpiryLocked ? t.expiryLockedTitle : t.expiryTitle}
                 </p>
                 <p className="truncate text-[11px] text-muted-foreground">
                   {clip.isExpiryLocked
-                    ? "Automatic expiry will not remove this clip"
+                    ? t.expiryLockedDesc
                     : clip.pinned
-                      ? "Protected while pinned · lock for independent protection"
+                      ? t.expiryPinnedDesc
                       : clip.expiresAt
-                        ? `Expires ${fullDateTime(clip.expiresAt)}`
+                        ? t.expiresAtDesc(fullDateTime(clip.expiresAt, locale))
                         : hasFiniteRetention(retention)
-                          ? "Follows active retention settings"
-                          : "Retention is Forever (no auto-expiry)"}
+                          ? t.followsRetentionDesc
+                          : t.foreverRetentionDesc}
                 </p>
               </div>
             </div>
@@ -317,7 +321,7 @@ export function DetailsScreen({
               onClick={handleToggleExpiryLock}
               className="shrink-0 text-xs"
             >
-              {clip.isExpiryLocked ? "Unlock expiry protection" : "Lock from expiry"}
+              {clip.isExpiryLocked ? t.unlockExpiry : t.lockFromExpiry}
             </Btn>
           </div>
         </div>
@@ -325,12 +329,12 @@ export function DetailsScreen({
         {/* Content Viewer */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-            <span>Stored UTF-8 content</span>
+            <span>{t.storedUtf8Content}</span>
             <span className="font-mono">{formatBytes(clip.sizeBytes)}</span>
           </div>
           <div className="max-h-[44vh] overflow-y-auto rounded-xl border border-border bg-surface p-4 shadow-2xs">
-            <p className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-foreground select-text font-sans">
-              {clip.content || <span className="text-muted-foreground italic">Empty text snippet</span>}
+            <p dir="auto" className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-foreground select-text font-sans">
+              {clip.content || <span className="text-muted-foreground italic">{t.emptyTextSnippet}</span>}
             </p>
           </div>
         </div>
@@ -359,7 +363,7 @@ export function DetailsScreen({
           className="gap-1.5"
         >
           <Trash2 className="h-4 w-4" />
-          Delete
+          {ui.common.delete}
         </Btn>
         <Btn
           variant="primary"
@@ -367,7 +371,7 @@ export function DetailsScreen({
           onClick={handleCopy}
         >
           {copied ? <Check className="h-4 w-4 text-mint" /> : <Copy className="h-4 w-4" />}
-          {copied ? "Copied" : "Copy to clipboard"}
+          {copied ? t.copiedBtn : t.copyToClipboard}
         </Btn>
       </div>
 
@@ -378,15 +382,16 @@ export function DetailsScreen({
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
         >
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl">
-            <h3 className="text-base font-semibold">Rename item</h3>
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl text-start">
+            <h3 className="text-base font-semibold">{t.renameTitle}</h3>
             <form onSubmit={handleRenameCommit} className="mt-4 space-y-4">
               <div>
                 <label htmlFor="rename-input" className="text-xs font-medium text-muted-foreground">
-                  Title
+                  {t.titleLabel}
                 </label>
                 <input
                   id="rename-input"
+                  dir="auto"
                   autoFocus
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
@@ -395,10 +400,10 @@ export function DetailsScreen({
               </div>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" size="sm" onClick={() => setRenaming(false)}>
-                  Cancel
+                  {ui.common.cancel}
                 </Btn>
                 <Btn type="submit" variant="primary" size="sm" disabled={!newTitle.trim()}>
-                  Save
+                  {ui.common.save}
                 </Btn>
               </div>
             </form>
@@ -409,9 +414,9 @@ export function DetailsScreen({
       {/* Confirm Delete Modal */}
       <ConfirmModal
         open={confirmDelete}
-        title="Delete this item?"
-        description={`"${clip.title}" will be permanently removed from this device's private storage.`}
-        confirmLabel="Delete"
+        title={t.deleteModalTitle}
+        description={t.deleteModalDesc(clip.title)}
+        confirmLabel={ui.common.delete}
         onConfirm={handleDeleteCommit}
         onClose={() => setConfirmDelete(false)}
       />
@@ -421,7 +426,7 @@ export function DetailsScreen({
 
 function MetaItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 text-start">
       <dt className="text-muted-foreground/80 text-[11px] uppercase tracking-wider">{label}</dt>
       <dd className="truncate font-medium text-foreground text-[12px] mt-0.5">{value}</dd>
     </div>

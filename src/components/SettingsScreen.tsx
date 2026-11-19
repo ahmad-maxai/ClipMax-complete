@@ -7,23 +7,20 @@ import {
   Keyboard,
   ShieldCheck,
   Trash2,
-  Package,
   Sliders,
   CheckCircle2,
-  Smartphone,
-  ExternalLink,
   Info,
 } from "lucide-react";
 import { TopBar, Btn, IconBtn, Section, ConfirmModal, ClipMaxLogo } from "./primitives";
 import {
+  AppUiLocale,
+  APP_UI_LOCALE_LABELS,
   ClipItem,
   KeyboardLanguage,
   KEYBOARD_LANGUAGE_LABELS,
   Nav,
   Retention,
   RETENTION_PRESET_KEYS,
-  RETENTION_LABELS,
-  formatRetentionLabel,
   ThemeMode,
 } from "../lib/types";
 import {
@@ -43,6 +40,12 @@ import { isNativeAndroid } from "../lib/nativeBridge";
 import { OnboardingState } from "../lib/onboarding";
 import { KeyboardOnboardingGuide } from "./KeyboardOnboardingGuide";
 import { AboutClipMaxModal } from "./AboutClipMaxModal";
+import {
+  formatRetentionLocalized,
+  formatThemeName,
+  getUiText,
+  useAppLocale,
+} from "../lib/i18n";
 
 interface SettingsScreenProps {
   items: ClipItem[];
@@ -54,6 +57,8 @@ interface SettingsScreenProps {
   themeMode: ThemeMode;
   systemDark: boolean;
   onChangeThemeMode: (mode: ThemeMode) => void;
+  appUiLocale: AppUiLocale;
+  onChangeAppUiLocale: (locale: AppUiLocale) => void;
   keyboardLanguage: KeyboardLanguage;
   onChangeKeyboardLanguage: (language: KeyboardLanguage) => void;
   nav: Nav;
@@ -74,6 +79,8 @@ export function SettingsScreen({
   themeMode,
   systemDark,
   onChangeThemeMode,
+  appUiLocale,
+  onChangeAppUiLocale,
   keyboardLanguage,
   onChangeKeyboardLanguage,
   nav,
@@ -83,6 +90,9 @@ export function SettingsScreen({
   onCompleteOnboarding,
   onOnboardingBack,
 }: SettingsScreenProps) {
+  const locale = useAppLocale();
+  const ui = getUiText(locale);
+  const t = ui.settings;
   const { toast, success, error } = useToast();
   const [privacyExpanded, setPrivacyExpanded] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
@@ -106,7 +116,7 @@ export function SettingsScreen({
       setCustomInputError(null);
       onChangeRetention(r);
       saveStoredRetention(r);
-      toast(`Retention set to ${RETENTION_LABELS[r] || r}`);
+      toast(t.retentionToast(formatRetentionLocalized(r, locale)));
     });
   };
 
@@ -123,7 +133,7 @@ export function SettingsScreen({
       const customVal = `custom:${safeDuration}${customUnit}`;
       onChangeRetention(customVal);
       saveStoredRetention(customVal);
-      toast(`Retention set to ${formatRetentionLabel(customVal, safeDuration, customUnit)}`);
+      toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, customUnit)));
     });
   };
 
@@ -131,7 +141,7 @@ export function SettingsScreen({
     setCustomDurationInput(valStr);
     const parsed = parseInt(valStr, 10);
     if (!valStr.trim() || isNaN(parsed) || parsed <= 0) {
-      setCustomInputError("Duration must be a positive whole number (min 1)");
+      setCustomInputError(t.customInputErr);
       return;
     }
     setCustomInputError(null);
@@ -149,7 +159,7 @@ export function SettingsScreen({
     const customVal = `custom:${safeDuration}${newUnit}`;
     onChangeRetention(customVal);
     saveStoredRetention(customVal);
-    toast(`Retention updated: ${formatRetentionLabel(customVal, safeDuration, newUnit)}`);
+    toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, newUnit)));
   };
 
 
@@ -181,11 +191,11 @@ export function SettingsScreen({
     if (isNativeAndroid() && window.ClipMaxNative?.openImeSettings) {
       try {
         window.ClipMaxNative.openImeSettings();
-        toast("Opening Android Keyboard Settings...");
+        toast(t.openingAndroidSettingsToast);
         return;
       } catch {}
     }
-    toast("Open Android Settings → System → Keyboard to enable ClipMax.");
+    toast(t.fallbackAndroidSettingsToast);
   };
 
   // Open native Android Input Method Picker
@@ -193,37 +203,32 @@ export function SettingsScreen({
     if (isNativeAndroid() && window.ClipMaxNative?.showImePicker) {
       try {
         window.ClipMaxNative.showImePicker();
-        toast("Opening Android Input Method Picker...");
+        toast(t.openingImePickerToast);
         return;
       } catch {}
     }
-    toast("Use Android's keyboard switcher to select ClipMax Keyboard.");
+    toast(t.fallbackImePickerToast);
   };
 
   const handleSelectTheme = (mode: ThemeMode) => {
     preserveScroll(() => {
       onChangeThemeMode(mode);
-      const label =
-        mode === "system"
-          ? `System (${systemDark ? "Dark" : "Light"})`
-          : mode.charAt(0).toUpperCase() + mode.slice(1);
-      toast(`Theme set to ${label}`);
+      toast(t.themeToast(formatThemeName(mode, systemDark, locale)));
+    });
+  };
+
+  const handleSelectAppUiLocale = (nextLocale: AppUiLocale) => {
+    preserveScroll(() => {
+      onChangeAppUiLocale(nextLocale);
+      const nextText = getUiText(nextLocale).settings;
+      toast(nextText.appLanguageToast(nextLocale));
     });
   };
 
   const handleSelectKeyboardLanguage = (language: KeyboardLanguage) => {
     preserveScroll(() => {
       onChangeKeyboardLanguage(language);
-      toast(`Keyboard language set to ${KEYBOARD_LANGUAGE_LABELS[language]}`);
-    });
-  };
-
-  // Handle retention switch
-  const handleSelectRetention = (r: Retention) => {
-    preserveScroll(() => {
-      onChangeRetention(r);
-      saveStoredRetention(r);
-      toast(`Retention set to ${RETENTION_LABELS[r]}`);
+      toast(t.keyboardLanguageToast(KEYBOARD_LANGUAGE_LABELS[language]));
     });
   };
 
@@ -232,7 +237,7 @@ export function SettingsScreen({
     preserveScroll(() => {
       onChangeCaptureEnabled(enabled);
       saveStoredCaptureEnabled(enabled);
-      toast(enabled ? "Automatic capture enabled" : "Automatic capture disabled");
+      toast(enabled ? t.captureEnabledToast : t.captureDisabledToast);
     });
   };
 
@@ -243,11 +248,11 @@ export function SettingsScreen({
       const blob = await createZipBackup(items);
       const dateStr = new Date().toISOString().slice(0, 10);
       downloadFile(blob, `clipmax-backup-${dateStr}.zip`);
-      success("Backup ZIP created", {
-        description: `Exported ${items.length} items (${formatBytes(blob.size)}) in ClipMax format.`,
+      success(t.backupCreatedTitle, {
+        description: t.backupCreatedDesc(items.length, formatBytes(blob.size)),
       });
     } catch (err: any) {
-      error("Backup failed", { description: err?.message });
+      error(t.backupFailed, { description: err?.message });
     } finally {
       setIsProcessingBackup(false);
     }
@@ -277,8 +282,8 @@ export function SettingsScreen({
             )
           );
           onUpdateItems([...newItems, ...items]);
-          success(`Restored ${newItems.length} items from JSON backup`, {
-            description: `${newItems.length} items added to device library.`,
+          success(t.restoredJsonTitle(newItems.length), {
+            description: t.restoredJsonDesc(newItems.length),
           });
           return;
         }
@@ -287,14 +292,14 @@ export function SettingsScreen({
       // Standard ZIP backup
       const res = await restoreZipBackup(file, items);
       onUpdateItems(res.items);
-      success(`Restored ${res.restoredCount} items from backup`, {
+      success(ui.library.restoredBackup(res.restoredCount), {
         description: res.warnings.length
-          ? `Warnings: ${res.warnings.join(", ")}`
-          : "Archive verified against 128 MiB boundary and metadata schemas.",
+          ? ui.library.restoreWarnings(res.warnings.join(", "))
+          : t.restoredZipClean,
       });
     } catch (err: any) {
-      error("Restore failed", {
-        description: err?.message || "Invalid or corrupt backup file.",
+      error(ui.library.restoreFailed, {
+        description: err?.message || ui.library.restoreFailedDesc,
       });
     } finally {
       setIsProcessingBackup(false);
@@ -305,7 +310,7 @@ export function SettingsScreen({
   // Delete all items
   const handleDeleteAll = () => {
     onUpdateItems([]);
-    toast("All saved items have been cleared from local storage.");
+    toast(t.deletedAllToast);
   };
 
   return (
@@ -321,7 +326,7 @@ export function SettingsScreen({
       <TopBar
         left={
           <IconBtn
-            label="Back"
+            label={ui.common.back}
             onClick={() => {
               if (isOnboardingActive && onOnboardingBack) {
                 onOnboardingBack();
@@ -330,13 +335,13 @@ export function SettingsScreen({
               }
             }}
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
           </IconBtn>
         }
-        title="Settings"
+        title={t.title}
       />
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3.5 pb-6">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3.5 pb-6 text-start">
         {/* App Info Card */}
         <Section>
           <div className="flex items-center gap-3.5 p-3.5">
@@ -349,50 +354,67 @@ export function SettingsScreen({
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                com.clipmax.app · Native Android Redesign
+                {t.subtitleMeta}
               </p>
               <p className="text-[11px] text-muted-foreground/75 mt-0.5">
-                Private, local-first clipboard manager & IME
+                {t.subtitleDesc}
               </p>
             </div>
           </div>
         </Section>
 
         {/* Storage Overview */}
-        <Section title="Device Storage">
-          <div className="grid grid-cols-3 divide-x divide-border px-1 py-3 text-center">
-            <StatCard value={String(items.length)} label="Items" />
-            <StatCard value={String(pinnedCount)} label="Pinned" />
-            <StatCard value={formatBytes(totalBytes)} label="On device" />
+        <Section title={t.deviceStorage}>
+          <div className="grid grid-cols-3 divide-x rtl:divide-x-reverse divide-border px-1 py-3 text-center">
+            <StatCard value={String(items.length)} label={t.statItems} />
+            <StatCard value={String(pinnedCount)} label={t.statPinned} />
+            <StatCard value={formatBytes(totalBytes)} label={t.statOnDevice} />
           </div>
         </Section>
 
-        {/* Appearance & Theme */}
-        <Section title="Appearance">
-          <div className="px-4 py-3">
-            <p className="text-sm font-semibold text-foreground">Theme</p>
+        {/* Appearance & Language */}
+        <Section title={t.appearance}>
+          <div className="border-b border-border px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">{t.appLanguageTitle}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {themeMode === "system"
-                ? `Syncs automatically with Android system theme (currently ${systemDark ? "Dark" : "Light"}).`
-                : themeMode === "classic"
-                ? `Classic ClipMax styling synced with Android system (${systemDark ? "Dark" : "Light"}).`
-                : themeMode === "light"
-                ? "Always uses Light theme across companion app and keyboard."
-                : "Always uses Dark theme across companion app and keyboard."}
+              {t.appLanguageDesc}
             </p>
             <div
               role="radiogroup"
-              aria-label="App and keyboard theme"
+              aria-label={t.appLanguageTitle}
+              className="mt-2.5 grid grid-cols-2 gap-1.5"
+            >
+              {(["en", "ar"] as const).map((uiLoc) => (
+                <button
+                  key={uiLoc}
+                  type="button"
+                  role="radio"
+                  aria-checked={appUiLocale === uiLoc}
+                  onClick={() => handleSelectAppUiLocale(uiLoc)}
+                  className={cn(
+                    "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                    appUiLocale === uiLoc
+                      ? "border-mint bg-mint-soft text-mint-foreground"
+                      : "border-border bg-surface text-foreground hover:bg-accent"
+                  )}
+                >
+                  {APP_UI_LOCALE_LABELS[uiLoc]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">{t.themeTitle}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t.themeDesc(themeMode, systemDark)}
+            </p>
+            <div
+              role="radiogroup"
+              aria-label={t.themeTitle}
               className="mt-2.5 grid grid-cols-4 gap-1.5"
             >
-              {(
-                [
-                  { value: "system", label: "System" },
-                  { value: "light", label: "Light" },
-                  { value: "dark", label: "Dark" },
-                  { value: "classic", label: "Classic" },
-                ] as const
-              ).map((opt) => (
+              {t.themeOptions.map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
@@ -415,17 +437,17 @@ export function SettingsScreen({
 
         {/* Native Android System Keyboard Setup */}
         <div ref={keyboardSectionRef}>
-          <Section title="Android System Keyboard">
+          <Section title={t.androidKeyboardSection}>
             <div className="p-4 bg-surface-2 border-b border-border flex items-start gap-2.5">
               <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-mint text-primary-foreground dark:text-background shadow-2xs">
                 <Keyboard className="h-4.5 w-4.5" />
               </span>
               <div className="min-w-0">
                 <span className="text-xs font-bold text-foreground block">
-                  ClipMax Native System Keyboard
+                  {t.nativeKeyboardTitle}
                 </span>
                 <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                  Enable ClipMax in Android System Settings and select it in the Input Method Picker to insert saved clips directly inside Chrome, YouTube, messaging apps, and any other Android field.
+                  {t.nativeKeyboardDesc}
                 </p>
               </div>
             </div>
@@ -439,7 +461,7 @@ export function SettingsScreen({
                   onClick={handleOpenAndroidSettings}
                 >
                   <Sliders className="h-4 w-4 shrink-0 text-mint" />
-                  <span className="truncate">1. Manage System Keyboards</span>
+                  <span className="truncate">{t.step1ManageKeyboards}</span>
                 </Btn>
               </div>
 
@@ -451,19 +473,19 @@ export function SettingsScreen({
                   onClick={handleOpenImePicker}
                 >
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span className="truncate">2. Switch Active Input Method</span>
+                  <span className="truncate">{t.step2SwitchIme}</span>
                 </Btn>
               </div>
             </div>
 
             <div className="border-t border-border px-4 py-3">
-              <p className="text-sm font-semibold text-foreground">Keyboard language</p>
+              <p className="text-sm font-semibold text-foreground">{t.keyboardLanguageTitle}</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Switch between English and Arabic. You can also hold the Spacebar on the keyboard.
+                {t.keyboardLanguageDesc}
               </p>
               <div
                 role="radiogroup"
-                aria-label="Keyboard language"
+                aria-label={t.keyboardLanguageTitle}
                 className="mt-2.5 grid grid-cols-2 gap-1.5"
               >
                 {(["en", "ar"] as const).map((lang) => (
@@ -489,14 +511,14 @@ export function SettingsScreen({
         </div>
 
         {/* Capture & Retention */}
-        <Section title="Automatic Capture & Retention">
+        <Section title={t.captureSection}>
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div className="flex-1">
               <span className="block text-sm font-semibold text-foreground">
-                Automatic capture
+                {t.autoCaptureTitle}
               </span>
               <span className="block text-xs text-muted-foreground">
-                Captures selections/copies while ClipMax is active. Automatically suppressed on password fields.
+                {t.autoCaptureDesc}
               </span>
             </div>
             <button
@@ -512,20 +534,20 @@ export function SettingsScreen({
               <span
                 className={cn(
                   "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow-md ring-0 transition duration-200 ease-in-out",
-                  captureEnabled ? "translate-x-5" : "translate-x-0"
+                  captureEnabled ? "translate-x-5 rtl:-translate-x-5" : "translate-x-0"
                 )}
               />
             </button>
           </div>
 
           <div className="border-t border-border px-4 py-3">
-            <p className="text-sm font-semibold text-foreground">Retention period</p>
+            <p className="text-sm font-semibold text-foreground">{t.retentionTitle}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Pinned and manually edited items are never auto-removed.
+              {t.retentionDesc}
             </p>
             <div
               role="radiogroup"
-              aria-label="Retention duration"
+              aria-label={t.retentionTitle}
               className="mt-2.5 grid grid-cols-3 sm:grid-cols-4 gap-1.5"
             >
               {RETENTION_PRESET_KEYS.map((r) => (
@@ -542,7 +564,7 @@ export function SettingsScreen({
                       : "border-border bg-surface text-foreground hover:bg-accent"
                   )}
                 >
-                  {RETENTION_LABELS[r]}
+                  {formatRetentionLocalized(r, locale)}
                 </button>
               ))}
               <button
@@ -557,16 +579,16 @@ export function SettingsScreen({
                     : "border-border bg-surface text-foreground hover:bg-accent"
                 )}
               >
-                Custom
+                {t.customBtn}
               </button>
             </div>
 
             {isCustomActive && (
               <div className="mt-3 rounded-xl border border-border bg-surface-2 p-3 space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-150">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-foreground">Custom duration</span>
+                  <span className="text-xs font-semibold text-foreground">{t.customDurationLabel}</span>
                   <span className="text-[11px] font-medium text-mint">
-                    {formatRetentionLabel(retention, parseInt(customDurationInput, 10) || 15, customUnit)}
+                    {formatRetentionLocalized(retention, locale, parseInt(customDurationInput, 10) || 15, customUnit)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -582,10 +604,10 @@ export function SettingsScreen({
                         "w-full h-9 rounded-lg border bg-surface px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-mint tap-target",
                         customInputError ? "border-danger focus:ring-danger" : "border-border"
                       )}
-                      aria-label="Custom retention duration"
+                      aria-label={t.customDurationLabel}
                     />
                   </div>
-                  <div className="flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label="Duration unit">
+                  <div className="flex rounded-lg border border-border bg-surface p-0.5" role="radiogroup" aria-label={t.customDurationLabel}>
                     <button
                       type="button"
                       role="radio"
@@ -598,7 +620,7 @@ export function SettingsScreen({
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
-                      Minutes
+                      {t.minutesUnit}
                     </button>
                     <button
                       type="button"
@@ -612,7 +634,7 @@ export function SettingsScreen({
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
-                      Hours
+                      {t.hoursUnit}
                     </button>
                   </div>
                 </div>
@@ -620,7 +642,7 @@ export function SettingsScreen({
                   <p className="text-[11px] text-danger font-medium">{customInputError}</p>
                 ) : (
                   <p className="text-[11px] text-muted-foreground">
-                    Clips will automatically expire after {parseInt(customDurationInput, 10) || 15} {customUnit === "m" ? ((parseInt(customDurationInput, 10) || 15) === 1 ? "minute" : "minutes") : ((parseInt(customDurationInput, 10) || 15) === 1 ? "hour" : "hours")}.
+                    {t.customExpiryHint(parseInt(customDurationInput, 10) || 15, customUnit)}
                   </p>
                 )}
               </div>
@@ -629,10 +651,14 @@ export function SettingsScreen({
         </Section>
 
         {/* Backup & Restore */}
-        <Section title="Backup & Archiving">
+        <Section title={t.backupSection}>
           <div className="p-4 space-y-2 text-xs text-muted-foreground">
             <p>
-              ZIP backups use ClipMax's structured <code>metadata/</code> and <code>content/</code> layout. Restores are protected by a 128 MiB extraction safety limit and path traversal checks.
+              {t.backupDescPrefix}
+              <code dir="ltr">metadata/</code>
+              {t.backupDescMid}
+              <code dir="ltr">content/</code>
+              {t.backupDescSuffix}
             </p>
           </div>
           <div className="flex gap-2 px-4 pb-3">
@@ -644,7 +670,7 @@ export function SettingsScreen({
               onClick={handleExportBackup}
             >
               <Download className="h-4 w-4" />
-              Create ZIP
+              {t.createZip}
             </Btn>
             <Btn
               size="sm"
@@ -654,7 +680,7 @@ export function SettingsScreen({
               onClick={() => zipInputRef.current?.click()}
             >
               <ArchiveRestore className="h-4 w-4" />
-              Restore ZIP
+              {t.restoreZip}
             </Btn>
           </div>
         </Section>
@@ -665,15 +691,15 @@ export function SettingsScreen({
             type="button"
             aria-expanded={privacyExpanded}
             onClick={() => preserveScroll(() => setPrivacyExpanded((v: boolean) => !v))}
-            className="flex w-full items-center gap-3 px-4 py-3.5 text-left tap-target"
+            className="flex w-full items-center gap-3 px-4 py-3.5 text-start tap-target"
           >
             <ShieldCheck className="h-5 w-5 text-mint shrink-0" />
             <div className="flex-1 min-w-0">
               <span className="block text-sm font-semibold text-foreground">
-                Privacy & Data Architecture
+                {t.privacyTitle}
               </span>
               <span className="block text-xs text-muted-foreground">
-                Local-first, zero telemetry, no accounts or cloud sync
+                {t.privacySubtitle}
               </span>
             </div>
             <ChevronDown
@@ -685,18 +711,18 @@ export function SettingsScreen({
           </button>
 
           {privacyExpanded && (
-            <div className="border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground space-y-2">
+            <div className="border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground space-y-2 text-start">
               <p>
-                <strong>1. Device-Only Storage:</strong> All data is stored in the app's sandboxed local storage. No accounts, advertising, or external network transmissions are permitted.
+                <strong>{t.privacyP1Title}</strong> {t.privacyP1Body}
               </p>
               <p>
-                <strong>2. Password Protection:</strong> When an editable field is marked with <code>TYPE_TEXT_VARIATION_PASSWORD</code>, ClipMax suppresses automatic capture and hides card content.
+                <strong>{t.privacyP2Title}</strong> {t.privacyP2Body}
               </p>
               <p>
-                <strong>3. Surrogate-Safe Chunking:</strong> Text inserts adhere to the strict 50,000 UTF-16 code units limit without splitting high/low surrogate pairs (e.g. emoji or CJK).
+                <strong>{t.privacyP3Title}</strong> {t.privacyP3Body}
               </p>
               <p>
-                <strong>4. Independent Backups:</strong> Android Auto Backup is explicitly disabled in the manifest; user-controlled ZIP archives give complete ownership without cloud leaks.
+                <strong>{t.privacyP4Title}</strong> {t.privacyP4Body}
               </p>
             </div>
           )}
@@ -704,7 +730,7 @@ export function SettingsScreen({
 
 
         {/* Danger Zone */}
-        <Section title="Danger Zone">
+        <Section title={t.dangerZone}>
           <div className="p-4">
             <Btn
               variant="dangerOutline"
@@ -714,7 +740,7 @@ export function SettingsScreen({
               className="w-full gap-2"
             >
               <Trash2 className="h-4 w-4" />
-              Delete All Saved Data
+              {t.deleteAllBtn}
             </Btn>
           </div>
         </Section>
@@ -726,7 +752,7 @@ export function SettingsScreen({
             className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent/70 active:scale-[0.98] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Info className="h-3.5 w-3.5 opacity-80" />
-            <span>About ClipMax</span>
+            <span>{t.aboutClipMax}</span>
           </button>
         </div>
       </div>
@@ -734,9 +760,9 @@ export function SettingsScreen({
       {/* Confirm Delete All Modal */}
       <ConfirmModal
         open={confirmDeleteAll}
-        title="Delete all saved items?"
-        description={`This will permanently remove all ${items.length} saved text clips, including pinned ones, from local storage. This action cannot be reversed.`}
-        confirmLabel="Delete all"
+        title={t.deleteAllModalTitle}
+        description={t.deleteAllModalDesc(items.length)}
+        confirmLabel={t.deleteAllConfirmBtn}
         destructive={true}
         onConfirm={handleDeleteAll}
         onClose={() => setConfirmDeleteAll(false)}
