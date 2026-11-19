@@ -1,4 +1,4 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#A8D5C8</item>
@@ -6,6 +6,6 @@
         <item name="android:navigationBarColor">#202124</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
 </resources>

@@ -45,7 +45,8 @@ This document tracks compliance status, audit findings, and remaining actions fo
   - `lucide-react` — ISC (FSDG compatible).
   - `jszip` — MIT / GPL-3.0 dual license (FSDG compatible).
   - `motion`, `clsx`, `tailwind-merge` — MIT (FSDG compatible).
-- [x] **License Inventory**: Detailed inventory documented in `THIRD_PARTY_LICENSES.md`.
+- [ ] **English Suggestion Wordlist (`en_words.txt`)**: **UNRESOLVED** — `android/app/src/main/res/raw/en_words.txt` lacks verifiable upstream origin/license metadata (see `THIRD_PARTY_LICENSES.md`). Must be replaced with a clearly licensed wordlist (e.g., SCOWL or Hunspell `en_US`) before F-Droid submission.
+- [x] **License Inventory**: Detailed inventory and unresolved wordlist notice documented in `THIRD_PARTY_LICENSES.md`.
 
 ---
 
@@ -54,7 +55,8 @@ This document tracks compliance status, audit findings, and remaining actions fo
 - [x] **Zero Remote Network References**: No external font links, CDNs, or remote API calls in HTML, CSS, or JS.
 - [x] **Clean System Font Stacks**: Configured with local system fonts (`system-ui` and `ui-monospace`).
 - [x] **Fully Offline Compliant**: All web assets load strictly from local storage (`android/app/src/main/assets/web/`) with zero network dependency.
-- [x] **No Unverified External Media**: All shipped artwork belongs to ClipMax.
+- [x] **Development Evidence Removed & Guarded**: Removed development archives, correspondence PDF, prior APKs, and `assets/aistudio/` screenshots from `public/` and `android/app/src/main/assets/web/`, enforced by Vite build checks, Gradle `verifyOfflineWebAssets` / `verify*ApkAssets`, and `scripts/check-version-consistency.py`.
+- [x] **No Unverified External Media**: All shipped artwork belongs to ClipMax (`logo.jpg` and launcher icons).
 
 ---
 
@@ -63,5 +65,6 @@ This document tracks compliance status, audit findings, and remaining actions fo
 - [x] **Gradle Wrapper**: Standard `gradlew` (Gradle 8.9) checked into repository.
 - [x] **Automated Unit Tests**: 115 JVM unit tests passing in CI.
 - [x] **Release Branch Prepared**: `release/fdroid-v0.5.1` based on verified commit `60a626701170e129c431a567341020c6c4e33079`.
-- [ ] **Release Tag**: An annotated git tag `v0.5.1` must be created on the release commit once approved by the project owner.
-- [ ] **F-Droid Build Recipe Metadata**: The F-Droid build recipe in `fdroiddata` will build the Gradle project from source using `assembleRelease`.
+- [ ] **Resolve `en_words.txt` Provenance**: Substitute a permissively/GPL-compatible attributed wordlist before tagging `v0.5.1`.
+- [ ] **Release Tag**: An annotated git tag `v0.5.1` must be created on the final release commit once approved by the project owner.
+- [ ] **F-Droid Build Recipe Metadata**: Draft template in `com.clipmax.app.yml` currently references pre-submission commit SHA `20c02d1dddd7ca7753094da3603a1c6551d8421b`; update to final tagged release commit when submitting to `fdroiddata`.

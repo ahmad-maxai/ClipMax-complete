@@ -88,9 +88,12 @@ The following development packages are declared in `package.json` for compilatio
 - **License**: Distributed under GPL-3.0-or-later as confirmed by the project owner.
 
 ### English Suggestion Wordlist
-- **File**: `android/app/src/main/res/raw/en_words.txt`
-- **Origin**: Public frequency wordlist
-- **License**: Public domain / permissive word frequency list used strictly for local, on-device keyboard typing suggestions.
+- **File**: `android/app/src/main/res/raw/en_words.txt` (4,914 lines, 35,987 bytes; SHA-256 `614296f4a124b9f2fb315aa0d2c5581679e911bc111462b539ffd990f12cb2db`)
+- **Status**: **UNRESOLVED — Upstream Origin and Redistribution License Unverified**
+- **Audit Finding**: `en_words.txt` was introduced in commit `c61f8aa7b06eb21b14f53e49f9f4af38b01fc4c3` without an upstream source URL, author attribution, copyright notice, or license declaration. Neither the repository history nor the file contents establish who authored or compiled this list or under what license it may be redistributed. It must not be described as public domain or assumed compatible with `GPL-3.0-or-later`.
+- **Recommended Replacement (Not Yet Substituted)**: Before submitting ClipMax to F-Droid, replace `en_words.txt` with a wordlist that carries clear, FSDG- and `GPL-3.0-or-later`-compatible redistribution rights and explicit upstream attribution—for example:
+  - **SCOWL (Spell Checker Oriented Word Lists)** by Kevin Atkinson (`http://wordlist.aspell.net/`), distributed under a permissive MIT/BSD-style license with an explicit `Copyright` notice and attribution requirements, or
+  - **Hunspell / LibreOffice `en_US` dictionary** (`GPL` / `LGPL` / `MPL` tri-licensed).
 
 ### Typography
 - **Configuration**: The web stylesheet (`src/index.css`) and native IME (`ClipMaxImeService.kt`) use only local system font stacks (`system-ui`, `ui-monospace`, `Typeface.SANS_SERIF`, `Typeface.MONOSPACE`). No remote fonts (such as Google Fonts) or external font binaries are included or requested.

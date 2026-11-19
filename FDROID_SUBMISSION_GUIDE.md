@@ -6,19 +6,20 @@ Here is the step-by-step path to get ClipMax listed on the official F-Droid cata
 
 ---
 
-## Step 1: Review and Merge `release/fdroid-v0.5.1`
+## Step 1: Resolve Pre-Submission Blockers & Merge `release/fdroid-v0.5.1`
 
 The F-Droid release preparation branch is `release/fdroid-v0.5.1`.
 
-Once verified by the project owner:
-1. Review the changes on GitHub against `main`.
-2. Merge the release branch into `main` with owner approval.
+Before tagging or submitting to F-Droid:
+1. Resolve the `en_words.txt` wordlist provenance/replacement documented in `THIRD_PARTY_LICENSES.md` (`UNRESOLVED`).
+2. Review all changes on GitHub against `main` and merge the release branch into `main` with owner approval.
+3. Update `com.clipmax.app.yml` (`commit:`) from the draft pre-tag commit SHA to the final tagged release commit SHA.
 
 ---
 
 ## Step 2: Tag the `v0.5.1` Release on GitHub
 
-F-Droid requires a git tag matching the `versionName` (`0.5.1` / `versionCode 12`):
+F-Droid's `UpdateCheckMode: Tags` / `AutoUpdateMode: Version` workflow requires a git tag matching the `versionName` (`v0.5.1` / `versionCode 12`) once the release is finalized (do not tag prematurely before blockers are resolved):
 1. Open the repository releases page:
    👉 **https://github.com/ahmad-maxai/ClipMax-complete/releases/new**
 2. In **Choose a tag**, enter `v0.5.1` and select **Create new tag: v0.5.1 on main**.

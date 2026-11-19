@@ -35,11 +35,14 @@ Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
 Builds:
   - versionName: '0.5.1'
     versionCode: 12
-    commit: 'v0.5.1' # Intended release tag when published
+    commit: 20c02d1dddd7ca7753094da3603a1c6551d8421b
     subdir: android
     gradle:
       - yes
 
+# AutoUpdateMode/UpdateCheckMode assume the owner publishes annotated release tags
+# (e.g., v0.5.1) after merging release changes. No v0.5.1 tag exists yet in this
+# pre-submission draft; upstream submission must update commit to the final tagged release.
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
 CurrentVersion: '0.5.1'
