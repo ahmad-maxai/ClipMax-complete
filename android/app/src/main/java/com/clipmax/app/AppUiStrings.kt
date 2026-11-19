@@ -147,7 +147,7 @@ internal object AppUiStrings {
     }
 
     fun actionLockExpiry(locale: String?, locked: Boolean): String = if (isArabic(locale)) {
-        if (locked) "إلغاء قفل الصلاحية" else "قفل الصلاحية"
+        if (locked) "إلغاء قفل الانتهاء" else "قفل الانتهاء"
     } else {
         if (locked) "Unlock expiry" else "Lock expiry"
     }

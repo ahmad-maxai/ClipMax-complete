@@ -211,9 +211,17 @@ class MainActivity : Activity() {
         }
 
         handleEditIntent(intent)
+        updateTranslatorButtonVisibility()
 
         // Load production web assets via secure WebViewAssetLoader domain
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
+    }
+
+    private fun updateTranslatorButtonVisibility() {
+        val btn = translatorButton ?: return
+        val onboardingState = runCatching { OnboardingStore.getReconciledState(this) }.getOrNull()
+        val isOnboardingActive = onboardingState != null && !onboardingState.completed
+        btn.visibility = if (isOnboardingActive) View.GONE else View.VISIBLE
     }
 
     private fun dp(value: Float): Float =
@@ -509,6 +517,7 @@ class MainActivity : Activity() {
         super.onResume()
         applySystemBarTheme()
         applySavedTranslatorButtonPosition()
+        updateTranslatorButtonVisibility()
         if (isPageLoaded) {
             // Inform the React UI that native state may have been updated (e.g. by IME service)
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('clipmax:refresh'))", null)
@@ -520,6 +529,7 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            updateTranslatorButtonVisibility()
             dispatchImeOnboardingState()
             scheduleOnboardingRecheckIfNeeded()
             ClipboardCaptureCoordinator.captureCurrentClipboard(
@@ -543,6 +553,7 @@ class MainActivity : Activity() {
 
     private fun dispatchImeOnboardingState() {
         if (activityDestroyed || !isPageLoaded || !::webView.isInitialized) return
+        updateTranslatorButtonVisibility()
         val json = runCatching {
             OnboardingStore.toJson(OnboardingStore.getReconciledState(this))
         }.getOrNull() ?: return

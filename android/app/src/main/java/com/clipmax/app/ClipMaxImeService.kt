@@ -265,7 +265,7 @@ class ClipMaxImeService : InputMethodService() {
         )
 
     private val isUiRtl: Boolean
-        get() = AppUiStrings.isRtl(appUiLocale)
+        get() = AppUiStrings.isRtl(keyboardLanguage)
 
     private val uiLayoutDirection: Int
         get() = if (isUiRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
@@ -281,7 +281,7 @@ class ClipMaxImeService : InputMethodService() {
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private fun computeThemeStateKey(): String =
-        "${appTheme}:${appUiLocale}:${isNightMode}:${isClassicTheme}:${keyboardLanguage}"
+        "${appTheme}:${keyboardLanguage}:${isNightMode}:${isClassicTheme}:${keyboardLanguage}"
 
     private val currentThemePalette: KeyboardLayoutSpec.ImeThemePalette
         get() {
@@ -837,7 +837,7 @@ class ClipMaxImeService : InputMethodService() {
         // 1. Start-side Clipboard icon button (switches back from Suggestions to Clipboard Pills, or opens Clipboard Panel)
         val clipIconBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(colorChipBg, dp(17f), colorChipBorder)
-            contentDescription = AppUiStrings.clipboardHistoryA11y(appUiLocale)
+            contentDescription = AppUiStrings.clipboardHistoryA11y(keyboardLanguage)
             val iv = createIconView(IconDrawable(IconType.CLIPBOARD, colorKeyText, 14f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
@@ -914,7 +914,7 @@ class ClipMaxImeService : InputMethodService() {
         val tbPalette = SecondaryToolbarSpec.resolvePalette(isNightMode, isClassicTheme)
         val rightArrowBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(tbPalette.backCircleBg, dp(17f), 0, tbPalette.rippleColor)
-            contentDescription = AppUiStrings.moreActionsA11y(appUiLocale)
+            contentDescription = AppUiStrings.moreActionsA11y(keyboardLanguage)
             val chevron = if (isUiRtl) IconType.CHEVRON_LEFT else IconType.CHEVRON_RIGHT
             val iv = createIconView(IconDrawable(chevron, tbPalette.backIconFg, 14.5f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -951,7 +951,7 @@ class ClipMaxImeService : InputMethodService() {
         // 1. Circular Back Button (Start edge, mirrors direction in RTL)
         val backBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(tbPalette.backCircleBg, endRadius, 0, tbPalette.rippleColor)
-            contentDescription = AppUiStrings.backToSnippetsA11y(appUiLocale)
+            contentDescription = AppUiStrings.backToSnippetsA11y(keyboardLanguage)
             val backChevron = if (isUiRtl) IconType.CHEVRON_RIGHT else IconType.CHEVRON_LEFT
             val iv = createIconView(
                 IconDrawable(
@@ -1053,7 +1053,7 @@ class ClipMaxImeService : InputMethodService() {
         // 2. Pinned (icon-only, no persistent rectangular card)
         val pinBtn = makeStateBIconAction(
             IconType.PIN,
-            AppUiStrings.pinnedA11y(appUiLocale)
+            AppUiStrings.pinnedA11y(keyboardLanguage)
         ) {
             dismissPasteUndoCapsule()
             if (isClipboardPanelOpen && pinnedOnly) {
@@ -1079,11 +1079,11 @@ class ClipMaxImeService : InputMethodService() {
         // 3. Search Clips (icon-only, no persistent rectangular card)
         val searchBtn = makeStateBIconAction(
             IconType.SEARCH,
-            AppUiStrings.searchClipsA11y(appUiLocale)
+            AppUiStrings.searchClipsA11y(keyboardLanguage)
         ) {
             dismissPasteUndoCapsule()
             if (isPasswordTarget) {
-                setStatus(AppUiStrings.passwordSearchDisabledDot(appUiLocale))
+                setStatus(AppUiStrings.passwordSearchDisabledDot(keyboardLanguage))
                 return@makeStateBIconAction
             }
             if (isFilterMode) {
@@ -1110,7 +1110,7 @@ class ClipMaxImeService : InputMethodService() {
         // 4. Settings (icon-only, no persistent rectangular card)
         val settingsBtn = makeStateBIconAction(
             IconType.SETTINGS,
-            AppUiStrings.settingsA11y(appUiLocale)
+            AppUiStrings.settingsA11y(keyboardLanguage)
         ) {
             dismissPasteUndoCapsule()
             isSettingsOpen = !isSettingsOpen
@@ -1129,7 +1129,7 @@ class ClipMaxImeService : InputMethodService() {
         // 5. Circular Globe/Language button (end edge)
         val imeSwitchBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(tbPalette.globeCircleBg, endRadius, tbPalette.globeCircleBorder, tbPalette.rippleColor)
-            contentDescription = AppUiStrings.switchKeyboardA11y(appUiLocale)
+            contentDescription = AppUiStrings.switchKeyboardA11y(keyboardLanguage)
             val iv = createIconView(
                 IconDrawable(
                     IconType.IME_SWITCH,
@@ -1206,7 +1206,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(iv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             val tv = TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.undoLabel(appUiLocale)
+                text = AppUiStrings.undoLabel(keyboardLanguage)
                 textSize = PasteUndoCapsuleSpec.TEXT_SIZE_SP
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
@@ -1257,8 +1257,8 @@ class ClipMaxImeService : InputMethodService() {
             0xFF202124.toInt()
         }
         pasteUndoCapsuleIcon?.setImageDrawable(IconDrawable(iconType, capsuleFg, PasteUndoCapsuleSpec.ICON_SIZE_DP))
-        pasteUndoCapsuleText?.text = AppUiStrings.pasteCapsuleLabel(appUiLocale, config.action)
-        btn?.contentDescription = AppUiStrings.pasteCapsuleA11y(appUiLocale, config.action)
+        pasteUndoCapsuleText?.text = AppUiStrings.pasteCapsuleLabel(keyboardLanguage, config.action)
+        btn?.contentDescription = AppUiStrings.pasteCapsuleA11y(keyboardLanguage, config.action)
     }
 
     private fun dismissPasteUndoCapsule() {
@@ -1292,7 +1292,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(icon)
 
             val title = TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.settingsHeaderTitle(appUiLocale)
+                text = AppUiStrings.settingsHeaderTitle(keyboardLanguage)
                 textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(pillPalette.sectionTitleFg)
@@ -1301,7 +1301,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
             val closeBtn = TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.closeButton(appUiLocale)
+                text = AppUiStrings.closeButton(keyboardLanguage)
                 textSize = 10.5f
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
@@ -1458,16 +1458,16 @@ class ClipMaxImeService : InputMethodService() {
 
         // 0. App Language (strictly independent of Keyboard Language)
         addSegmentedSettingCard(
-            title = AppUiStrings.appLanguageSettingTitle(appUiLocale),
-            options = AppUiStrings.appUiLanguageOptions(appUiLocale),
-            initialSelected = appUiLocale
+            title = AppUiStrings.appLanguageSettingTitle(keyboardLanguage),
+            options = AppUiStrings.appUiLanguageOptions(keyboardLanguage),
+            initialSelected = keyboardLanguage
         ) { nextLocale ->
             setAppUiLocale(nextLocale)
         }
 
         // 1. Keyboard Language (English | العربية)
         addSegmentedSettingCard(
-            title = AppUiStrings.keyboardLanguageSettingTitle(appUiLocale),
+            title = AppUiStrings.keyboardLanguageSettingTitle(keyboardLanguage),
             options = SettingsPanelSpec.LANGUAGE_OPTIONS,
             initialSelected = keyboardLanguage
         ) { nextLanguage ->
@@ -1476,8 +1476,8 @@ class ClipMaxImeService : InputMethodService() {
 
         // 2. Theme (Graphite vs Classic)
         addSegmentedSettingCard(
-            title = AppUiStrings.themeSettingTitle(appUiLocale),
-            options = AppUiStrings.themeOptions(appUiLocale),
+            title = AppUiStrings.themeSettingTitle(keyboardLanguage),
+            options = AppUiStrings.themeOptions(keyboardLanguage),
             initialSelected = appTheme
         ) { nextTheme ->
             if (appTheme != nextTheme) {
@@ -1489,8 +1489,8 @@ class ClipMaxImeService : InputMethodService() {
         // 3. Keyboard Height (Compact | Normal | Tall)
         val currentHeight = themePreferences.getString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, "normal") ?: "normal"
         addSegmentedSettingCard(
-            title = AppUiStrings.keyboardHeightSettingTitle(appUiLocale),
-            options = AppUiStrings.heightOptions(appUiLocale),
+            title = AppUiStrings.keyboardHeightSettingTitle(keyboardLanguage),
+            options = AppUiStrings.heightOptions(keyboardLanguage),
             initialSelected = currentHeight
         ) { nextHeight ->
             themePreferences.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, nextHeight).apply()
@@ -1500,8 +1500,8 @@ class ClipMaxImeService : InputMethodService() {
         // 4. One-Handed Mode (Left | Off | Right)
         val currentOneHanded = themePreferences.getString(SettingsPanelSpec.PREF_ONE_HANDED, "off") ?: "off"
         addSegmentedSettingCard(
-            title = AppUiStrings.oneHandedSettingTitle(appUiLocale),
-            options = AppUiStrings.oneHandedOptions(appUiLocale),
+            title = AppUiStrings.oneHandedSettingTitle(keyboardLanguage),
+            options = AppUiStrings.oneHandedOptions(keyboardLanguage),
             initialSelected = currentOneHanded
         ) { nextMode ->
             themePreferences.edit().putString(SettingsPanelSpec.PREF_ONE_HANDED, nextMode).apply()
@@ -1511,7 +1511,7 @@ class ClipMaxImeService : InputMethodService() {
         // 5. Typing Assistance Card (Autocomplete, Automatic Correction, Suggestions — two equal [On] [Off] pills each)
         val typingCard = makeSettingCard()
         val typingHeader = TextView(this@ClipMaxImeService).apply {
-            text = AppUiStrings.typingAssistanceTitle(appUiLocale)
+            text = AppUiStrings.typingAssistanceTitle(keyboardLanguage)
             textSize = 11.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(pillPalette.sectionTitleFg)
@@ -1524,9 +1524,9 @@ class ClipMaxImeService : InputMethodService() {
             bottomMargin = dp(6)
         })
 
-        val localizedOnOff = AppUiStrings.binaryOnOffOptions(appUiLocale)
+        val localizedOnOff = AppUiStrings.binaryOnOffOptions(keyboardLanguage)
         SettingsPanelSpec.TYPING_SETTINGS.forEachIndexed { settingIdx, def ->
-            val localizedSettingTitle = AppUiStrings.typingSettingTitle(appUiLocale, def.prefKey, def.title)
+            val localizedSettingTitle = AppUiStrings.typingSettingTitle(keyboardLanguage, def.prefKey, def.title)
             val subLbl = TextView(this@ClipMaxImeService).apply {
                 text = localizedSettingTitle
                 textSize = 11f
@@ -1582,7 +1582,7 @@ class ClipMaxImeService : InputMethodService() {
         list.addView(typingCard)
 
         // 6. Full-width Action Pill: Share ClipMax
-        val shareLabel = AppUiStrings.shareClipMaxLabel(appUiLocale)
+        val shareLabel = AppUiStrings.shareClipMaxLabel(keyboardLanguage)
         val sharePill = TextView(this@ClipMaxImeService).apply {
             text = shareLabel
             textSize = 12f
@@ -1603,13 +1603,13 @@ class ClipMaxImeService : InputMethodService() {
             setOnClickListener {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, AppUiStrings.sharePromoMessage(appUiLocale))
+                    putExtra(Intent.EXTRA_TEXT, AppUiStrings.sharePromoMessage(keyboardLanguage))
                 }
                 val chooser = Intent.createChooser(shareIntent, shareLabel).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 runCatching { startActivity(chooser) }
-                setStatus(AppUiStrings.shareDialogOpenedStatus(appUiLocale))
+                setStatus(AppUiStrings.shareDialogOpenedStatus(keyboardLanguage))
             }
         }
         list.addView(sharePill, LinearLayout.LayoutParams(
@@ -1660,7 +1660,7 @@ class ClipMaxImeService : InputMethodService() {
         searchPillView = pill
 
         val searchTv = TextView(this@ClipMaxImeService).apply {
-            text = if (keyboardSearchQuery.isEmpty()) AppUiStrings.searchPlaceholder(appUiLocale) else keyboardSearchQuery
+            text = if (keyboardSearchQuery.isEmpty()) AppUiStrings.searchPlaceholder(keyboardLanguage) else keyboardSearchQuery
             textSize = 11.5f
             setTextColor(if (keyboardSearchQuery.isEmpty()) colorHintText else colorKeyText)
             setSingleLine(true)
@@ -1674,7 +1674,7 @@ class ClipMaxImeService : InputMethodService() {
 
         val clearBtn = FrameLayout(this@ClipMaxImeService).apply {
             visibility = if (keyboardSearchQuery.isEmpty()) View.GONE else View.VISIBLE
-            contentDescription = AppUiStrings.clearSearchQueryA11y(appUiLocale)
+            contentDescription = AppUiStrings.clearSearchQueryA11y(keyboardLanguage)
             background = roundedRipple(colorModBg, dp(10f), 0)
             val iv = createIconView(IconDrawable(IconType.CLOSE, colorModText, 10f))
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -1690,7 +1690,7 @@ class ClipMaxImeService : InputMethodService() {
         barRow.addView(pill)
 
         val closeSearchBtn = Button(this@ClipMaxImeService).apply {
-            text = AppUiStrings.doneButton(appUiLocale)
+            text = AppUiStrings.doneButton(keyboardLanguage)
             isAllCaps = false
             textSize = 10.5f
             typeface = Typeface.DEFAULT_BOLD
@@ -1737,7 +1737,7 @@ class ClipMaxImeService : InputMethodService() {
 
         if (isPasswordTarget) {
             container.addView(TextView(this).apply {
-                text = AppUiStrings.passwordSearchDisabledShort(appUiLocale)
+                text = AppUiStrings.passwordSearchDisabledShort(keyboardLanguage)
                 textSize = 10.5f
                 setTextColor(colorHintText)
                 setPadding(dp(6), dp(2), dp(6), dp(2))
@@ -1749,9 +1749,9 @@ class ClipMaxImeService : InputMethodService() {
         if (matches.isEmpty()) {
             container.addView(TextView(this).apply {
                 text = if (keyboardSearchQuery.isNotEmpty()) {
-                    AppUiStrings.noMatchingClips(appUiLocale, keyboardSearchQuery)
+                    AppUiStrings.noMatchingClips(keyboardLanguage, keyboardSearchQuery)
                 } else {
-                    AppUiStrings.noSavedClipsToSearch(appUiLocale)
+                    AppUiStrings.noSavedClipsToSearch(keyboardLanguage)
                 }
                 textSize = 11f
                 setTextColor(colorHintText)
@@ -1809,9 +1809,9 @@ class ClipMaxImeService : InputMethodService() {
         val modeBg = if (isFilterMode) colorActiveTabBg else colorKeyBg
         val modeStroke = if (isFilterMode) colorAccent else colorKeyBorder
         btn.text = if (isFilterMode) {
-            AppUiStrings.searchModeFilterLabel(appUiLocale)
+            AppUiStrings.searchModeFilterLabel(keyboardLanguage)
         } else {
-            AppUiStrings.searchModeHostLabel(appUiLocale)
+            AppUiStrings.searchModeHostLabel(keyboardLanguage)
         }
         btn.setTextColor(modeFg)
         btn.background = roundedRipple(modeBg, dp(6f), modeStroke)
@@ -1834,9 +1834,9 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun clipboardHeaderLabel(@Suppress("UNUSED_PARAMETER") visibleCount: Int): String = when {
-        keyboardSearchQuery.isNotEmpty() -> AppUiStrings.matchesTitle(appUiLocale)
-        pinnedOnly -> AppUiStrings.pinnedClipsTitle(appUiLocale)
-        else -> AppUiStrings.clipboardTitle(appUiLocale)
+        keyboardSearchQuery.isNotEmpty() -> AppUiStrings.matchesTitle(keyboardLanguage)
+        pinnedOnly -> AppUiStrings.pinnedClipsTitle(keyboardLanguage)
+        else -> AppUiStrings.clipboardTitle(keyboardLanguage)
     }
 
     private fun updateClipboardCaptureToggleUI() {
@@ -1850,7 +1850,7 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             roundedRipple(colorModBg, dp(12f), colorKeyBorder)
         }
-        toggle.contentDescription = AppUiStrings.captureToggleA11y(appUiLocale, enabled)
+        toggle.contentDescription = AppUiStrings.captureToggleA11y(keyboardLanguage, enabled)
 
         val thumbLp = (thumb.layoutParams as? FrameLayout.LayoutParams)
             ?: FrameLayout.LayoutParams(dp(18), dp(18))
@@ -1872,13 +1872,13 @@ class ClipMaxImeService : InputMethodService() {
         val labelLp = (label.layoutParams as? FrameLayout.LayoutParams)
             ?: FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         if (enabled) {
-            label.text = AppUiStrings.captureToggleOn(appUiLocale)
+            label.text = AppUiStrings.captureToggleOn(keyboardLanguage)
             label.setTextColor(colorAccentText)
             labelLp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
             labelLp.leftMargin = dp(8)
             labelLp.rightMargin = 0
         } else {
-            label.text = AppUiStrings.captureToggleOff(appUiLocale)
+            label.text = AppUiStrings.captureToggleOff(keyboardLanguage)
             label.setTextColor(colorHintText)
             labelLp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
             labelLp.rightMargin = dp(7)
@@ -1891,7 +1891,7 @@ class ClipMaxImeService : InputMethodService() {
         cardsList.removeAllViews()
         if (isPasswordTarget) {
             cardsList.addView(TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.passwordClipsWithheldActive(appUiLocale)
+                text = AppUiStrings.passwordClipsWithheldActive(keyboardLanguage)
                 textSize = 11f
                 setTextColor(colorHintText)
                 setPadding(dp(12), dp(20), dp(12), dp(20))
@@ -1901,9 +1901,9 @@ class ClipMaxImeService : InputMethodService() {
         } else if (visible.isEmpty()) {
             cardsList.addView(TextView(this@ClipMaxImeService).apply {
                 text = when {
-                    keyboardSearchQuery.isNotEmpty() -> AppUiStrings.noMatchingClips(appUiLocale, keyboardSearchQuery)
-                    pinnedOnly -> AppUiStrings.noPinnedClipsEmpty(appUiLocale)
-                    else -> AppUiStrings.noSavedClipsEmpty(appUiLocale)
+                    keyboardSearchQuery.isNotEmpty() -> AppUiStrings.noMatchingClips(keyboardLanguage, keyboardSearchQuery)
+                    pinnedOnly -> AppUiStrings.noPinnedClipsEmpty(keyboardLanguage)
+                    else -> AppUiStrings.noSavedClipsEmpty(keyboardLanguage)
                 }
                 textSize = 11f
                 setTextColor(colorHintText)
@@ -2008,7 +2008,7 @@ class ClipMaxImeService : InputMethodService() {
 
             val backBtn = FrameLayout(this@ClipMaxImeService).apply {
                 background = roundedRipple(colorKeyBg, dp(16f), colorKeyBorder)
-                contentDescription = AppUiStrings.backToKeyboardA11y(appUiLocale)
+                contentDescription = AppUiStrings.backToKeyboardA11y(keyboardLanguage)
                 val backArrow = if (isUiRtl) IconType.ARROW_RIGHT else IconType.ARROW_LEFT
                 val iv = createIconView(IconDrawable(backArrow, colorKeyText, 14.5f))
                 addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -2071,7 +2071,7 @@ class ClipMaxImeService : InputMethodService() {
         addView(headerDivider)
 
         val mergeBanner = TextView(this@ClipMaxImeService).apply {
-            text = AppUiStrings.mergeModeBannerText(appUiLocale)
+            text = AppUiStrings.mergeModeBannerText(keyboardLanguage)
             textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorAccentText)
@@ -2081,7 +2081,7 @@ class ClipMaxImeService : InputMethodService() {
             visibility = if (isMergeMode) View.VISIBLE else View.GONE
             setOnClickListener {
                 exitMergeMode(refresh = true)
-                setStatus(AppUiStrings.mergeCancelledStatus(appUiLocale))
+                setStatus(AppUiStrings.mergeCancelledStatus(keyboardLanguage))
             }
         }
         clipboardMergeBanner = mergeBanner
@@ -2192,7 +2192,7 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         val undoBtn = Button(this).apply {
-            text = AppUiStrings.undoLabel(appUiLocale)
+            text = AppUiStrings.undoLabel(keyboardLanguage)
             isAllCaps = false
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
@@ -2224,7 +2224,7 @@ class ClipMaxImeService : InputMethodService() {
         container.addView(div)
 
         val redoBtn = Button(this).apply {
-            text = AppUiStrings.redoLabel(appUiLocale)
+            text = AppUiStrings.redoLabel(keyboardLanguage)
             isAllCaps = false
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
@@ -2284,11 +2284,11 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun performMerge(sourceId: String, targetId: String) {
         if (sourceId == targetId) {
-            setStatus(AppUiStrings.mergeSelfErrorStatus(appUiLocale))
+            setStatus(AppUiStrings.mergeSelfErrorStatus(keyboardLanguage))
             return
         }
         if (isSplitMergeHistoryBusy) {
-            setStatus(AppUiStrings.operationBusyStatus(appUiLocale))
+            setStatus(AppUiStrings.operationBusyStatus(keyboardLanguage))
             return
         }
         isMergeMode = false
@@ -2314,7 +2314,7 @@ class ClipMaxImeService : InputMethodService() {
                     if (!serviceDestroyed) {
                         undoStack.push(snapshot)
                         redoStack.clear()
-                        setStatus(AppUiStrings.mergedSuccessStatus(appUiLocale))
+                        setStatus(AppUiStrings.mergedSuccessStatus(keyboardLanguage))
                         reloadItems()
                         showUndoRedoControl()
                     }
@@ -2323,7 +2323,7 @@ class ClipMaxImeService : InputMethodService() {
                 main.post {
                     isSplitMergeHistoryBusy = false
                     if (!serviceDestroyed) {
-                        setStatus(AppUiStrings.mergeFailedStatus(appUiLocale, e.message))
+                        setStatus(AppUiStrings.mergeFailedStatus(keyboardLanguage, e.message))
                         if (isClipboardPanelOpen && clipboardCardsContainer != null) {
                             refreshClipboardPanelInPlace()
                         }
@@ -2335,7 +2335,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun splitItem(targetId: String) {
         if (isSplitMergeHistoryBusy) {
-            setStatus(AppUiStrings.operationBusyStatus(appUiLocale))
+            setStatus(AppUiStrings.operationBusyStatus(keyboardLanguage))
             return
         }
         isSplitMergeHistoryBusy = true
@@ -2346,7 +2346,7 @@ class ClipMaxImeService : InputMethodService() {
                     main.post {
                         isSplitMergeHistoryBusy = false
                         if (!serviceDestroyed) {
-                            setStatus(AppUiStrings.splitTooShortStatus(appUiLocale))
+                            setStatus(AppUiStrings.splitTooShortStatus(keyboardLanguage))
                         }
                     }
                     return@execute
@@ -2366,7 +2366,7 @@ class ClipMaxImeService : InputMethodService() {
                     if (!serviceDestroyed) {
                         undoStack.push(snapshot)
                         redoStack.clear()
-                        setStatus(AppUiStrings.splitSuccessStatus(appUiLocale))
+                        setStatus(AppUiStrings.splitSuccessStatus(keyboardLanguage))
                         reloadItems()
                         showUndoRedoControl()
                     }
@@ -2375,7 +2375,7 @@ class ClipMaxImeService : InputMethodService() {
                 main.post {
                     isSplitMergeHistoryBusy = false
                     if (!serviceDestroyed) {
-                        setStatus(AppUiStrings.splitFailedStatus(appUiLocale, e.message))
+                        setStatus(AppUiStrings.splitFailedStatus(keyboardLanguage, e.message))
                     }
                 }
             }
@@ -2409,7 +2409,7 @@ class ClipMaxImeService : InputMethodService() {
                             undoStack.remove(snapshot)
                         }
                         redoStack.push(snapshot)
-                        setStatus(AppUiStrings.undidOperationStatus(appUiLocale, snapshot.description))
+                        setStatus(AppUiStrings.undidOperationStatus(keyboardLanguage, snapshot.description))
                         reloadItems()
                         showUndoRedoControl()
                     }
@@ -2418,7 +2418,7 @@ class ClipMaxImeService : InputMethodService() {
                 main.post {
                     isSplitMergeHistoryBusy = false
                     if (!serviceDestroyed) {
-                        setStatus(AppUiStrings.undoFailedStatus(appUiLocale, e.message))
+                        setStatus(AppUiStrings.undoFailedStatus(keyboardLanguage, e.message))
                         updateUndoRedoControl()
                     }
                 }
@@ -2453,7 +2453,7 @@ class ClipMaxImeService : InputMethodService() {
                             redoStack.remove(snapshot)
                         }
                         undoStack.push(snapshot)
-                        setStatus(AppUiStrings.redidOperationStatus(appUiLocale, snapshot.description))
+                        setStatus(AppUiStrings.redidOperationStatus(keyboardLanguage, snapshot.description))
                         reloadItems()
                         showUndoRedoControl()
                     }
@@ -2462,7 +2462,7 @@ class ClipMaxImeService : InputMethodService() {
                 main.post {
                     isSplitMergeHistoryBusy = false
                     if (!serviceDestroyed) {
-                        setStatus(AppUiStrings.redoFailedStatus(appUiLocale, e.message))
+                        setStatus(AppUiStrings.redoFailedStatus(keyboardLanguage, e.message))
                         updateUndoRedoControl()
                     }
                 }
@@ -2564,7 +2564,7 @@ class ClipMaxImeService : InputMethodService() {
             setBackgroundColor(0x80000000.toInt())
             isClickable = true
             isFocusable = true
-            contentDescription = AppUiStrings.dismissClipOptionsA11y(appUiLocale)
+            contentDescription = AppUiStrings.dismissClipOptionsA11y(keyboardLanguage)
             layoutParams = FrameLayout.LayoutParams(surfaceW, surfaceH)
             setOnClickListener { dismissContextMenu(animate = true) }
         }
@@ -2690,7 +2690,7 @@ class ClipMaxImeService : InputMethodService() {
             val latestItem = store.getItem(targetId) ?: item
             val pinColor = if (latestItem.pinned) colorActiveTabText else colorKeyText
             addActionRow(
-                label = AppUiStrings.actionPin(appUiLocale, latestItem.pinned),
+                label = AppUiStrings.actionPin(keyboardLanguage, latestItem.pinned),
                 iconType = if (latestItem.pinned) IconType.PIN_FILLED else IconType.PIN,
                 tint = pinColor
             ) {
@@ -2708,7 +2708,7 @@ class ClipMaxImeService : InputMethodService() {
 
             val lockColor = if (latestItem.isExpiryLocked) colorAccent else colorKeyText
             addActionRow(
-                label = AppUiStrings.actionLockExpiry(appUiLocale, latestItem.isExpiryLocked),
+                label = AppUiStrings.actionLockExpiry(keyboardLanguage, latestItem.isExpiryLocked),
                 iconType = IconType.LOCK,
                 tint = lockColor
             ) {
@@ -2724,14 +2724,14 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     CaptureExpiryReceiver.schedule(this@ClipMaxImeService)
                     main.post {
-                        setStatus(AppUiStrings.expiryLockedStatus(appUiLocale, nextLocked))
+                        setStatus(AppUiStrings.expiryLockedStatus(keyboardLanguage, nextLocked))
                         reloadItems()
                     }
                 }
             }
 
             addActionRow(
-                label = AppUiStrings.actionEdit(appUiLocale),
+                label = AppUiStrings.actionEdit(keyboardLanguage),
                 iconType = IconType.EDIT,
                 tint = colorKeyText
             ) {
@@ -2747,7 +2747,7 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             addActionRow(
-                label = AppUiStrings.actionDelete(appUiLocale),
+                label = AppUiStrings.actionDelete(keyboardLanguage),
                 iconType = IconType.DELETE,
                 tint = colorDangerText
             ) {
@@ -2762,14 +2762,14 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             addActionRow(
-                label = AppUiStrings.actionMerge(appUiLocale),
+                label = AppUiStrings.actionMerge(keyboardLanguage),
                 iconType = IconType.MERGE,
                 tint = colorKeyText
             ) {
                 dismissContextMenu(animate = true)
                 isMergeMode = true
                 mergeSourceId = targetId
-                setStatus(AppUiStrings.mergeModeStatusWithTitle(appUiLocale, item.title))
+                setStatus(AppUiStrings.mergeModeStatusWithTitle(keyboardLanguage, item.title))
                 if (isClipboardPanelOpen && clipboardCardsContainer != null) {
                     refreshClipboardPanelInPlace()
                 } else {
@@ -2778,7 +2778,7 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             addActionRow(
-                label = AppUiStrings.actionSplit(appUiLocale),
+                label = AppUiStrings.actionSplit(keyboardLanguage),
                 iconType = IconType.SPLIT,
                 tint = colorKeyText
             ) {
@@ -2854,7 +2854,7 @@ class ClipMaxImeService : InputMethodService() {
         if (snippet.isNotEmpty()) {
             return if (snippet.length > 32) "${snippet.take(32).trimEnd()}…" else snippet
         }
-        return AppUiStrings.genericSavedClipTitle(appUiLocale)
+        return AppUiStrings.genericSavedClipTitle(keyboardLanguage)
     }
 
     private fun buildCompactCard(
@@ -2866,8 +2866,8 @@ class ClipMaxImeService : InputMethodService() {
         val previewContent = ClipboardPanelSpec.resolveCardContentPreview(
             rawContent = rawContent,
             maxChars = 220,
-            blankSpacesLabel = AppUiStrings.blankSpacesFallback(appUiLocale),
-            emptyClipLabel = AppUiStrings.emptyClipFallback(appUiLocale)
+            blankSpacesLabel = AppUiStrings.blankSpacesFallback(keyboardLanguage),
+            emptyClipLabel = AppUiStrings.emptyClipFallback(keyboardLanguage)
         )
         val serialLabel = "#$serialNumber"
         val radiusPx = dp(ClipboardPanelSpec.CARD_CORNER_RADIUS_DP)
@@ -2881,7 +2881,7 @@ class ClipMaxImeService : InputMethodService() {
         layoutDirection = uiLayoutDirection
         isFocusable = true
         minimumHeight = minCardHeightPx
-        contentDescription = AppUiStrings.clipCardA11y(appUiLocale, serialLabel, previewContent)
+        contentDescription = AppUiStrings.clipCardA11y(keyboardLanguage, serialLabel, previewContent)
         setPadding(
             dp(ClipboardPanelSpec.CARD_PADDING_HORIZONTAL_DP).toInt(),
             dp(ClipboardPanelSpec.CARD_PADDING_VERTICAL_DP).toInt(),
@@ -2918,7 +2918,7 @@ class ClipMaxImeService : InputMethodService() {
         headerRow.addView(serialTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (item.isExpiryLocked) {
             val lockIcon = createIconView(IconDrawable(IconType.LOCK, colorAccent, 10.5f)).apply {
-                contentDescription = AppUiStrings.protectedFromExpiryA11y(appUiLocale)
+                contentDescription = AppUiStrings.protectedFromExpiryA11y(keyboardLanguage)
             }
             headerRow.addView(lockIcon, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
@@ -3014,7 +3014,7 @@ class ClipMaxImeService : InputMethodService() {
                     val src = mergeSourceId
                     if (src == null || src == item.id) {
                         exitMergeMode()
-                        setStatus(AppUiStrings.mergeCancelledStatus(appUiLocale))
+                        setStatus(AppUiStrings.mergeCancelledStatus(keyboardLanguage))
                     } else {
                         performMerge(src, item.id)
                     }
@@ -3059,7 +3059,7 @@ class ClipMaxImeService : InputMethodService() {
 
         if (isPasswordTarget) {
             container.addView(TextView(this).apply {
-                text = AppUiStrings.passwordClipsWithheldShort(appUiLocale)
+                text = AppUiStrings.passwordClipsWithheldShort(keyboardLanguage)
                 textSize = 10.5f
                 setTextColor(colorHintText)
                 setPadding(dp(8), dp(2), dp(8), dp(2))
@@ -3074,9 +3074,9 @@ class ClipMaxImeService : InputMethodService() {
         if (visible.isEmpty()) {
             container.addView(TextView(this).apply {
                 text = when {
-                    keyboardSearchQuery.isNotEmpty() -> AppUiStrings.noMatchingClips(appUiLocale, keyboardSearchQuery)
-                    pinnedOnly -> AppUiStrings.noPinnedClipsCompact(appUiLocale)
-                    else -> AppUiStrings.noSavedClipsCompact(appUiLocale)
+                    keyboardSearchQuery.isNotEmpty() -> AppUiStrings.noMatchingClips(keyboardLanguage, keyboardSearchQuery)
+                    pinnedOnly -> AppUiStrings.noPinnedClipsCompact(keyboardLanguage)
+                    else -> AppUiStrings.noSavedClipsCompact(keyboardLanguage)
                 }
                 textSize = 10.5f
                 setTextColor(colorHintText)
@@ -3111,7 +3111,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         if (item.isExpiryLocked) {
             val lockIcon = createIconView(IconDrawable(IconType.LOCK, colorHintText, 10f)).apply {
-                contentDescription = AppUiStrings.protectedFromExpiryA11y(appUiLocale)
+                contentDescription = AppUiStrings.protectedFromExpiryA11y(keyboardLanguage)
                 setPaddingRelative(0, 0, dp(4), 0)
             }
             addView(lockIcon)
@@ -3123,8 +3123,8 @@ class ClipMaxImeService : InputMethodService() {
             rawSnippet = rawSnippet,
             isPasswordTarget = isPasswordTarget,
             maxChars = 72,
-            blankSpacesLabel = AppUiStrings.blankSpacesFallback(appUiLocale),
-            emptyClipLabel = AppUiStrings.emptyClipFallback(appUiLocale)
+            blankSpacesLabel = AppUiStrings.blankSpacesFallback(keyboardLanguage),
+            emptyClipLabel = AppUiStrings.emptyClipFallback(keyboardLanguage)
         )
 
         val screenW = resources.displayMetrics.widthPixels
@@ -3194,7 +3194,7 @@ class ClipMaxImeService : InputMethodService() {
         addView(lbl, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val cancel = Button(this@ClipMaxImeService).apply {
-            text = AppUiStrings.cancelLabel(appUiLocale)
+            text = AppUiStrings.cancelLabel(keyboardLanguage)
             isAllCaps = false
             textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
@@ -3267,7 +3267,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun setAppUiLocale(locale: String) {
         val normalized = SettingsPanelSpec.normalizeAppUiLocale(locale)
-        if (appUiLocale == normalized) return
+        if (keyboardLanguage == normalized) return
         themePreferences.edit().putString(SettingsPanelSpec.PREF_APP_UI_LOCALE, normalized).apply()
         onAppUiLocalePreferenceChanged()
     }
@@ -3281,7 +3281,7 @@ class ClipMaxImeService : InputMethodService() {
             renderFullImeView()
         }
         if (isPasswordTarget) {
-            setStatus(AppUiStrings.passwordClipsWithheldDot(appUiLocale))
+            setStatus(AppUiStrings.passwordClipsWithheldDot(keyboardLanguage))
         } else {
             updateCaptureStatus()
         }
@@ -3613,7 +3613,7 @@ class ClipMaxImeService : InputMethodService() {
     // 4D. EXACT GBOARD-STYLE NUMERIC KEYPAD (Reached via SYMBOLS -> "12 34")
     private fun createNumpadToggleKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
-        contentDescription = AppUiStrings.switchToNumpadA11y(appUiLocale)
+        contentDescription = AppUiStrings.switchToNumpadA11y(keyboardLanguage)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = KeyboardLayoutSpec.NumpadLayoutSpec.TOGGLE_KEY_LABEL
@@ -3636,7 +3636,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun createNumpadSpaceKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
-        contentDescription = AppUiStrings.spaceKeyA11y(appUiLocale)
+        contentDescription = AppUiStrings.spaceKeyA11y(keyboardLanguage)
 
         val iv = createIconView(IconDrawable(IconType.SPACE, colorModText, 18f))
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -3867,9 +3867,9 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun labelForEmojiTab(tabIdx: Int): String {
-        if (tabIdx == 0) return AppUiStrings.emojiRecentLabel(appUiLocale)
+        if (tabIdx == 0) return AppUiStrings.emojiRecentLabel(keyboardLanguage)
         val cat = EmojiCatalog.CATEGORIES[(tabIdx - 1).coerceIn(0, EmojiCatalog.CATEGORIES.lastIndex)]
-        return AppUiStrings.emojiCategoryLabel(appUiLocale, cat)
+        return AppUiStrings.emojiCategoryLabel(keyboardLanguage, cat)
     }
 
     private fun resolveActiveEmojiTabIndex(): Int {
@@ -3930,7 +3930,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(previewTv)
 
             val removeBtn = TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.removeFromRecents(appUiLocale)
+                text = AppUiStrings.removeFromRecents(keyboardLanguage)
                 textSize = 13.5f
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setTextColor(colorDangerText)
@@ -3951,7 +3951,7 @@ class ClipMaxImeService : InputMethodService() {
             addView(removeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             val cancelBtn = TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.cancelLabel(appUiLocale)
+                text = AppUiStrings.cancelLabel(keyboardLanguage)
                 textSize = 12.5f
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 setTextColor(colorModText)
@@ -4021,7 +4021,7 @@ class ClipMaxImeService : InputMethodService() {
             setPadding(dp(12), 0, dp(12), 0)
             setTextColor(colorKeyText)
             background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
-            contentDescription = AppUiStrings.returnToKeyboardA11y(appUiLocale)
+            contentDescription = AppUiStrings.returnToKeyboardA11y(keyboardLanguage)
             setOnClickListener {
                 dismissPasteUndoCapsule()
                 dismissEmojiRemoveOverlay()
@@ -4087,7 +4087,7 @@ class ClipMaxImeService : InputMethodService() {
 
         val backspaceBtn = FrameLayout(this@ClipMaxImeService).apply {
             background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
-            contentDescription = AppUiStrings.deleteKeyA11y(appUiLocale)
+            contentDescription = AppUiStrings.deleteKeyA11y(keyboardLanguage)
             isClickable = true
             isFocusable = true
             val iv = createIconView(IconDrawable(IconType.BACKSPACE, colorKeyText, EmojiInterfaceSpec.BACKSPACE_ICON_SIZE_DP))
@@ -4192,9 +4192,9 @@ class ClipMaxImeService : InputMethodService() {
         sectionContainer.removeAllViews()
         sectionContainer.layoutDirection = uiLayoutDirection
         val sectionTitle = if (sectionIdx == 0) {
-            AppUiStrings.emojiRecentLabel(appUiLocale)
+            AppUiStrings.emojiRecentLabel(keyboardLanguage)
         } else {
-            AppUiStrings.emojiCategoryLabel(appUiLocale, EmojiCatalog.CATEGORIES[sectionIdx - 1])
+            AppUiStrings.emojiCategoryLabel(keyboardLanguage, EmojiCatalog.CATEGORIES[sectionIdx - 1])
         }
         val emojis = if (sectionIdx == 0) {
             recentEmojiHistory.items()
@@ -4216,7 +4216,7 @@ class ClipMaxImeService : InputMethodService() {
 
         if (sectionIdx == 0 && emojis.isEmpty()) {
             val emptyTv = TextView(this).apply {
-                text = AppUiStrings.emojiEmptyRecents(appUiLocale)
+                text = AppUiStrings.emojiEmptyRecents(keyboardLanguage)
                 textSize = 12f
                 setTextColor(colorHintText)
                 gravity = Gravity.CENTER
@@ -4526,7 +4526,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun createCommaEmojiKey(commaChar: String = ","): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
-        contentDescription = AppUiStrings.commaEmojiA11y(appUiLocale)
+        contentDescription = AppUiStrings.commaEmojiA11y(keyboardLanguage)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = commaChar
@@ -4654,7 +4654,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun createArabicPeriodKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
-        contentDescription = AppUiStrings.arabicPeriodA11y(appUiLocale)
+        contentDescription = AppUiStrings.arabicPeriodA11y(keyboardLanguage)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = "."
@@ -5009,7 +5009,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun createGlobeKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
-        contentDescription = AppUiStrings.switchInputMethodA11y(appUiLocale)
+        contentDescription = AppUiStrings.switchInputMethodA11y(keyboardLanguage)
 
         val iv = createIconView(IconDrawable(IconType.IME_SWITCH, colorModText, 16f))
         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
@@ -5049,7 +5049,7 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         val headerTv = TextView(this).apply {
-            text = AppUiStrings.keyboardLanguageSettingTitle(appUiLocale)
+            text = AppUiStrings.keyboardLanguageSettingTitle(keyboardLanguage)
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(colorHintText)
@@ -5149,7 +5149,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun createSpaceKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
         val uiSpec = KeyboardLayoutSpec.languageUiSpec(keyboardLanguage)
-        contentDescription = AppUiStrings.spaceKeyFullA11y(appUiLocale, uiSpec.spacebarLabel)
+        contentDescription = AppUiStrings.spaceKeyFullA11y(keyboardLanguage, uiSpec.spacebarLabel)
 
         val tv = TextView(this@ClipMaxImeService).apply {
             text = uiSpec.spacebarLabel
@@ -5223,7 +5223,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun contentDescriptionForAction(kind: InputFieldPolicy.ActionKeyKind): String =
-        AppUiStrings.actionKeyA11y(appUiLocale, kind)
+        AppUiStrings.actionKeyA11y(keyboardLanguage, kind)
 
     private fun updateEnterKeyUI() {
         val btn = enterKeyView ?: return
@@ -5417,7 +5417,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun updateSearchUI() {
-        searchInputText?.text = if (keyboardSearchQuery.isEmpty()) AppUiStrings.searchPlaceholder(appUiLocale) else keyboardSearchQuery
+        searchInputText?.text = if (keyboardSearchQuery.isEmpty()) AppUiStrings.searchPlaceholder(keyboardLanguage) else keyboardSearchQuery
         searchInputText?.setTextColor(if (keyboardSearchQuery.isEmpty()) colorHintText else colorKeyText)
         searchClearBtn?.visibility = if (keyboardSearchQuery.isEmpty()) View.GONE else View.VISIBLE
     }
@@ -5527,19 +5527,19 @@ class ClipMaxImeService : InputMethodService() {
     private data class InsertionSource(val reader: Reader, val characterCount: Int)
 
     private fun insertItem(item: ClipItem) {
-        beginInsertion(item.title, AppUiStrings.insertingClipStatus(appUiLocale, item.title)) {
+        beginInsertion(item.title, AppUiStrings.insertingClipStatus(keyboardLanguage, item.title)) {
             InsertionSource(store.openTextReader(item.id), item.characterCount)
         }
     }
 
     private fun beginInsertion(title: String, initialStatus: String, openSource: () -> InsertionSource) {
         if (isPasswordTarget) {
-            setStatus(AppUiStrings.passwordClipsUnavailable(appUiLocale))
+            setStatus(AppUiStrings.passwordClipsUnavailable(keyboardLanguage))
             return
         }
         val connection = currentInputConnection
         if (connection == null) {
-            setStatus(AppUiStrings.noActiveTextFieldStatus(appUiLocale))
+            setStatus(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
             return
         }
         if (isInserting) cancelInsertion(userInitiated = false)
@@ -5572,7 +5572,7 @@ class ClipMaxImeService : InputMethodService() {
                     null
                 }
                 main.post {
-                    if (generation == token) setStatus(AppUiStrings.insertingClipWithCountStatus(appUiLocale, title, activeItemCodePoints.grouped()))
+                    if (generation == token) setStatus(AppUiStrings.insertingClipWithCountStatus(keyboardLanguage, title, activeItemCodePoints.grouped()))
                 }
                 val complete = source.reader.use { reader ->
                     TextChunker.forEachChunk(
@@ -5636,7 +5636,7 @@ class ClipMaxImeService : InputMethodService() {
                             shiftStateMachine.onNonLetterInput()
                             syncAutoCapitalization(preserveManualShift = false)
                         }
-                        setStatus(AppUiStrings.insertionCompletedOrPausedStatus(appUiLocale, complete, insertedCodePoints.grouped()))
+                        setStatus(AppUiStrings.insertionCompletedOrPausedStatus(keyboardLanguage, complete, insertedCodePoints.grouped()))
                     }
                 }
             } catch (_: InterruptedException) {
@@ -5647,7 +5647,7 @@ class ClipMaxImeService : InputMethodService() {
                         isInserting = false
                         pasteCapsuleController.onPasteFailed()
                         updatePasteUndoCapsuleUI()
-                        setStatus(AppUiStrings.insertionEndedStatus(appUiLocale, failure.message))
+                        setStatus(AppUiStrings.insertionEndedStatus(keyboardLanguage, failure.message))
                     }
                 }
             }
@@ -5669,7 +5669,7 @@ class ClipMaxImeService : InputMethodService() {
                         insertedCodePoints += points
                         if (insertedCodePoints - lastReportedCodePoints >= 16_384 || insertedCodePoints >= activeItemCodePoints) {
                             lastReportedCodePoints = insertedCodePoints
-                            setStatus(AppUiStrings.insertedProgressStatus(appUiLocale, insertedCodePoints.grouped(), activeItemCodePoints.grouped()))
+                            setStatus(AppUiStrings.insertedProgressStatus(keyboardLanguage, insertedCodePoints.grouped(), activeItemCodePoints.grouped()))
                         }
                     }
                 }
@@ -5691,7 +5691,7 @@ class ClipMaxImeService : InputMethodService() {
         insertTask?.cancel(true)
         insertTask = null
         isInserting = false
-        setStatus(AppUiStrings.insertionCancelledStatus(appUiLocale, userInitiated))
+        setStatus(AppUiStrings.insertionCancelledStatus(keyboardLanguage, userInitiated))
     }
 
     private fun setStatus(msg: String) {
@@ -5868,7 +5868,7 @@ class ClipMaxImeService : InputMethodService() {
         inputViewActive = false
         updateCaptureMonitoring()
         if (isPasswordTarget) {
-            setStatus(AppUiStrings.passwordClipsWithheldDot(appUiLocale))
+            setStatus(AppUiStrings.passwordClipsWithheldDot(keyboardLanguage))
         } else {
             updateCaptureStatus()
         }
@@ -6019,7 +6019,7 @@ class ClipMaxImeService : InputMethodService() {
             if (isMergeMode) {
                 if (!event.isCanceled) {
                     exitMergeMode()
-                    setStatus(AppUiStrings.mergeCancelledStatus(appUiLocale))
+                    setStatus(AppUiStrings.mergeCancelledStatus(keyboardLanguage))
                 }
                 return true
             }
@@ -6317,13 +6317,13 @@ class ClipMaxImeService : InputMethodService() {
         }
         shiftStateMachine.onNonLetterInput()
         syncAutoCapitalization(preserveManualShift = false)
-        setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, message))
+        setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, message))
     }
 
     private fun performInsertionUndo() {
         val gateway = buildEditorGateway()
         if (gateway == null) {
-            setStatus(AppUiStrings.undoWaitingForFieldStatus(appUiLocale))
+            setStatus(AppUiStrings.undoWaitingForFieldStatus(keyboardLanguage))
             if (!insertionHistory.hasAnyUndoEntries() || !inputSessionActive) {
                 dismissPasteUndoCapsule()
             }
@@ -6338,7 +6338,7 @@ class ClipMaxImeService : InputMethodService() {
 
         if (!result.success || entry == null) {
             shiftStateMachine.onNonLetterInput()
-            setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, result.message))
+            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
             val shouldPreserveRetry = insertionHistory.hasAnyUndoEntries() &&
                 !gateway.isPasswordField() &&
                 (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
@@ -6381,7 +6381,7 @@ class ClipMaxImeService : InputMethodService() {
             isLargeOperation = isLargeOperation
         )
         updatePasteUndoCapsuleUI()
-        setStatus(AppUiStrings.confirmingUndoStatus(appUiLocale))
+        setStatus(AppUiStrings.confirmingUndoStatus(keyboardLanguage))
 
         val verifySchedule = if (isLargeOperation) {
             longArrayOf(50L, 150L, 300L, 500L, 750L)
@@ -6427,7 +6427,7 @@ class ClipMaxImeService : InputMethodService() {
                 )
                 updatePasteUndoCapsuleUI()
                 syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.undoRejectedStatus(appUiLocale, canPreserve))
+                setStatus(AppUiStrings.undoRejectedStatus(keyboardLanguage, canPreserve))
             }
         }, scheduleMs[stepIndex])
     }
@@ -6435,7 +6435,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun performInsertionRedo() {
         val gateway = buildEditorGateway()
         if (gateway == null) {
-            setStatus(AppUiStrings.redoWaitingForFieldStatus(appUiLocale))
+            setStatus(AppUiStrings.redoWaitingForFieldStatus(keyboardLanguage))
             if (!insertionHistory.hasAnyRedoEntries() || !inputSessionActive) {
                 dismissPasteUndoCapsule()
             }
@@ -6451,7 +6451,7 @@ class ClipMaxImeService : InputMethodService() {
         shiftStateMachine.onNonLetterInput()
 
         if (!result.success || entry == null) {
-            setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, result.message))
+            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
             val shouldPreserveRetry = insertionHistory.hasAnyRedoEntries() &&
                 !gateway.isPasswordField() &&
                 (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
@@ -6487,7 +6487,7 @@ class ClipMaxImeService : InputMethodService() {
             )
             updatePasteUndoCapsuleUI()
             syncAutoCapitalization(preserveManualShift = false)
-            setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, result.message))
+            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
             return
         }
 
@@ -6496,7 +6496,7 @@ class ClipMaxImeService : InputMethodService() {
             isLargeOperation = isLargeOperation
         )
         updatePasteUndoCapsuleUI()
-        setStatus(AppUiStrings.confirmingRedoStatus(appUiLocale))
+        setStatus(AppUiStrings.confirmingRedoStatus(keyboardLanguage))
 
         val verifySchedule = if (isLargeOperation) {
             longArrayOf(50L, 150L, 300L, 500L, 750L)
@@ -6530,7 +6530,7 @@ class ClipMaxImeService : InputMethodService() {
                 )
                 updatePasteUndoCapsuleUI()
                 syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, successMessage))
+                setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, successMessage))
                 return@postDelayed
             }
             if (stepIndex + 1 < scheduleMs.size) {
@@ -6544,7 +6544,7 @@ class ClipMaxImeService : InputMethodService() {
                 )
                 updatePasteUndoCapsuleUI()
                 syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.redoRejectedStatus(appUiLocale, canPreserve))
+                setStatus(AppUiStrings.redoRejectedStatus(keyboardLanguage, canPreserve))
             }
         }, scheduleMs[stepIndex])
     }
@@ -6866,7 +6866,7 @@ class ClipMaxImeService : InputMethodService() {
 
         val revertOrig = lastRevertOriginalWord
         if (revertOrig != null) {
-            container.addView(buildSuggestionChip(AppUiStrings.undoSuggestionChipLabel(appUiLocale, revertOrig), isHighlight = false, isRevert = true) {
+            container.addView(buildSuggestionChip(AppUiStrings.undoSuggestionChipLabel(keyboardLanguage, revertOrig), isHighlight = false, isRevert = true) {
                 val gateway = buildEditorGateway()
                 if (gateway != null) {
                     val res = insertionHistory.undo(gateway)
@@ -6876,7 +6876,7 @@ class ClipMaxImeService : InputMethodService() {
                     lastRevertOriginalWord = null
                     updateInsertionHistoryButtons()
                     refreshTypingSuggestionsAsync()
-                    setStatus(AppUiStrings.localizeHistoryMessage(appUiLocale, res.message))
+                    setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, res.message))
                 }
             })
         }
@@ -7042,7 +7042,7 @@ class ClipMaxImeService : InputMethodService() {
                 isSensitiveField = isPasswordTarget
             ) { outcome ->
                 if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
-                    setStatus(AppUiStrings.capturedCardsStatus(appUiLocale, outcome.savedCount, mode))
+                    setStatus(AppUiStrings.capturedCardsStatus(keyboardLanguage, outcome.savedCount, mode))
                     reloadItems()
                     scheduleExpiryCleanup()
                 }
@@ -7063,7 +7063,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun updateCaptureStatus() {
-        setStatus(AppUiStrings.autoCaptureStatus(appUiLocale, CapturePreferences.isEnabled(captureMode), captureMode))
+        setStatus(AppUiStrings.autoCaptureStatus(keyboardLanguage, CapturePreferences.isEnabled(captureMode), captureMode))
     }
 
     private fun capturePrimaryClip(source: CaptureSource) {
@@ -7075,7 +7075,7 @@ class ClipMaxImeService : InputMethodService() {
             isSensitiveField = isPasswordTarget
         ) { outcome ->
             if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
-                setStatus(AppUiStrings.capturedCardsStatus(appUiLocale, outcome.savedCount, mode))
+                setStatus(AppUiStrings.capturedCardsStatus(keyboardLanguage, outcome.savedCount, mode))
                 reloadItems()
                 scheduleExpiryCleanup()
             }

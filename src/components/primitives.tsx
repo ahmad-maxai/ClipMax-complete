@@ -83,7 +83,7 @@ export function TopBar({
   subtitle?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm">
+    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur-sm" dir="ltr">
       <div className="flex h-11 items-center gap-1.5 px-3">
         {left}
         <div className="min-w-0 flex-1 px-1">
@@ -169,7 +169,7 @@ export function ClipMaxLogo({
 
 export function Wordmark() {
   return (
-    <div className="flex items-center gap-1.5 select-none">
+    <div className="flex items-center gap-1.5 select-none" dir="ltr">
       <ClipMaxLogo size={24} />
       <span className="text-[15px] font-bold tracking-tight text-foreground flex items-center">
         Clip<span className="text-mint font-extrabold">Max</span>

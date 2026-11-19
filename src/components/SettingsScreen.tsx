@@ -344,7 +344,7 @@ export function SettingsScreen({
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto space-y-3 px-4 py-3.5 pb-6 text-start">
         {/* App Info Card */}
         <Section>
-          <div className="flex items-center gap-3.5 p-3.5">
+          <div className="flex items-center gap-3.5 p-3.5" dir="ltr">
             <ClipMaxLogo size={46} className="shadow-sm" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">

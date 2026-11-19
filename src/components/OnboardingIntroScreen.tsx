@@ -86,7 +86,7 @@ export function OnboardingIntroScreen({
       </div>
 
       {/* Main Centered Welcome Content */}
-      <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-6 flex flex-col items-center justify-center py-4">
+      <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-6 flex flex-col items-center justify-center py-2">
         <motion.div
           initial={reducedMotion ? false : { opacity: 0, scale: 0.9, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -103,7 +103,9 @@ export function OnboardingIntroScreen({
               className="absolute -inset-3 rounded-[28%] bg-mint/15 blur-xl animate-pulse"
             />
           )}
-          <ClipMaxLogo size={88} className="relative shadow-lg border-border" />
+          <div className="w-[72px] h-[72px]">
+            <ClipMaxLogo size={72} className="relative shadow-lg border-border w-full h-full" />
+          </div>
         </motion.div>
 
         <motion.div
@@ -114,12 +116,12 @@ export function OnboardingIntroScreen({
               ? { duration: 0 }
               : { duration: 0.45, delay: 0.08, ease: [0.22, 1, 0.36, 1] }
           }
-          className="mt-5 text-center max-w-sm"
+          className="mt-3 text-center max-w-sm"
         >
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
             {t.welcomeTitle}
           </h1>
-          <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1.5 text-xs sm:text-sm leading-relaxed text-muted-foreground">
             {t.welcomeDesc}
           </p>
         </motion.div>
@@ -133,7 +135,7 @@ export function OnboardingIntroScreen({
               ? { duration: 0 }
               : { duration: 0.45, delay: 0.16, ease: [0.22, 1, 0.36, 1] }
           }
-          className="mt-6 w-full max-w-sm space-y-2.5"
+          className="mt-3 w-full max-w-sm space-y-2"
         >
           {highlights.map((item, idx) => {
             const Icon = HIGHLIGHT_ICONS[item.id as keyof typeof HIGHLIGHT_ICONS] ?? ClipboardList;
