@@ -7,3 +7,8 @@ coverage/
 .env*
 !.env.example
 .aistudio/
+*.bundle
+*.patch
+ClipMax-complete.zip
+ClipMax-Build42-APK.zip
+ClipMax-experimental-android.zip
