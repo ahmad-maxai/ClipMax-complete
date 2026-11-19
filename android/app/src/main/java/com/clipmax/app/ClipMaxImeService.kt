@@ -232,9 +232,9 @@ class ClipMaxImeService : InputMethodService() {
     private var keyboardWrapper: FrameLayout? = null
     private var keyPopupView: FrameLayout? = null
     private var keyPopupText: TextView? = null
-    private var variantPopupHost: FrameLayout? = null
+    private var variantPopupHost: View? = null
     private var variantPopupInteractiveTapMode = false
-    private var languagePopupHost: FrameLayout? = null
+    private var languagePopupHost: View? = null
 
     private val themePreferences: SharedPreferences by lazy {
         getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
