@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { getUiText, useAppLocale } from "../../lib/i18n";
 
 export type ToastType = "success" | "error" | "info";
 
@@ -23,7 +24,10 @@ type ToastContextType = {
 const ToastContext = createContext<ToastContextType | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const locale = useAppLocale();
+  const common = getUiText(locale).common;
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -40,14 +44,25 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         action: options?.action,
       };
 
+      // Keep toasts visible indefinitely until user interaction or outside tap (no auto-timeout)
       setToasts((prev) => [...prev.slice(-3), newToast]);
-
-      setTimeout(() => {
-        removeToast(id);
-      }, 3500);
     },
-    [removeToast]
+    []
   );
+
+  // Outside tap dismissal (genuine tap outside notification dismisses it)
+  useEffect(() => {
+    if (toasts.length === 0) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setToasts([]);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [toasts.length]);
 
   const contextValue: ToastContextType = {
     toast: (msg, opts) => addToast(msg, opts),
@@ -60,6 +75,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       {/* Toast container */}
       <div
+        ref={containerRef}
         aria-live="polite"
         className="pointer-events-none fixed bottom-4 left-1/2 z-50 flex w-full max-w-sm -translate-x-1/2 flex-col gap-2 px-4"
       >
@@ -72,7 +88,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {t.type === "error" && <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
             {t.type === "info" && <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
 
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 text-start">
               <p className="text-[13px] font-medium leading-snug">{t.message}</p>
               {t.description && (
                 <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">{t.description}</p>
@@ -96,7 +112,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => removeToast(t.id)}
               className="text-muted-foreground hover:text-foreground"
-              aria-label="Close notification"
+              aria-label={common.closeNotification}
             >
               <X className="h-3.5 w-3.5" />
             </button>

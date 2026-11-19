@@ -8,6 +8,7 @@ export interface ClipMaxNativeBridge {
   updateItem(id: string, title: string, content: string, pinned: boolean): string;
   deleteItem(id: string): boolean;
   setPinned(id: string, pinned: boolean): string;
+  setExpiryLocked?(id: string, locked: boolean): string;
   syncItems(jsonArrayString: string): boolean;
   clearAllItems(): boolean;
   copyToClipboard(text: string): boolean;
@@ -16,10 +17,26 @@ export interface ClipMaxNativeBridge {
   showImePicker(): void;
   getRetention(): string;
   setRetention(retention: string): void;
+  getCustomRetentionDuration?(): number;
+  getCustomRetentionUnit?(): string;
+  setCustomRetention?(duration: number, unit: string): void;
   getCaptureEnabled(): boolean;
   setCaptureEnabled(enabled: boolean): void;
   setTheme(theme: string): void;
   getTheme(): string;
+  getAppUiLocale?(): string;
+  setAppUiLocale?(locale: string): void;
+  getKeyboardLanguage?(): string;
+  setKeyboardLanguage?(language: string): void;
+  isSystemNightMode(): boolean;
+  getOnboardingState?(): string;
+  advanceOnboardingFromIntro?(): string;
+  returnOnboardingToIntro?(): string;
+  completeOnboarding?(): string;
+  isClipMaxImeEnabled?(): boolean;
+  isClipMaxImeSelected?(): boolean;
+  areAnimationsReduced?(): boolean;
+  openExternalUrl?(url: string): boolean;
 }
 
 declare global {
@@ -65,6 +82,18 @@ export function nativeShare(text: string, title: string = "ClipMax"): boolean {
   if (typeof navigator !== "undefined" && navigator.share) {
     navigator.share({ title, text }).catch(() => {});
     return true;
+  }
+  return false;
+}
+
+/** Open an http/https URL in Android's default browser when inside the native WebView */
+export function nativeOpenExternalUrl(url: string): boolean {
+  if (isNativeAndroid() && window.ClipMaxNative?.openExternalUrl) {
+    try {
+      return Boolean(window.ClipMaxNative.openExternalUrl(url));
+    } catch (e) {
+      console.warn("Native openExternalUrl failed", e);
+    }
   }
   return false;
 }

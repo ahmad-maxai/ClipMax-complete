@@ -1,13 +1,15 @@
-import { ClipItem, ClipDraft, Retention, SortKey } from "./types";
+import { ClipItem, ClipDraft, AppUiLocale, KeyboardLanguage, Retention, SortKey } from "./types";
 import { utf8ByteLength, MAX_ITEM_BYTES } from "./chunker";
 import { isNativeAndroid } from "./nativeBridge";
 
 const STORAGE_KEY_ITEMS = "clipmax_items_v1";
 const STORAGE_KEY_RETENTION = "clipmax_retention_v1";
+const STORAGE_KEY_CUSTOM_DURATION = "clipmax_custom_retention_duration";
+const STORAGE_KEY_CUSTOM_UNIT = "clipmax_custom_retention_unit";
 const STORAGE_KEY_CAPTURE = "clipmax_capture_v1";
 const STORAGE_KEY_DRAFT = "clipmax_draft_v1";
-const STORAGE_KEY_IME_ENABLED = "clipmax_ime_enabled_v1";
-const STORAGE_KEY_IME_ACTIVE = "clipmax_ime_active_v1";
+const STORAGE_KEY_LANGUAGE = "clipmax_keyboard_language";
+const STORAGE_KEY_UI_LOCALE = "clipmax_app_ui_locale";
 
 const H = 3600_000;
 const now = Date.now();
@@ -17,12 +19,14 @@ export function getStoredItems(): ClipItem[] {
   if (isNativeAndroid() && window.ClipMaxNative?.getItems) {
     try {
       const raw = window.ClipMaxNative.getItems();
-      if (raw && raw !== "[]") {
+      if (raw) {
         const parsed = JSON.parse(raw) as ClipItem[];
-        try {
-          localStorage.setItem(STORAGE_KEY_ITEMS, raw);
-        } catch {}
-        return sortClips(cleanExpiredItems(parsed), "newest");
+        if (Array.isArray(parsed)) {
+          try {
+            localStorage.setItem(STORAGE_KEY_ITEMS, raw);
+          } catch {}
+          return sortClips(cleanExpiredItems(parsed), "newest");
+        }
       }
     } catch (e) {
       console.warn("Failed to getItems from native ClipStore bridge, falling back to cache", e);
@@ -58,19 +62,82 @@ export function saveStoredItems(items: ClipItem[]): void {
   }
 }
 
+export function getStoredCustomDuration(): number {
+  if (isNativeAndroid() && window.ClipMaxNative?.getCustomRetentionDuration) {
+    try {
+      const d = window.ClipMaxNative.getCustomRetentionDuration();
+      if (typeof d === "number" && d > 0) return d;
+    } catch {}
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_DURATION);
+    if (raw) {
+      const d = parseInt(raw, 10);
+      if (d > 0) return d;
+    }
+  } catch {}
+  return 15;
+}
+
+export function saveStoredCustomDuration(duration: number): void {
+  const safe = duration > 0 ? Math.floor(duration) : 15;
+  const unit = getStoredCustomUnit();
+  if (isNativeAndroid() && window.ClipMaxNative?.setCustomRetention) {
+    try {
+      window.ClipMaxNative.setCustomRetention(safe, unit);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_CUSTOM_DURATION, String(safe));
+  } catch {}
+}
+
+export function getStoredCustomUnit(): "m" | "h" {
+  if (isNativeAndroid() && window.ClipMaxNative?.getCustomRetentionUnit) {
+    try {
+      const u = window.ClipMaxNative.getCustomRetentionUnit();
+      if (u === "m" || u === "h") return u;
+    } catch {}
+  }
+  try {
+    const u = localStorage.getItem(STORAGE_KEY_CUSTOM_UNIT);
+    if (u === "m" || u === "h") return u;
+  } catch {}
+  return "m";
+}
+
+export function saveStoredCustomUnit(unit: "m" | "h"): void {
+  const duration = getStoredCustomDuration();
+  if (isNativeAndroid() && window.ClipMaxNative?.setCustomRetention) {
+    try {
+      window.ClipMaxNative.setCustomRetention(duration, unit);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_CUSTOM_UNIT, unit);
+  } catch {}
+}
+
+export function isRetentionValid(r: string | null | undefined): boolean {
+  if (!r) return false;
+  if (["off", "1h", "6h", "24h", "72h", "forever", "custom"].includes(r)) return true;
+  const clean = r.startsWith("custom:") ? r.slice(7) : r;
+  return /^(\d+)\s*([mh])$/i.test(clean);
+}
+
 export function getStoredRetention(): Retention {
   if (isNativeAndroid() && window.ClipMaxNative?.getRetention) {
     try {
-      const r = window.ClipMaxNative.getRetention() as Retention;
-      if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
-        return r;
+      const r = window.ClipMaxNative.getRetention();
+      if (isRetentionValid(r)) {
+        return r as Retention;
       }
     } catch {}
   }
   try {
-    const r = localStorage.getItem(STORAGE_KEY_RETENTION) as Retention;
-    if (r && ["off", "1h", "6h", "24h", "72h", "forever"].includes(r)) {
-      return r;
+    const r = localStorage.getItem(STORAGE_KEY_RETENTION);
+    if (isRetentionValid(r)) {
+      return r as Retention;
     }
   } catch {}
   return "24h";
@@ -113,6 +180,94 @@ export function saveStoredCaptureEnabled(enabled: boolean): void {
   } catch {}
 }
 
+export function normalizeKeyboardLanguage(raw?: string | null): KeyboardLanguage {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (
+    clean === "ar" ||
+    clean.startsWith("ar-") ||
+    clean.startsWith("ar_") ||
+    clean === "arabic" ||
+    clean === "العربية"
+  ) {
+    return "ar";
+  }
+  return "en";
+}
+
+export function getStoredKeyboardLanguage(): KeyboardLanguage {
+  if (isNativeAndroid() && window.ClipMaxNative?.getKeyboardLanguage) {
+    try {
+      const nativeLang = window.ClipMaxNative.getKeyboardLanguage();
+      if (nativeLang) {
+        return normalizeKeyboardLanguage(nativeLang);
+      }
+    } catch {}
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_LANGUAGE);
+    if (saved) {
+      return normalizeKeyboardLanguage(saved);
+    }
+  } catch {}
+  return "en";
+}
+
+export function saveStoredKeyboardLanguage(language: KeyboardLanguage): void {
+  const normalized = normalizeKeyboardLanguage(language);
+  if (isNativeAndroid() && window.ClipMaxNative?.setKeyboardLanguage) {
+    try {
+      window.ClipMaxNative.setKeyboardLanguage(normalized);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_LANGUAGE, normalized);
+  } catch {}
+}
+
+export function normalizeAppUiLocale(raw?: string | null): AppUiLocale {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (
+    clean === "ar" ||
+    clean.startsWith("ar-") ||
+    clean.startsWith("ar_") ||
+    clean === "arabic" ||
+    clean === "العربية"
+  ) {
+    return "ar";
+  }
+  return "en";
+}
+
+export function getStoredAppUiLocale(): AppUiLocale {
+  if (isNativeAndroid() && window.ClipMaxNative?.getAppUiLocale) {
+    try {
+      const nativeLocale = window.ClipMaxNative.getAppUiLocale();
+      if (nativeLocale) {
+        return normalizeAppUiLocale(nativeLocale);
+      }
+    } catch {}
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_UI_LOCALE);
+    if (saved) {
+      return normalizeAppUiLocale(saved);
+    }
+  } catch {}
+  return "en";
+}
+
+export function saveStoredAppUiLocale(locale: AppUiLocale): void {
+  const normalized = normalizeAppUiLocale(locale);
+  if (isNativeAndroid() && window.ClipMaxNative?.setAppUiLocale) {
+    try {
+      window.ClipMaxNative.setAppUiLocale(normalized);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_UI_LOCALE, normalized);
+  } catch {}
+}
+
 export function getStoredDraft(): ClipDraft | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DRAFT);
@@ -133,40 +288,12 @@ export function clearStoredDraft(): void {
   } catch {}
 }
 
-export function getStoredKeyboardEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_IME_ENABLED);
-    if (raw !== null) return raw === "true";
-  } catch {}
-  return true; // Default to enabled so user can immediately use it
-}
-
-export function saveStoredKeyboardEnabled(enabled: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_IME_ENABLED, String(enabled));
-  } catch {}
-}
-
-export function getStoredActiveIme(): string {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_IME_ACTIVE);
-    if (raw) return raw;
-  } catch {}
-  return "clipmax";
-}
-
-export function saveStoredActiveIme(ime: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY_IME_ACTIVE, ime);
-  } catch {}
-}
-
 function cleanExpiredItems(items: ClipItem[]): ClipItem[] {
   const current = Date.now();
   let changed = false;
   const filtered = items.filter((item) => {
-    // Pinned items are never removed by retention
-    if (item.pinned) return true;
+    // Pinned and expiry-locked items are never removed by retention
+    if (item.pinned || item.isExpiryLocked) return true;
     if (item.expiresAt && item.expiresAt <= current) {
       changed = true;
       return false;
@@ -179,24 +306,78 @@ function cleanExpiredItems(items: ClipItem[]): ClipItem[] {
   return filtered;
 }
 
-export function computeExpiry(retention: Retention): number | null {
-  const msMap: Record<Retention, number | null> = {
-    off: null,
-    "1h": 1 * H,
-    "6h": 6 * H,
-    "24h": 24 * H,
-    "72h": 72 * H,
-    forever: null,
+export function hasFiniteRetention(retention: Retention): boolean {
+  const normalized = (retention || "").trim().toLowerCase();
+  return normalized !== "off" && normalized !== "forever" && normalized !== "";
+}
+
+export function computeExpiry(retention: Retention, baseTime: number = Date.now()): number | null {
+  if (retention === "off" || retention === "forever") return null;
+  if (retention === "1h") return baseTime + 1 * H;
+  if (retention === "6h") return baseTime + 6 * H;
+  if (retention === "24h") return baseTime + 24 * H;
+  if (retention === "72h") return baseTime + 72 * H;
+
+  const clean = retention.startsWith("custom:") ? retention.slice(7) : retention;
+  const match = clean.match(/^(\d+)\s*([mh])$/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    if (num > 0) {
+      const ms = unit.startsWith("h") ? num * 3600 * 1000 : num * 60 * 1000;
+      return baseTime + ms;
+    }
+  }
+  if (retention === "custom") {
+    const num = getStoredCustomDuration();
+    const unit = getStoredCustomUnit();
+    const ms = unit === "h" ? num * 3600 * 1000 : num * 60 * 1000;
+    return baseTime + ms;
+  }
+  return baseTime + 24 * H;
+}
+
+export function applyItemExpiryLockState(
+  item: ClipItem,
+  locked: boolean,
+  retention: Retention,
+  nowMs: number = Date.now()
+): ClipItem {
+  const nextLocked = Boolean(locked);
+  const nextExpiresAt =
+    nextLocked || item.pinned ? null : computeExpiry(retention, nowMs);
+  return {
+    ...item,
+    isExpiryLocked: nextLocked,
+    expiresAt: nextExpiresAt,
+    modifiedAt: nowMs,
   };
-  const duration = msMap[retention];
-  return duration ? Date.now() + duration : null;
+}
+
+export function lockItemsFromExpiry(
+  items: ClipItem[],
+  ids: Iterable<string>,
+  nowMs: number = Date.now()
+): ClipItem[] {
+  const idSet = new Set(ids);
+  return items.map((item) =>
+    idSet.has(item.id)
+      ? {
+          ...item,
+          isExpiryLocked: true,
+          expiresAt: null,
+          modifiedAt: nowMs,
+        }
+      : item
+  );
 }
 
 export function createClipItem(
   title: string,
   content: string,
   pinned = false,
-  retention: Retention = "forever"
+  retention: Retention = "forever",
+  isExpiryLocked = false
 ): ClipItem {
   const t = Date.now();
   const bytes = utf8ByteLength(content);
@@ -215,7 +396,8 @@ export function createClipItem(
     characterCount: content.length,
     sizeBytes: bytes,
     pinned,
-    expiresAt: pinned ? null : computeExpiry(retention),
+    isExpiryLocked,
+    expiresAt: pinned || isExpiryLocked ? null : computeExpiry(retention, t),
   };
 }
 
@@ -255,9 +437,18 @@ export function filterClips(list: ClipItem[], query: string, pinnedOnly: boolean
   });
 }
 
-export function relTime(timestamp: number): string {
+export function relTime(timestamp: number, locale: AppUiLocale = "en"): string {
   const delta = Date.now() - timestamp;
   const m = Math.round(delta / 60000);
+  if (locale === "ar") {
+    if (m < 1) return "الآن";
+    if (m < 60) return `منذ ${m} د`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `منذ ${h} س`;
+    const days = Math.round(h / 24);
+    if (days < 7) return `منذ ${days} ي`;
+    return new Date(timestamp).toLocaleDateString("ar", { month: "short", day: "numeric" });
+  }
   if (m < 1) return "Just now";
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
@@ -267,8 +458,8 @@ export function relTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function fullDateTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(undefined, {
+export function fullDateTime(timestamp: number, locale: AppUiLocale = "en"): string {
+  return new Date(timestamp).toLocaleString(locale === "ar" ? "ar" : undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   });

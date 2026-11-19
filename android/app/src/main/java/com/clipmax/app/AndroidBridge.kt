@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
@@ -21,25 +22,47 @@ class AndroidBridge(
     private val store: ClipStore
 ) {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val webSyncLock = Any()
+    private val lastWebSyncedIds = mutableSetOf<String>()
+
     @JavascriptInterface
     fun isNative(): Boolean = true
+
+    private fun serializeItem(
+        item: ClipItem,
+        content: String,
+        prefs: android.content.SharedPreferences
+    ): JSONObject {
+        val obj = JSONObject()
+        obj.put("id", item.id)
+        obj.put("title", item.title)
+        obj.put("content", content)
+        obj.put("createdAt", item.createdAt)
+        obj.put("modifiedAt", item.modifiedAt)
+        obj.put("characterCount", item.characterCount)
+        obj.put("sizeBytes", item.sizeBytes)
+        obj.put("pinned", item.pinned)
+        obj.put("isExpiryLocked", item.isExpiryLocked)
+        val expiry = if (item.pinned || item.isExpiryLocked) null else CapturePreferences.getExpiry(prefs, item.id)
+        if (expiry != null) obj.put("expiresAt", expiry) else obj.put("expiresAt", JSONObject.NULL)
+        return obj
+    }
 
     @JavascriptInterface
     fun getItems(): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.cleanupExpired(store, prefs)
             val items = store.listItems()
+            val readIds = ArrayList<String>(items.size)
             val jsonArray = JSONArray()
             for (item in items) {
-                val obj = JSONObject()
-                obj.put("id", item.id)
-                obj.put("title", item.title)
-                obj.put("content", store.readContent(item))
-                obj.put("createdAt", item.createdAt)
-                obj.put("modifiedAt", item.modifiedAt)
-                obj.put("characterCount", item.characterCount)
-                obj.put("sizeBytes", item.sizeBytes)
-                obj.put("pinned", item.pinned)
-                jsonArray.put(obj)
+                jsonArray.put(serializeItem(item, store.readContent(item), prefs))
+                readIds.add(item.id)
+            }
+            synchronized(webSyncLock) {
+                lastWebSyncedIds.clear()
+                lastWebSyncedIds.addAll(readIds)
             }
             jsonArray.toString()
         } catch (e: Throwable) {
@@ -52,16 +75,7 @@ class AndroidBridge(
         return try {
             val item = store.getItem(id) ?: return ""
             val content = store.readContent(item)
-            val obj = JSONObject()
-            obj.put("id", item.id)
-            obj.put("title", item.title)
-            obj.put("content", content)
-            obj.put("createdAt", item.createdAt)
-            obj.put("modifiedAt", item.modifiedAt)
-            obj.put("characterCount", item.characterCount)
-            obj.put("sizeBytes", item.sizeBytes)
-            obj.put("pinned", item.pinned)
-            obj.toString()
+            serializeItem(item, content, CapturePreferences.preferences(context)).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -71,16 +85,8 @@ class AndroidBridge(
     fun saveItem(title: String, content: String, pinned: Boolean): String {
         return try {
             val saved = store.save(id = null, title = title, content = content, pinned = pinned)
-            val obj = JSONObject()
-            obj.put("id", saved.id)
-            obj.put("title", saved.title)
-            obj.put("content", content)
-            obj.put("createdAt", saved.createdAt)
-            obj.put("modifiedAt", saved.modifiedAt)
-            obj.put("characterCount", saved.characterCount)
-            obj.put("sizeBytes", saved.sizeBytes)
-            obj.put("pinned", saved.pinned)
-            obj.toString()
+            synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
+            serializeItem(saved, content, CapturePreferences.preferences(context)).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -89,17 +95,13 @@ class AndroidBridge(
     @JavascriptInterface
     fun updateItem(id: String, title: String, content: String, pinned: Boolean): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
             val saved = store.save(id = id, title = title, content = content, pinned = pinned)
-            val obj = JSONObject()
-            obj.put("id", saved.id)
-            obj.put("title", saved.title)
-            obj.put("content", content)
-            obj.put("createdAt", saved.createdAt)
-            obj.put("modifiedAt", saved.modifiedAt)
-            obj.put("characterCount", saved.characterCount)
-            obj.put("sizeBytes", saved.sizeBytes)
-            obj.put("pinned", saved.pinned)
-            obj.toString()
+            if (pinned || saved.isExpiryLocked) {
+                CapturePreferences.removeExpiry(prefs, saved.id)
+            }
+            synchronized(webSyncLock) { lastWebSyncedIds.add(saved.id) }
+            serializeItem(saved, content, prefs).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -108,7 +110,14 @@ class AndroidBridge(
     @JavascriptInterface
     fun deleteItem(id: String): Boolean {
         return try {
-            store.delete(id)
+            val removed = store.delete(id)
+            if (removed) {
+                val prefs = CapturePreferences.preferences(context)
+                CapturePreferences.removeExpiry(prefs, id)
+                CapturePreferences.onItemsDeleted(prefs, listOf(id))
+                synchronized(webSyncLock) { lastWebSyncedIds.remove(id) }
+            }
+            removed
         } catch (e: Throwable) {
             false
         }
@@ -117,18 +126,31 @@ class AndroidBridge(
     @JavascriptInterface
     fun setPinned(id: String, pinned: Boolean): String {
         return try {
+            val prefs = CapturePreferences.preferences(context)
             val updated = store.setPinned(id, pinned)
+            if (pinned || updated.isExpiryLocked) {
+                CapturePreferences.removeExpiry(prefs, updated.id)
+            }
             val content = store.readContent(updated)
-            val obj = JSONObject()
-            obj.put("id", updated.id)
-            obj.put("title", updated.title)
-            obj.put("content", content)
-            obj.put("createdAt", updated.createdAt)
-            obj.put("modifiedAt", updated.modifiedAt)
-            obj.put("characterCount", updated.characterCount)
-            obj.put("sizeBytes", updated.sizeBytes)
-            obj.put("pinned", updated.pinned)
-            obj.toString()
+            serializeItem(updated, content, prefs).toString()
+        } catch (e: Throwable) {
+            ""
+        }
+    }
+
+    @JavascriptInterface
+    fun setExpiryLocked(id: String, locked: Boolean): String {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            val updated = store.setExpiryLocked(id, locked)
+            if (locked || updated.pinned) {
+                CapturePreferences.removeExpiry(prefs, updated.id)
+            } else {
+                CapturePreferences.recalculateExpiryOnUnlock(prefs, updated.id)
+            }
+            CaptureExpiryReceiver.schedule(context)
+            val content = store.readContent(updated)
+            serializeItem(updated, content, prefs).toString()
         } catch (e: Throwable) {
             ""
         }
@@ -138,25 +160,82 @@ class AndroidBridge(
     fun syncItems(jsonArrayString: String): Boolean {
         return try {
             val jsonArray = JSONArray(jsonArrayString)
-            val existingIds = store.listItems().map { it.id }.toSet()
+            val existingItems = store.listItems().associateBy { it.id }
+            val knownIdsSnapshot = synchronized(webSyncLock) { lastWebSyncedIds.toSet() }
+            val prefs = CapturePreferences.preferences(context)
             val newIds = mutableSetOf<String>()
 
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val id = if (obj.has("id")) obj.getString("id") else null
+                val id = if (obj.has("id") && !obj.isNull("id")) obj.getString("id") else null
                 val title = if (obj.has("title")) obj.getString("title") else "Untitled"
                 val content = if (obj.has("content")) obj.getString("content") else ""
                 val pinned = if (obj.has("pinned")) obj.getBoolean("pinned") else false
-                val savedAt = if (obj.has("modifiedAt")) obj.getLong("modifiedAt") else null
+                val hasLockField = obj.has("isExpiryLocked") && !obj.isNull("isExpiryLocked")
+                val isExpiryLocked = if (hasLockField) obj.getBoolean("isExpiryLocked") else false
+                val modifiedAt = if (obj.has("modifiedAt")) obj.getLong("modifiedAt") else null
+                val createdAt = if (obj.has("createdAt")) obj.getLong("createdAt") else null
 
-                val saved = store.save(id = id, title = title, content = content, pinned = pinned, savedAt = savedAt)
+                val existing = id?.let { existingItems[it] }
+                val effectiveLocked = if (hasLockField) isExpiryLocked else (existing?.isExpiryLocked ?: false)
+                val saved = if (existing != null &&
+                    existing.characterCount == content.codePointCount(0, content.length) &&
+                    runCatching { store.readContent(existing) == content }.getOrDefault(false)
+                ) {
+                    store.updateMetadataOnly(
+                        existing.id,
+                        title,
+                        pinned,
+                        modifiedAt,
+                        isExpiryLocked = effectiveLocked
+                    ) ?: existing
+                } else {
+                    store.save(
+                        id = id,
+                        title = title,
+                        content = content,
+                        pinned = pinned,
+                        savedAt = modifiedAt ?: createdAt,
+                        isExpiryLocked = effectiveLocked
+                    )
+                }
+                if (pinned || saved.isExpiryLocked) {
+                    CapturePreferences.removeExpiry(prefs, saved.id)
+                } else if (obj.has("expiresAt")) {
+                    if (obj.isNull("expiresAt")) {
+                        CapturePreferences.removeExpiry(prefs, saved.id)
+                    } else {
+                        val exp = obj.optLong("expiresAt", -1L)
+                        if (exp > 0L) {
+                            CapturePreferences.setExpiry(prefs, saved.id, exp)
+                        }
+                    }
+                }
                 newIds.add(saved.id)
             }
 
-            for (oldId in existingIds) {
-                if (oldId !in newIds) {
-                    store.delete(oldId)
+            val deletedIds = mutableListOf<String>()
+            val clearAllRequested = jsonArray.length() == 0
+            for (oldId in existingItems.keys) {
+                if (oldId !in newIds && (clearAllRequested || oldId in knownIdsSnapshot)) {
+                    if (store.delete(oldId)) {
+                        CapturePreferences.removeExpiry(prefs, oldId)
+                        deletedIds.add(oldId)
+                    }
                 }
+            }
+            if (deletedIds.isNotEmpty()) {
+                if (clearAllRequested) {
+                    CapturePreferences.onAllItemsCleared(prefs)
+                } else {
+                    CapturePreferences.onItemsDeleted(prefs, deletedIds)
+                }
+            }
+
+            CaptureExpiryReceiver.schedule(context)
+            synchronized(webSyncLock) {
+                lastWebSyncedIds.clear()
+                lastWebSyncedIds.addAll(newIds)
             }
             true
         } catch (e: Throwable) {
@@ -168,6 +247,10 @@ class AndroidBridge(
     fun clearAllItems(): Boolean {
         return try {
             store.deleteAll()
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.clearExpiryLedger(prefs)
+            CapturePreferences.onAllItemsCleared(prefs)
+            synchronized(webSyncLock) { lastWebSyncedIds.clear() }
             true
         } catch (e: Throwable) {
             false
@@ -177,6 +260,7 @@ class AndroidBridge(
     @JavascriptInterface
     fun copyToClipboard(text: String): Boolean {
         return try {
+            ClipboardCaptureCoordinator.markSelfCopy(text)
             mainHandler.post {
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clip = ClipData.newPlainText("ClipMax", text)
@@ -210,6 +294,9 @@ class AndroidBridge(
     @JavascriptInterface
     fun openImeSettings() {
         try {
+            if (!OnboardingStore.getReconciledState(context).completed) {
+                OnboardingStore.markAttemptedEnable(context)
+            }
             val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
@@ -221,6 +308,9 @@ class AndroidBridge(
     @JavascriptInterface
     fun showImePicker() {
         try {
+            if (!OnboardingStore.getReconciledState(context).completed) {
+                OnboardingStore.markAttemptedSelect(context)
+            }
             mainHandler.post {
                 val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.showInputMethodPicker()
@@ -244,7 +334,37 @@ class AndroidBridge(
     fun setRetention(retention: String) {
         try {
             val prefs = CapturePreferences.preferences(context)
-            prefs.edit().putString(CapturePreferences.MODE_KEY, retention).apply()
+            CapturePreferences.setMode(prefs, retention)
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
+    fun getCustomRetentionDuration(): Int {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.customDuration(prefs)
+        } catch (e: Throwable) {
+            CapturePreferences.DEFAULT_CUSTOM_DURATION
+        }
+    }
+
+    @JavascriptInterface
+    fun getCustomRetentionUnit(): String {
+        return try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.customUnit(prefs)
+        } catch (e: Throwable) {
+            CapturePreferences.DEFAULT_CUSTOM_UNIT
+        }
+    }
+
+    @JavascriptInterface
+    fun setCustomRetention(duration: Int, unit: String) {
+        try {
+            val prefs = CapturePreferences.preferences(context)
+            CapturePreferences.setCustomRetention(prefs, duration, unit)
         } catch (e: Throwable) {
             // ignore
         }
@@ -264,12 +384,7 @@ class AndroidBridge(
     fun setCaptureEnabled(enabled: Boolean) {
         try {
             val prefs = CapturePreferences.preferences(context)
-            val current = CapturePreferences.mode(prefs)
-            if (!enabled) {
-                prefs.edit().putString(CapturePreferences.MODE_KEY, "off").apply()
-            } else if (current == "off") {
-                prefs.edit().putString(CapturePreferences.MODE_KEY, "24h").apply()
-            }
+            CapturePreferences.setCaptureEnabled(prefs, enabled)
         } catch (e: Throwable) {
             // ignore
         }
@@ -278,8 +393,12 @@ class AndroidBridge(
     @JavascriptInterface
     fun setTheme(theme: String) {
         try {
-            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("app_theme", theme).apply()
+            val normalized = SettingsPanelSpec.normalizeThemeValue(theme)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_APP_THEME, normalized).apply()
+            mainHandler.post {
+                (context as? MainActivity)?.applySystemBarTheme()
+            }
         } catch (e: Throwable) {
             // ignore
         }
@@ -288,10 +407,158 @@ class AndroidBridge(
     @JavascriptInterface
     fun getTheme(): String {
         return try {
-            val prefs = context.getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
-            prefs.getString("app_theme", "") ?: ""
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_APP_THEME, "system")
+            SettingsPanelSpec.normalizeThemeValue(raw)
         } catch (e: Throwable) {
-            ""
+            "system"
+        }
+    }
+
+    @JavascriptInterface
+    fun getKeyboardLanguage(): String {
+        return try {
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH)
+            SettingsPanelSpec.normalizeLanguageValue(raw)
+        } catch (e: Throwable) {
+            SettingsPanelSpec.LANG_ENGLISH
+        }
+    }
+
+    @JavascriptInterface
+    fun setKeyboardLanguage(language: String) {
+        try {
+            val normalized = SettingsPanelSpec.normalizeLanguageValue(language)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, normalized).apply()
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
+    fun getAppUiLocale(): String {
+        return try {
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_APP_UI_LOCALE, SettingsPanelSpec.UI_LOCALE_ENGLISH)
+            SettingsPanelSpec.normalizeAppUiLocale(raw)
+        } catch (e: Throwable) {
+            SettingsPanelSpec.UI_LOCALE_ENGLISH
+        }
+    }
+
+    @JavascriptInterface
+    fun setAppUiLocale(locale: String) {
+        try {
+            val normalized = SettingsPanelSpec.normalizeAppUiLocale(locale)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_APP_UI_LOCALE, normalized).apply()
+            mainHandler.post {
+                (context as? MainActivity)?.refreshTranslatorButtonUi()
+            }
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
+    fun isSystemNightMode(): Boolean {
+        return try {
+            (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun getOnboardingState(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.getReconciledState(context))
+        } catch (e: Throwable) {
+            """{"completed":true,"step":"COMPLETION","imeEnabled":false,"imeSelected":false,"attemptedEnable":false,"attemptedSelect":false}"""
+        }
+    }
+
+    @JavascriptInterface
+    fun advanceOnboardingFromIntro(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.advanceFromIntroduction(context))
+        } catch (e: Throwable) {
+            getOnboardingState()
+        }
+    }
+
+    @JavascriptInterface
+    fun returnOnboardingToIntro(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.returnToIntroduction(context))
+        } catch (e: Throwable) {
+            getOnboardingState()
+        }
+    }
+
+    @JavascriptInterface
+    fun completeOnboarding(): String {
+        return try {
+            OnboardingStore.toJson(OnboardingStore.markCompleted(context))
+        } catch (e: Throwable) {
+            """{"completed":true,"step":"COMPLETION","imeEnabled":false,"imeSelected":false,"attemptedEnable":false,"attemptedSelect":false}"""
+        }
+    }
+
+    @JavascriptInterface
+    fun isClipMaxImeEnabled(): Boolean {
+        return try {
+            OnboardingStore.isClipMaxImeEnabled(context)
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun isClipMaxImeSelected(): Boolean {
+        return try {
+            OnboardingStore.isClipMaxImeSelected(context)
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun areAnimationsReduced(): Boolean {
+        return try {
+            val scale = Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+            )
+            scale == 0f
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun openExternalUrl(url: String): Boolean {
+        if (!isSafeExternalHttpUrl(url)) return false
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url.trim())).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    companion object {
+        internal fun isSafeExternalHttpUrl(rawUrl: String?): Boolean {
+            val trimmed = rawUrl?.trim().orEmpty()
+            return trimmed.startsWith("https://", ignoreCase = true) ||
+                trimmed.startsWith("http://", ignoreCase = true)
         }
     }
 }

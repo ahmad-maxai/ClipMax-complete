@@ -138,3 +138,39 @@
     display: none;
   }
 }
+
+@keyframes clipmax-hand-nudge {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(0, -10px, 0) scale(0.95);
+  }
+}
+
+@keyframes clipmax-ring-pulse {
+  0%, 100% {
+    opacity: 0.92;
+  }
+  50% {
+    opacity: 0.48;
+  }
+}
+
+.clipmax-hand-pointer-anim {
+  animation: clipmax-hand-nudge 680ms ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.clipmax-spotlight-ring-anim {
+  animation: clipmax-ring-pulse 1500ms ease-in-out infinite;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clipmax-hand-pointer-anim,
+  .clipmax-spotlight-ring-anim {
+    animation: none !important;
+  }
+}
+

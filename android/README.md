@@ -58,8 +58,8 @@ Requirements: JDK 17 or later, Android SDK platform 35 and Build Tools 35.0.0, a
 ./gradlew assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`. The project uses Android Gradle Plugin 8.7.3, Gradle 8.9, Kotlin 2.0.21, compile/target SDK 35, and min SDK 26. No third-party runtime libraries are included; JUnit 4 is used for JVM tests.
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk` (versionCode 12, versionName "0.5.1"). The project uses Android Gradle Plugin 8.7.3, Gradle 8.9, Kotlin 2.0.21, compile/target SDK 35, and min SDK 26. Runtime dependencies include `androidx.webkit:webkit:1.12.1`; JUnit 4 is used for JVM tests. The project is licensed under GPL-3.0-or-later.
 
 ## Verification status
 
-See `TEST_REPORT.md` for the executed test/build results, SHA-256, and any emulator or physical-device testing limitations. Only completed checks are reported as passed.
+All 115 JVM unit tests pass via `./gradlew testDebugUnitTest`. Run `python3 ../scripts/check-version-consistency.py` from the repository root to verify version and release metadata consistency.
