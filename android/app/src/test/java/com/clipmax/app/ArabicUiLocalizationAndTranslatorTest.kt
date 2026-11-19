@@ -100,6 +100,11 @@ class ArabicUiLocalizationAndTranslatorTest {
             assertTrue(arLabel.isNotBlank())
             assertNotEquals(cat.label, arLabel)
         }
+
+        // Retention mode labels
+        assertEquals("٢٤ ساعة", AppUiStrings.localizedRetentionModeLabel("ar", "24h"))
+        assertEquals("إيقاف", AppUiStrings.localizedRetentionModeLabel("ar", "off"))
+        assertEquals("للأبد", AppUiStrings.localizedRetentionModeLabel("ar", "forever"))
     }
 
     @Test

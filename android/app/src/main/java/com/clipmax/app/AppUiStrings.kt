@@ -513,13 +513,14 @@ internal object AppUiStrings {
 
     fun localizedRetentionModeLabel(locale: String?, mode: String): String {
         if (!isArabic(locale)) return CapturePreferences.modeLabel(mode)
-        return when (CapturePreferences.normalizeMode(mode)) {
-            CapturePreferences.MODE_OFF -> "إيقاف"
-            CapturePreferences.MODE_24H -> "٢٤ ساعة"
-            CapturePreferences.MODE_7D -> "٧ أيام"
-            CapturePreferences.MODE_30D -> "٣٠ يوماً"
-            CapturePreferences.MODE_FOREVER -> "للأبد"
-            CapturePreferences.MODE_CUSTOM -> CapturePreferences.modeLabel(mode)
+        val trimmed = mode.trim().lowercase()
+        return when (trimmed) {
+            "off" -> "إيقاف"
+            "1h" -> "ساعة واحدة"
+            "6h" -> "٦ ساعات"
+            "24h" -> "٢٤ ساعة"
+            "72h" -> "٧٢ ساعة"
+            "forever" -> "للأبد"
             else -> CapturePreferences.modeLabel(mode)
         }
     }
