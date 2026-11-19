@@ -88,14 +88,14 @@ The following development packages are declared in `package.json` for compilatio
 - **License**: Distributed under GPL-3.0-or-later as confirmed by the project owner.
 
 ### English Suggestion Wordlist
-- **File**: `android/app/src/main/res/raw/en_words.txt` (4,915 lines, 35,987 bytes; SHA-256 `614296f4a124b9f2fb315aa0d2c5581679e911bc111462b539ffd990f12cb2db`)
-- **Origin**: Google 10,000 English Most Common Words / Google 10K English project by Josh Kaufman
-- **Upstream URL**: https://github.com/first20hours/google-10000-english
-- **Pinned Commit / Version**: Commit `a0149023ebcd1e30932da6c28f14b60098f9d0c6`
-- **License**: MIT License (Permissive, GPL-3.0-or-later compatible)
-- **Copyright Notice**: Copyright (c) 2013 Josh Kaufman. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-- **Modifications**: Normalization (trimming, lowercasing, duplicate removal) during streaming load in `TypingIntelligenceEngine.fromStream()`.
-- **Status**: **RESOLVED — Verified MIT License & Upstream Provenance**
+- **File**: `android/app/src/main/res/raw/en_words.txt` (10,001 lines, 82,398 bytes; SHA-256 `1185cfac9cad7ab4aa683a4645e5c93e650fdf7a6717f5624430bf03b6510dd1`)
+- **Origin**: Android Open Source Project (AOSP) — LatinIME English US Wordlist (`dictionaries/en_US_wordlist.combined.gz`, Git blob `8aed9c5e0b94d0f3e9654f66104d7af1e84c454f`)
+- **Upstream URL**: https://android.googlesource.com/platform/packages/inputmethods/LatinIME
+- **Pinned Commit / Version**: Commit `127336e9f29d69607eab55982324b210279ae8c5`
+- **License**: Apache License, Version 2.0 (`SPDX-license-identifier-Apache-2.0` declared in `Android.bp` and `NOTICE` at commit `127336e9f29d69607eab55982324b210279ae8c5`; compatible with `GPL-3.0-or-later`)
+- **Copyright Notice**: Copyright (c) 2008, The Android Open Source Project. Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0.
+- **Extraction & Modifications**: Extracted deterministically from AOSP `dictionaries/en_US_wordlist.combined.gz` at commit `127336e9f29d69607eab55982324b210279ae8c5`: excluded entries with `not_a_word=true`, `possibly_offensive=true`, or `offensive`/`nonword` flags, retained lowercase ASCII words matching `^[a-z]+(?:'[a-z]+)?$` with positive frequency (`f > 0`), sorted descending by `f` (then lexicographically), selected the top 10,000 words plus AOSP entry `clipboard` (`f=67`), and normalized during streaming load in `TypingIntelligenceEngine.fromStream()`.
+- **Status**: **RESOLVED — Verified Apache-2.0 License & Upstream AOSP Provenance**
 
 ### Typography
 - **Configuration**: The web stylesheet (`src/index.css`) and native IME (`ClipMaxImeService.kt`) use only local system font stacks (`system-ui`, `ui-monospace`, `Typeface.SANS_SERIF`, `Typeface.MONOSPACE`). No remote fonts (such as Google Fonts) or external font binaries are included or requested.

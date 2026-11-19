@@ -1,1 +1,1 @@
-Offline clipboard manager and native Android keyboard with custom expiry.
+Offline clipboard manager & English/Arabic keyboard with custom clip expiry.

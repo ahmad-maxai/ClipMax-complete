@@ -14,21 +14,20 @@ Changelog: https://github.com/ahmad-maxai/ClipMax-complete/releases
 
 AutoName: ClipMax
 
-Summary: Offline clipboard manager and system keyboard
+Summary: Offline clipboard manager & bilingual English/Arabic keyboard
 
 Description: |-
-  ClipMax helps you save and organize copied text on your Android device.
-
-  Use ClipMax to keep useful text snippets accessible through its clipboard
-  interface and keyboard. Find saved clips and reuse text when you need it.
+  ClipMax helps you save, protect, and organize copied text on your Android
+  device, and insert snippets directly through its bilingual native keyboard.
 
   Features:
-  * Save and organize text snippets
-  * Search saved clips
-  * Access clips through the ClipMax keyboard
-  * Insert long text using bounded surrogate-safe chunks
-  * Keep your clipboard collection private and offline on your device
-
+  * Bilingual native keyboard (English QWERTY and Arabic العربية layouts)
+  * Full English (LTR) and Arabic (العربية, RTL) interface localization
+  * Offline English word suggestions and autocorrection (AOSP Apache-2.0 list)
+  * Auto-activating numeric keypad, symbols, and emoji picker
+  * Save, search, pin, split, merge, and lock clips against auto-expiry
+  * Insert long text safely using bounded 50,000 UTF-16 chunks with Undo/Redo
+  * Keep your clipboard collection strictly private and offline (no INTERNET perm)
 RepoType: git
 Repo: https://github.com/ahmad-maxai/ClipMax-complete.git
 

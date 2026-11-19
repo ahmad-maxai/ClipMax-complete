@@ -1,6 +1,6 @@
 # ClipMax
 
-Official repository for **ClipMax** (v0.5.1, `versionCode 12`) — a private, offline-first Android clipboard manager and native system keyboard (Input Method Editor, or IME).
+Official repository for **ClipMax** (v0.5.1, `versionCode 12`) — a private, offline-first Android clipboard manager with a **bilingual English–Arabic native system keyboard (IME)** and full **English (LTR) / Arabic (`العربية`, RTL) UI localization**.
 
 ClipMax combines a high-performance native Kotlin input method service with an offline-bundled companion interface. It is designed to keep saved text strictly on your device, handle long text payloads safely, provide automatic copy capture with customizable retention and per-item expiry protection, and make text reuse seamless across any Android application.
 
@@ -42,7 +42,9 @@ ClipMax gives your frequently used text snippets, links, templates, and notes a 
 ClipMax includes a native Android Input Method service (`ClipMaxImeService.kt`) implemented in Kotlin and protected by the system permission `android.permission.BIND_INPUT_METHOD`.
 
 ### Keyboard Features:
-- **Ergonomic Touch Layout**: Refined QWERTY layout with top-row embedded long-press numbers, symbol pages, and haptic feedback.
+- **Bilingual English & Arabic Layouts**: Full English QWERTY and standard Arabic (`العربية`) keyboard layouts with quick language switching, Arabic-Indic digit hints, symbol pages, emoji picker, and haptic feedback.
+- **Offline English Typing Intelligence**: Local prefix word suggestions and high-confidence autocorrection powered by a verified Apache-2.0 AOSP LatinIME word list (`en_words.txt`), with zero network calls.
+- **Bilingual UI & RTL Support**: Companion app and native keyboard sub-panels support both English (LTR) and Arabic (`العربية`, RTL), switchable independently of the active keyboard typing language.
 - **Automatic Numeric-Field Detection**: Automatically activates the dedicated numpad layout when focusing numeric input fields (`TYPE_CLASS_NUMBER`, plain, decimal, or signed), phone dialers (`TYPE_CLASS_PHONE`), date/time fields (`TYPE_CLASS_DATETIME`), and numeric PINs (`TYPE_NUMBER_VARIATION_PASSWORD`). Automatically restores standard QWERTY typing when focusing text, multiline, email, web address, search, or password fields.
 - **Clipboard Panel & Chips**: View recent clips in an interactive horizontal strip or open the full clipboard browser to scroll through all saved cards.
 - **Card Context Menu**: Long-press any clipboard card in the keyboard to reveal quick actions: **Insert**, **Edit** (opens in app editor), **Pin/Unpin**, **Lock/Unlock expiry**, **Delete**, **Merge**, and **Split**.

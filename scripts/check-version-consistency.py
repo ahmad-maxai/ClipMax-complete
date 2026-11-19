@@ -255,7 +255,7 @@ def main():
             print(f"    - APK Verified Clean: {path} ({size} bytes, SHA-256: {sha})")
     else:
         print("    - APK Inspection: No local APK passed or found; pass --apk <file.apk> to inspect built APKs.")
-    print("    - Scope Caveat: Static checks do not prove absence of all network behavior or establish third-party asset licenses (e.g. unresolved en_words.txt).")
+    print("    - Scope Caveat: Static checks verify metadata and clean packaging; see THIRD_PARTY_LICENSES.md for upstream license provenance (including AOSP Apache-2.0 en_words.txt).")
 
 
 if __name__ == "__main__":
