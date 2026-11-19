@@ -143,8 +143,8 @@ class BilingualKeyboardTest {
         assertFalse(TypingIntelligenceEngine.containsArabicScript("received"))
 
         val arabicAnalysis = engine.analyzeWord(
-            word = "مرحبا",
-            rawToken = "مرحبا",
+            composingWord = "مرحبا",
+            fullTokenBeforeCursor = "مرحبا",
             isSentenceStart = false,
             autocompleteEnabled = true,
             autoCorrectEnabled = true
@@ -156,8 +156,8 @@ class BilingualKeyboardTest {
 
         // English autocorrection still behaves identically
         val englishTypo = engine.analyzeWord(
-            word = "recieved",
-            rawToken = "recieved",
+            composingWord = "recieved",
+            fullTokenBeforeCursor = "recieved",
             isSentenceStart = false,
             autocompleteEnabled = true,
             autoCorrectEnabled = true
