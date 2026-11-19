@@ -8,6 +8,9 @@ internal object SettingsPanelSpec {
 
     const val PREF_FILE = "clipmax_theme_prefs"
     const val PREF_APP_THEME = "app_theme"
+    const val PREF_KEYBOARD_LANGUAGE = "keyboard_language"
+    const val LANG_ENGLISH = "en"
+    const val LANG_ARABIC = "ar"
     const val PREF_KEYBOARD_HEIGHT = "keyboard_height"
     const val PREF_ONE_HANDED = "one_handed_mode"
     const val PREF_AUTOCOMPLETE = "typing_autocomplete"
@@ -33,6 +36,24 @@ internal object SettingsPanelSpec {
         val title: String,
         val defaultValue: Boolean
     )
+
+    val LANGUAGE_OPTIONS: List<ChoiceOption<String>> = listOf(
+        ChoiceOption(LANG_ENGLISH, "English (QWERTY)"),
+        ChoiceOption(LANG_ARABIC, "العربية (Arabic)")
+    )
+
+    fun normalizeLanguageValue(savedLanguage: String?): String {
+        val raw = savedLanguage?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+        if (raw == LANG_ARABIC ||
+            raw.startsWith("ar-") ||
+            raw.startsWith("ar_") ||
+            raw == "arabic" ||
+            raw == "العربية"
+        ) {
+            return LANG_ARABIC
+        }
+        return LANG_ENGLISH
+    }
 
     val THEME_OPTIONS: List<ChoiceOption<String>> = listOf(
         ChoiceOption("system", "System"),

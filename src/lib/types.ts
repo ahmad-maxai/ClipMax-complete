@@ -79,3 +79,11 @@ export type Screen =
 export type Nav = (s: Screen) => void;
 
 export type ThemeMode = "system" | "light" | "dark" | "classic";
+
+export type KeyboardLanguage = "en" | "ar";
+
+export const KEYBOARD_LANGUAGE_LABELS: Record<KeyboardLanguage, string> = {
+  en: "English (QWERTY)",
+  ar: "العربية (Arabic)",
+};
+

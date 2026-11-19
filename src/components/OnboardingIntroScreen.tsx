@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { ArrowRight, ClipboardList, Keyboard, Lock } from "lucide-react";
 import { motion } from "motion/react";
+import { KeyboardLanguage, KEYBOARD_LANGUAGE_LABELS } from "../lib/types";
+import { cn } from "../lib/utils";
 import { Btn, ClipMaxLogo } from "./primitives";
 
 interface OnboardingIntroScreenProps {
   reducedMotion: boolean;
+  keyboardLanguage: KeyboardLanguage;
+  onChangeKeyboardLanguage: (language: KeyboardLanguage) => void;
   onNext: () => void;
   onSkip: () => void;
 }
@@ -31,6 +35,8 @@ const CYCLE_DURATION_MS = 5000;
 
 export function OnboardingIntroScreen({
   reducedMotion,
+  keyboardLanguage,
+  onChangeKeyboardLanguage,
   onNext,
   onSkip,
 }: OnboardingIntroScreenProps) {
@@ -172,6 +178,40 @@ export function OnboardingIntroScreen({
               </div>
             );
           })}
+
+          <div className="rounded-2xl border border-border bg-surface/90 px-3.5 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[13px] font-semibold text-foreground leading-snug">
+                Keyboard language
+              </p>
+              <span className="text-[11px] font-medium text-muted-foreground">
+                Default: English
+              </span>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Onboarding keyboard language"
+              className="mt-2 grid grid-cols-2 gap-1.5"
+            >
+              {(["en", "ar"] as const).map((lang) => (
+                <button
+                  key={lang}
+                  type="button"
+                  role="radio"
+                  aria-checked={keyboardLanguage === lang}
+                  onClick={() => onChangeKeyboardLanguage(lang)}
+                  className={cn(
+                    "h-9 rounded-lg border px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                    keyboardLanguage === lang
+                      ? "border-mint bg-mint-soft text-mint-foreground"
+                      : "border-border bg-surface text-foreground hover:bg-accent"
+                  )}
+                >
+                  {KEYBOARD_LANGUAGE_LABELS[lang]}
+                </button>
+              ))}
+            </div>
+          </div>
         </motion.div>
       </div>
 

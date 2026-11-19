@@ -416,6 +416,28 @@ class AndroidBridge(
     }
 
     @JavascriptInterface
+    fun getKeyboardLanguage(): String {
+        return try {
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            val raw = prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH)
+            SettingsPanelSpec.normalizeLanguageValue(raw)
+        } catch (e: Throwable) {
+            SettingsPanelSpec.LANG_ENGLISH
+        }
+    }
+
+    @JavascriptInterface
+    fun setKeyboardLanguage(language: String) {
+        try {
+            val normalized = SettingsPanelSpec.normalizeLanguageValue(language)
+            val prefs = context.getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
+            prefs.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, normalized).apply()
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    @JavascriptInterface
     fun isSystemNightMode(): Boolean {
         return try {
             (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==

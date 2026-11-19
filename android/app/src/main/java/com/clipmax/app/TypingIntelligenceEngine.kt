@@ -282,6 +282,27 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
             }
             return targetLower
         }
+
+        fun containsArabicScript(text: CharSequence?): Boolean {
+            if (text.isNullOrEmpty()) return false
+            var i = 0
+            while (i < text.length) {
+                val cp = Character.codePointAt(text, i)
+                if (cp in 0x0600..0x06FF || cp in 0x0750..0x077F || cp in 0x08A0..0x08FF || cp in 0xFB50..0xFDFF || cp in 0xFE70..0xFEFF) {
+                    return true
+                }
+                i += Character.charCount(cp)
+            }
+            return false
+        }
+
+        private fun isLatinAsciiWord(text: CharSequence?): Boolean {
+            if (text.isNullOrEmpty()) return false
+            for (ch in text) {
+                if (ch !in 'a'..'z' && ch !in 'A'..'Z' && ch != '\'') return false
+            }
+            return true
+        }
     }
 
     private val orderedWords: List<String>
@@ -367,7 +388,7 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
         suppressedWordsLower: Set<String> = emptySet(),
         maxSuggestions: Int = 4
     ): WordAnalysis {
-        if (composingWord.isEmpty()) {
+        if (composingWord.isEmpty() || containsArabicScript(composingWord) || containsArabicScript(fullTokenBeforeCursor) || !isLatinAsciiWord(composingWord)) {
             return WordAnalysis(composingWord, isKnownWord = false, autoCorrection = null, suggestions = emptyList())
         }
         val lower = composingWord.lowercase(Locale.ROOT)
@@ -442,7 +463,7 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
         autocompleteEnabled: Boolean,
         maxSuggestions: Int = 4
     ): List<String> {
-        if (!autocompleteEnabled || previousWord.isNullOrBlank()) return emptyList()
+        if (!autocompleteEnabled || previousWord.isNullOrBlank() || containsArabicScript(previousWord) || !isLatinAsciiWord(previousWord.trim())) return emptyList()
         val key = previousWord.trim().lowercase(Locale.ROOT)
         return NEXT_WORD_BIGRAMS[key]?.take(maxSuggestions).orEmpty()
     }

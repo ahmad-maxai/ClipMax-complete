@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   Screen,
   ClipItem,
+  KeyboardLanguage,
   Retention,
   ThemeMode,
 } from "./lib/types";
@@ -10,6 +11,8 @@ import {
   saveStoredItems,
   getStoredRetention,
   getStoredCaptureEnabled,
+  getStoredKeyboardLanguage,
+  saveStoredKeyboardLanguage,
   hasFiniteRetention,
   lockItemsFromExpiry,
 } from "./lib/storage";
@@ -81,6 +84,9 @@ export default function App() {
     getStoredCaptureEnabled()
   );
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readInitialThemeMode());
+  const [keyboardLanguage, setKeyboardLanguage] = useState<KeyboardLanguage>(() =>
+    getStoredKeyboardLanguage()
+  );
   const [systemDark, setSystemDark] = useState<boolean>(() => readSystemNight());
   const [pendingExpiryIds, setPendingExpiryIds] = useState<string[]>([]);
 
@@ -154,6 +160,7 @@ export default function App() {
     const handleRefresh = () => {
       setItems(getStoredItems());
       setSystemDark(readSystemNight());
+      setKeyboardLanguage(getStoredKeyboardLanguage());
       if (typeof window !== "undefined" && window.ClipMaxNative?.getTheme) {
         try {
           const nativeTheme = window.ClipMaxNative.getTheme();
@@ -225,6 +232,11 @@ export default function App() {
     setScreen({ name: "settings" });
   };
 
+  const handleChangeKeyboardLanguage = (nextLanguage: KeyboardLanguage) => {
+    saveStoredKeyboardLanguage(nextLanguage);
+    setKeyboardLanguage(nextLanguage);
+  };
+
   const handleFinishOrSkipOnboarding = () => {
     const done = completeOnboarding();
     setOnboardingState(done);
@@ -240,6 +252,8 @@ export default function App() {
       return (
         <OnboardingIntroScreen
           reducedMotion={reducedMotion}
+          keyboardLanguage={keyboardLanguage}
+          onChangeKeyboardLanguage={handleChangeKeyboardLanguage}
           onNext={handleNextFromIntro}
           onSkip={handleFinishOrSkipOnboarding}
         />
@@ -290,6 +304,8 @@ export default function App() {
             themeMode={themeMode}
             systemDark={systemDark}
             onChangeThemeMode={setThemeMode}
+            keyboardLanguage={keyboardLanguage}
+            onChangeKeyboardLanguage={handleChangeKeyboardLanguage}
             nav={setScreen}
             onboardingState={onboardingState}
             reducedMotion={reducedMotion}

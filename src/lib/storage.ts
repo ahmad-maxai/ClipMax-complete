@@ -1,4 +1,4 @@
-import { ClipItem, ClipDraft, Retention, SortKey } from "./types";
+import { ClipItem, ClipDraft, KeyboardLanguage, Retention, SortKey } from "./types";
 import { utf8ByteLength, MAX_ITEM_BYTES } from "./chunker";
 import { isNativeAndroid } from "./nativeBridge";
 
@@ -8,6 +8,7 @@ const STORAGE_KEY_CUSTOM_DURATION = "clipmax_custom_retention_duration";
 const STORAGE_KEY_CUSTOM_UNIT = "clipmax_custom_retention_unit";
 const STORAGE_KEY_CAPTURE = "clipmax_capture_v1";
 const STORAGE_KEY_DRAFT = "clipmax_draft_v1";
+const STORAGE_KEY_LANGUAGE = "clipmax_keyboard_language";
 
 const H = 3600_000;
 const now = Date.now();
@@ -175,6 +176,50 @@ export function saveStoredCaptureEnabled(enabled: boolean): void {
   }
   try {
     localStorage.setItem(STORAGE_KEY_CAPTURE, String(enabled));
+  } catch {}
+}
+
+export function normalizeKeyboardLanguage(raw?: string | null): KeyboardLanguage {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (
+    clean === "ar" ||
+    clean.startsWith("ar-") ||
+    clean.startsWith("ar_") ||
+    clean === "arabic" ||
+    clean === "العربية"
+  ) {
+    return "ar";
+  }
+  return "en";
+}
+
+export function getStoredKeyboardLanguage(): KeyboardLanguage {
+  if (isNativeAndroid() && window.ClipMaxNative?.getKeyboardLanguage) {
+    try {
+      const nativeLang = window.ClipMaxNative.getKeyboardLanguage();
+      if (nativeLang) {
+        return normalizeKeyboardLanguage(nativeLang);
+      }
+    } catch {}
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_LANGUAGE);
+    if (saved) {
+      return normalizeKeyboardLanguage(saved);
+    }
+  } catch {}
+  return "en";
+}
+
+export function saveStoredKeyboardLanguage(language: KeyboardLanguage): void {
+  const normalized = normalizeKeyboardLanguage(language);
+  if (isNativeAndroid() && window.ClipMaxNative?.setKeyboardLanguage) {
+    try {
+      window.ClipMaxNative.setKeyboardLanguage(normalized);
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY_LANGUAGE, normalized);
   } catch {}
 }
 

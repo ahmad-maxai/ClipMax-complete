@@ -232,9 +232,12 @@ class ClipMaxImeService : InputMethodService() {
     private var keyboardWrapper: FrameLayout? = null
     private var keyPopupView: FrameLayout? = null
     private var keyPopupText: TextView? = null
+    private var variantPopupHost: FrameLayout? = null
+    private var variantPopupInteractiveTapMode = false
+    private var languagePopupHost: FrameLayout? = null
 
     private val themePreferences: SharedPreferences by lazy {
-        getSharedPreferences("clipmax_theme_prefs", Context.MODE_PRIVATE)
+        getSharedPreferences(SettingsPanelSpec.PREF_FILE, Context.MODE_PRIVATE)
     }
     private var themePreferenceListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
@@ -254,11 +257,18 @@ class ClipMaxImeService : InputMethodService() {
             runCatching { themePreferences.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
         )
 
+    private val keyboardLanguage: String
+        get() = SettingsPanelSpec.normalizeLanguageValue(
+            runCatching {
+                themePreferences.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH)
+            }.getOrNull()
+        )
+
     private fun isSystemNightMode(): Boolean =
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private fun computeThemeStateKey(): String =
-        "${appTheme}:${isNightMode}:${isClassicTheme}"
+        "${appTheme}:${isNightMode}:${isClassicTheme}:${keyboardLanguage}"
 
     private val currentThemePalette: KeyboardLayoutSpec.ImeThemePalette
         get() {
@@ -337,12 +347,15 @@ class ClipMaxImeService : InputMethodService() {
         captureMode = CapturePreferences.mode(capturePreferences)
         capturePreferences.registerOnSharedPreferenceChangeListener(capturePreferenceListener)
 
-        // Observe in-app theme & typing preference changes in real-time
+        // Observe in-app theme, keyboard language & typing preference changes in real-time
         themePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
-                "app_theme" -> main.post {
+                SettingsPanelSpec.PREF_APP_THEME -> main.post {
                     window?.window?.let { applySystemNavBarTheme(it) }
                     renderFullImeView()
+                }
+                SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE -> main.post {
+                    onKeyboardLanguagePreferenceChanged()
                 }
                 "typing_autocomplete", "typing_autocorrect", "typing_suggestions" -> main.post {
                     onTypingSettingsChanged()
@@ -451,6 +464,24 @@ class ClipMaxImeService : InputMethodService() {
         val surface = object : FrameLayout(this) {
             override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
                 if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+                    val langHost = languagePopupHost
+                    if (langHost != null && langHost.visibility == View.VISIBLE && langHost.parent === this) {
+                        val rect = android.graphics.Rect()
+                        langHost.getHitRect(rect)
+                        if (!rect.contains(ev.x.toInt(), ev.y.toInt())) {
+                            dismissLanguagePopup()
+                            return true
+                        }
+                    }
+                    val varHost = variantPopupHost
+                    if (varHost != null && variantPopupInteractiveTapMode && varHost.visibility == View.VISIBLE && varHost.parent === this) {
+                        val rect = android.graphics.Rect()
+                        varHost.getHitRect(rect)
+                        if (!rect.contains(ev.x.toInt(), ev.y.toInt())) {
+                            dismissVariantPopup()
+                            return true
+                        }
+                    }
                     val host = undoRedoHost
                     if (host != null && host.visibility == View.VISIBLE && host.parent === this) {
                         val rect = android.graphics.Rect()
@@ -528,6 +559,8 @@ class ClipMaxImeService : InputMethodService() {
     private fun renderFullImeView() {
         val content = contentContainer ?: return
         lastRenderedThemeKey = computeThemeStateKey()
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         pendingRenderAfterContextMenu = false
         clipboardPanelRoot = null
@@ -1389,7 +1422,16 @@ class ClipMaxImeService : InputMethodService() {
             list.addView(card)
         }
 
-        // 1. Theme (Graphite vs Classic)
+        // 1. Keyboard Language (English | العربية)
+        addSegmentedSettingCard(
+            title = "Keyboard Language",
+            options = SettingsPanelSpec.LANGUAGE_OPTIONS,
+            initialSelected = keyboardLanguage
+        ) { nextLanguage ->
+            setKeyboardLanguage(nextLanguage)
+        }
+
+        // 2. Theme (Graphite vs Classic)
         addSegmentedSettingCard(
             title = "Theme",
             options = SettingsPanelSpec.THEME_OPTIONS,
@@ -1401,7 +1443,7 @@ class ClipMaxImeService : InputMethodService() {
             }
         }
 
-        // 2. Keyboard Height (Compact | Normal | Tall)
+        // 3. Keyboard Height (Compact | Normal | Tall)
         val currentHeight = themePreferences.getString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, "normal") ?: "normal"
         addSegmentedSettingCard(
             title = "Keyboard Height",
@@ -1412,7 +1454,7 @@ class ClipMaxImeService : InputMethodService() {
             applyCanonicalViewportHeightInPlace()
         }
 
-        // 3. One-Handed Mode (Left | Off | Right)
+        // 4. One-Handed Mode (Left | Off | Right)
         val currentOneHanded = themePreferences.getString(SettingsPanelSpec.PREF_ONE_HANDED, "off") ?: "off"
         addSegmentedSettingCard(
             title = "One-Handed Mode",
@@ -3124,9 +3166,38 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
+    private fun setKeyboardLanguage(language: String) {
+        val normalized = SettingsPanelSpec.normalizeLanguageValue(language)
+        if (keyboardLanguage == normalized) return
+        themePreferences.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, normalized).apply()
+        onKeyboardLanguagePreferenceChanged()
+    }
+
+    private fun onKeyboardLanguagePreferenceChanged() {
+        dismissLanguagePopup()
+        dismissVariantPopup()
+        hideKeyPreview()
+        lastRenderedThemeKey = computeThemeStateKey()
+        if (keyboardLanguage == SettingsPanelSpec.LANG_ARABIC) {
+            clearTypingSuggestionsView()
+            shiftStateMachine.onInputSessionReset()
+        } else {
+            refreshTypingSuggestionsAsync()
+            syncAutoCapitalization(preserveManualShift = false)
+        }
+        when {
+            isSettingsOpen -> return
+            isEmojiPickerOpen -> renderFullImeView()
+            keyboardRowsContainer != null -> renderKeyboardRows()
+        }
+    }
+
     private fun renderKeyboardRows() {
         val container = keyboardRowsContainer ?: return
+        dismissVariantPopup()
+        dismissLanguagePopup()
         container.removeAllViews()
+        container.layoutDirection = View.LAYOUT_DIRECTION_LTR
         letterKeyViews.clear()
         enterKeyView = null
         enterKeyImageView = null
@@ -3138,10 +3209,17 @@ class ClipMaxImeService : InputMethodService() {
             dp(geom.bottomPaddingDp).toInt()
         )
 
+        val isArabic = keyboardLanguage == SettingsPanelSpec.LANG_ARABIC
         when (keyboardMode) {
-            KeyboardLayoutSpec.KeyboardMode.ALPHA -> renderAlphaRows(container)
-            KeyboardLayoutSpec.KeyboardMode.SYMBOLS -> renderNumericRows(container)
-            KeyboardLayoutSpec.KeyboardMode.SYMBOLS_EXT -> renderSymbolRows(container)
+            KeyboardLayoutSpec.KeyboardMode.ALPHA -> {
+                if (isArabic) renderArabicAlphaRows(container) else renderAlphaRows(container)
+            }
+            KeyboardLayoutSpec.KeyboardMode.SYMBOLS -> {
+                if (isArabic) renderArabicNumericRows(container) else renderNumericRows(container)
+            }
+            KeyboardLayoutSpec.KeyboardMode.SYMBOLS_EXT -> {
+                if (isArabic) renderArabicSymbolRows(container) else renderSymbolRows(container)
+            }
             KeyboardLayoutSpec.KeyboardMode.NUMPAD -> renderNumpadRows(container)
         }
         updateToolbarCenterVisibility()
@@ -3193,6 +3271,48 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row4)
     }
 
+    // 4A-AR. ARABIC ALPHA (32 standard Arabic letters matching reference layout + long-press variants & diacritics)
+    private fun renderArabicAlphaRows(parent: LinearLayout) {
+        val uiSpec = KeyboardLayoutSpec.languageUiSpec(SettingsPanelSpec.LANG_ARABIC)
+
+        // Row 1: 11 keys (ض١ ص٢ ث٣ ق٤ ف٥ غ٦ ع٧ ه٨ خ٩ ح ج)
+        val row1 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_ALPHA_ROW1.forEach { keySpec ->
+            row1.addView(createArabicKey(keySpec.primary, keySpec.hintDigit), keyLp(1f))
+        }
+        parent.addView(row1)
+
+        // Row 2: 11 keys (ش س ي ب ل ا ت ن م ك ط)
+        val row2 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_ALPHA_ROW2.forEach { ch ->
+            row2.addView(createArabicKey(ch, null), keyLp(1f))
+        }
+        parent.addView(row2)
+
+        // Row 3: 10 letters (ذ ء ؤ ر ى ة و ز ظ د) + Backspace = 10.0f flush width
+        val row3 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_ALPHA_ROW3.forEach { ch ->
+            row3.addView(createArabicKey(ch, null), keyLp(0.855f))
+        }
+        row3.addView(createBackspaceKey(), keyLp(1.45f))
+        parent.addView(row3)
+
+        // Row 4: ؟٣٢١ (1.45f), ،/emoji (0.9f), Globe (0.9f), Space العربية (4.4f), ./diacritics (0.9f), Enter (1.45f)
+        val row4 = createKeyRow(isBottomRow = true)
+        row4.addView(createModifierKey(uiSpec.symbolsToggleLabel) {
+            dismissPasteUndoCapsule()
+            modeController.toSymbols()
+            renderKeyboardRows()
+        }, keyLp(1.45f))
+
+        row4.addView(createCommaEmojiKey(uiSpec.alphaCommaChar), keyLp(0.9f))
+        row4.addView(createGlobeKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createArabicPeriodKey(), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
+        parent.addView(row4)
+    }
+
     // 4B. NUMERIC (?123)
     private fun renderNumericRows(parent: LinearLayout) {
         val row1 = createKeyRow(isBottomRow = false)
@@ -3236,6 +3356,51 @@ class ClipMaxImeService : InputMethodService() {
         parent.addView(row4)
     }
 
+    // 4B-AR. ARABIC NUMERIC / SYMBOLS (؟٣٢١ with Arabic-Indic ١–٠ and Western 1–0 long-press)
+    private fun renderArabicNumericRows(parent: LinearLayout) {
+        val uiSpec = KeyboardLayoutSpec.languageUiSpec(SettingsPanelSpec.LANG_ARABIC)
+
+        val row1 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_ROW1.forEach { digit ->
+            row1.addView(createArabicKey(digit, null), keyLp(1f))
+        }
+        parent.addView(row1)
+
+        val row2 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_ROW2.forEach { sym ->
+            row2.addView(createStandardKey(sym), keyLp(1f))
+        }
+        parent.addView(row2)
+
+        val row3 = createKeyRow(isBottomRow = false)
+        row3.addView(createModifierKey("=\\<") {
+            dismissPasteUndoCapsule()
+            modeController.toSymbolsExt()
+            renderKeyboardRows()
+        }, keyLp(1.5f))
+
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_ROW3.forEach { sym ->
+            row3.addView(createArabicKey(sym, null), keyLp(1f))
+        }
+
+        row3.addView(createBackspaceKey(), keyLp(1.5f))
+        parent.addView(row3)
+
+        val row4 = createKeyRow(isBottomRow = true)
+        row4.addView(createModifierKey(uiSpec.alphaToggleLabel) {
+            dismissPasteUndoCapsule()
+            modeController.toAlpha()
+            renderKeyboardRows()
+        }, keyLp(1.45f))
+
+        row4.addView(createCommaEmojiKey(uiSpec.alphaCommaChar), keyLp(0.9f))
+        row4.addView(createNumpadToggleKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createArabicPeriodKey(), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
+        parent.addView(row4)
+    }
+
     // 4C. SECONDARY SYMBOLS (=\<)
     private fun renderSymbolRows(parent: LinearLayout) {
         val row1 = createKeyRow(isBottomRow = false)
@@ -3275,6 +3440,51 @@ class ClipMaxImeService : InputMethodService() {
         row4.addView(createGlobeKey(), keyLp(0.9f))
         row4.addView(createSpaceKey(), keyLp(4.4f))
         row4.addView(createStandardKey("."), keyLp(0.9f))
+        row4.addView(createEnterKey(), keyLp(1.45f))
+        parent.addView(row4)
+    }
+
+    // 4C-AR. ARABIC SECONDARY SYMBOLS (=\<)
+    private fun renderArabicSymbolRows(parent: LinearLayout) {
+        val uiSpec = KeyboardLayoutSpec.languageUiSpec(SettingsPanelSpec.LANG_ARABIC)
+
+        val row1 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_EXT_ROW1.forEach { sym ->
+            row1.addView(createArabicKey(sym, null), keyLp(1f))
+        }
+        parent.addView(row1)
+
+        val row2 = createKeyRow(isBottomRow = false)
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_EXT_ROW2.forEach { sym ->
+            row2.addView(createArabicKey(sym, null), keyLp(1f))
+        }
+        parent.addView(row2)
+
+        val row3 = createKeyRow(isBottomRow = false)
+        row3.addView(createModifierKey(uiSpec.symbolsToggleLabel) {
+            dismissPasteUndoCapsule()
+            modeController.toSymbols()
+            renderKeyboardRows()
+        }, keyLp(1.5f))
+
+        KeyboardLayoutSpec.ARABIC_SYMBOLS_EXT_ROW3.forEach { sym ->
+            row3.addView(createArabicKey(sym, null), keyLp(0.875f))
+        }
+
+        row3.addView(createBackspaceKey(), keyLp(1.5f))
+        parent.addView(row3)
+
+        val row4 = createKeyRow(isBottomRow = true)
+        row4.addView(createModifierKey(uiSpec.alphaToggleLabel) {
+            dismissPasteUndoCapsule()
+            modeController.toAlpha()
+            renderKeyboardRows()
+        }, keyLp(1.45f))
+
+        row4.addView(createCommaEmojiKey(uiSpec.alphaCommaChar), keyLp(0.9f))
+        row4.addView(createGlobeKey(), keyLp(0.9f))
+        row4.addView(createSpaceKey(), keyLp(4.4f))
+        row4.addView(createArabicPeriodKey(), keyLp(0.9f))
         row4.addView(createEnterKey(), keyLp(1.45f))
         parent.addView(row4)
     }
@@ -3348,7 +3558,9 @@ class ClipMaxImeService : InputMethodService() {
     private fun createNumpadKey(spec: KeyboardLayoutSpec.NumpadKeySpec): View = when (spec.role) {
         KeyboardLayoutSpec.NumpadKeyRole.SPACE -> createNumpadSpaceKey()
         KeyboardLayoutSpec.NumpadKeyRole.BACKSPACE -> createBackspaceKey()
-        KeyboardLayoutSpec.NumpadKeyRole.RETURN_ALPHA -> createModifierKey(spec.label) {
+        KeyboardLayoutSpec.NumpadKeyRole.RETURN_ALPHA -> createModifierKey(
+            KeyboardLayoutSpec.languageUiSpec(keyboardLanguage).alphaToggleLabel
+        ) {
             dismissPasteUndoCapsule()
             modeController.toAlpha()
             renderKeyboardRows()
@@ -3392,11 +3604,25 @@ class ClipMaxImeService : InputMethodService() {
             addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
             val ch = spec.commitChar ?: spec.label
-            attachKeyTouchFeedback(
-                keyView = this,
-                onCommit = { handleGenericCharPress(ch) },
-                previewChar = { spec.label }
-            )
+            val arabicAlt = if (keyboardLanguage == SettingsPanelSpec.LANG_ARABIC) {
+                KeyboardLayoutSpec.arabicVariantsFor(ch)
+            } else {
+                emptyList()
+            }
+            if (arabicAlt.isNotEmpty()) {
+                attachArabicVariantTouchFeedback(
+                    keyView = this,
+                    primaryChar = ch,
+                    variants = arabicAlt,
+                    preselectFirstOnTimeout = true
+                )
+            } else {
+                attachKeyTouchFeedback(
+                    keyView = this,
+                    onCommit = { handleGenericCharPress(ch) },
+                    previewChar = { spec.label }
+                )
+            }
         }
         KeyboardLayoutSpec.NumpadKeyRole.OPERATOR -> FrameLayout(this).apply {
             background = roundedRipple(colorModBg, keyCornerRadiusPx(), colorKeyBorder)
@@ -3660,7 +3886,7 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         val abcBtn = TextView(this@ClipMaxImeService).apply {
-            text = "ABC"
+            text = KeyboardLayoutSpec.languageUiSpec(keyboardLanguage).alphaToggleLabel
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -4163,12 +4389,12 @@ class ClipMaxImeService : InputMethodService() {
         )
     }
 
-    private fun createCommaEmojiKey(): View = FrameLayout(this).apply {
+    private fun createCommaEmojiKey(commaChar: String = ","): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
         contentDescription = "Comma, hold for emoji"
 
         val tv = TextView(this@ClipMaxImeService).apply {
-            text = ","
+            text = commaChar
             textSize = (currentLayoutGeometry.primaryTextSizeSp - 2f).coerceAtLeast(15f)
             typeface = Typeface.DEFAULT
             setTextColor(colorKeyText)
@@ -4208,7 +4434,7 @@ class ClipMaxImeService : InputMethodService() {
                     controller.onDown()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    showKeyPreview(v, ",")
+                    showKeyPreview(v, commaChar)
                     main.postDelayed(longPressTask, thresholdMs)
                     true
                 }
@@ -4228,7 +4454,7 @@ class ClipMaxImeService : InputMethodService() {
                     v.isPressed = false
                     hideKeyPreview()
                     if (controller.onUp()) {
-                        handleGenericCharPress(",")
+                        handleGenericCharPress(commaChar)
                     }
                     true
                 }
@@ -4237,6 +4463,335 @@ class ClipMaxImeService : InputMethodService() {
                     controller.onCancel()
                     v.isPressed = false
                     hideKeyPreview()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun createArabicKey(primary: String, hintDigit: String?): View = FrameLayout(this).apply {
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+
+        val isLetter = primary.length == 1 && primary[0].isLetter()
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = primary
+            textSize = if (isLetter) currentLayoutGeometry.primaryTextSizeSp else (currentLayoutGeometry.primaryTextSizeSp - 2f).coerceAtLeast(15f)
+            typeface = Typeface.DEFAULT
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            if (hintDigit != null) {
+                setPadding(0, dp(2), 0, 0)
+            }
+        }
+        addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        if (hintDigit != null) {
+            val hintTv = TextView(this@ClipMaxImeService).apply {
+                text = hintDigit
+                textSize = currentLayoutGeometry.numberLegendSizeSp
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                gravity = Gravity.TOP or Gravity.END
+                setPadding(0, dp(2), dp(4), 0)
+            }
+            addView(hintTv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+
+        val variants = KeyboardLayoutSpec.arabicVariantsFor(primary)
+        if (variants.isNotEmpty()) {
+            attachArabicVariantTouchFeedback(
+                keyView = this,
+                primaryChar = primary,
+                variants = variants,
+                preselectFirstOnTimeout = (hintDigit != null || variants.size == 1)
+            )
+        } else {
+            attachKeyTouchFeedback(
+                keyView = this,
+                onCommit = {
+                    if (isLetter) handleLetterPress(primary) else handleGenericCharPress(primary)
+                },
+                previewChar = { primary }
+            )
+        }
+    }
+
+    private fun createArabicPeriodKey(): View = FrameLayout(this).apply {
+        background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+        contentDescription = "Period, hold for diacritics and punctuation"
+
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = "."
+            textSize = (currentLayoutGeometry.primaryTextSizeSp - 1.5f).coerceAtLeast(15f)
+            typeface = Typeface.DEFAULT
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(3), 0, 0)
+        }
+        addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        // Subtle dotted-circle diacritics hint indicator matching reference screenshot
+        val hintTv = TextView(this@ClipMaxImeService).apply {
+            text = "\u25CC"
+            textSize = 9f
+            setTextColor(colorHintText)
+            gravity = Gravity.TOP or Gravity.END
+            includeFontPadding = false
+            setPadding(0, dp(2), dp(5), 0)
+        }
+        addView(hintTv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        attachArabicVariantTouchFeedback(
+            keyView = this,
+            primaryChar = ".",
+            variants = KeyboardLayoutSpec.ARABIC_PERIOD_VARIANTS,
+            preselectFirstOnTimeout = false
+        )
+    }
+
+    private fun commitArabicToken(token: String) {
+        val isLetterOrMark = token.length == 1 &&
+            (token[0].isLetter() || KeyboardLayoutSpec.isArabicCombiningMark(token[0].code))
+        if (isLetterOrMark) {
+            handleLetterPress(token)
+        } else {
+            handleGenericCharPress(token)
+        }
+    }
+
+    private fun dismissVariantPopup() {
+        variantPopupInteractiveTapMode = false
+        val surface = imeSurfaceFrame
+        val popup = variantPopupHost
+        variantPopupHost = null
+        if (surface != null && popup != null) {
+            surface.removeView(popup)
+        }
+    }
+
+    private fun showArabicVariantPopup(
+        anchorView: View,
+        variants: List<String>,
+        preselectFirst: Boolean
+    ): List<Pair<View, String>> {
+        val surface = imeSurfaceFrame ?: return emptyList()
+        dismissVariantPopup()
+        dismissLanguagePopup()
+        if (variants.isEmpty()) return emptyList()
+
+        val chipViews = ArrayList<Pair<View, String>>(variants.size)
+        val maxCols = if (variants.size > 7) 7 else variants.size
+        val chipW = dp(if (variants.size > 7) 38 else 40)
+        val chipH = dp(38)
+        val chipGap = dp(4)
+
+        val popupCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            background = roundedDrawable(
+                if (isClassicTheme) colorKeyBg else colorChipBg,
+                dp(14f),
+                colorKeyBorder
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(12f)
+            }
+            isClickable = true
+        }
+
+        var idx = 0
+        while (idx < variants.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+            }
+            val rowEnd = minOf(idx + maxCols, variants.size)
+            for (c in idx until rowEnd) {
+                val token = variants[c]
+                val isSelected = preselectFirst && c == 0
+                val chip = TextView(this).apply {
+                    text = KeyboardLayoutSpec.displayLabelForArabicVariant(token)
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(if (isSelected) colorActiveTabText else colorKeyText)
+                    background = roundedRipple(
+                        normalColor = if (isSelected) colorActiveTabBg else colorKeyBg,
+                        cornerRadiusPx = dp(9f),
+                        strokeColor = if (isSelected) colorAccent else colorKeyBorder
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        commitArabicToken(token)
+                        dismissVariantPopup()
+                    }
+                }
+                chipViews.add(chip to token)
+                row.addView(chip, LinearLayout.LayoutParams(chipW, chipH).apply {
+                    if (c < rowEnd - 1) rightMargin = chipGap
+                })
+            }
+            popupCard.addView(row, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                if (rowEnd < variants.size) bottomMargin = chipGap
+            })
+            idx = rowEnd
+        }
+
+        popupCard.measure(
+            View.MeasureSpec.makeMeasureSpec(surface.width.coerceAtLeast(dp(240)), View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(surface.height.coerceAtLeast(dp(120)), View.MeasureSpec.AT_MOST)
+        )
+        val popupW = popupCard.measuredWidth
+        val popupH = popupCard.measuredHeight
+
+        val anchorLoc = IntArray(2)
+        val surfaceLoc = IntArray(2)
+        anchorView.getLocationOnScreen(anchorLoc)
+        surface.getLocationOnScreen(surfaceLoc)
+        val relLeft = anchorLoc[0] - surfaceLoc[0]
+        val relTop = anchorLoc[1] - surfaceLoc[1]
+
+        val minLeft = dp(6)
+        val maxLeft = (surface.width - popupW - dp(6)).coerceAtLeast(minLeft)
+        val clampedLeft = (relLeft + (anchorView.width - popupW) / 2).coerceIn(minLeft, maxLeft)
+        val clampedTop = (relTop - popupH - dp(6)).coerceAtLeast(dp(4))
+
+        val lp = FrameLayout.LayoutParams(popupW, popupH).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = clampedLeft
+            topMargin = clampedTop
+        }
+        variantPopupHost = popupCard
+        surface.addView(popupCard, lp)
+        popupCard.bringToFront()
+        return chipViews
+    }
+
+    private fun updateVariantChipHighlight(chips: List<Pair<View, String>>, selectedIdx: Int) {
+        chips.forEachIndexed { i, (v, _) ->
+            val tv = v as? TextView ?: return@forEachIndexed
+            val selected = i == selectedIdx
+            tv.setTextColor(if (selected) colorActiveTabText else colorKeyText)
+            tv.background = roundedRipple(
+                normalColor = if (selected) colorActiveTabBg else colorKeyBg,
+                cornerRadiusPx = dp(9f),
+                strokeColor = if (selected) colorAccent else colorKeyBorder
+            )
+        }
+    }
+
+    private fun attachArabicVariantTouchFeedback(
+        keyView: View,
+        primaryChar: String,
+        variants: List<String>,
+        preselectFirstOnTimeout: Boolean
+    ) {
+        val controller = KeyboardLayoutSpec.LongPressKeyController()
+        val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
+        var popupChips: List<Pair<View, String>> = emptyList()
+        var selectedVariantIdx = -1
+
+        val longPressTask = Runnable {
+            if (controller.onLongPressTimeout()) {
+                keyView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                hideKeyPreview()
+                keyView.isPressed = false
+                selectedVariantIdx = if (preselectFirstOnTimeout && variants.isNotEmpty()) 0 else -1
+                variantPopupInteractiveTapMode = false
+                popupChips = showArabicVariantPopup(keyView, variants, preselectFirstOnTimeout)
+            }
+        }
+
+        keyView.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    main.removeCallbacks(longPressTask)
+                    dismissVariantPopup()
+                    popupChips = emptyList()
+                    selectedVariantIdx = -1
+                    controller.onDown()
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    showKeyPreview(v, primaryChar)
+                    main.postDelayed(longPressTask, thresholdMs)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (controller.isLongPressTriggered() && popupChips.isNotEmpty()) {
+                        val rawX = event.rawX.toInt()
+                        val rawY = event.rawY.toInt()
+                        val chipLoc = IntArray(2)
+                        var hitIdx = -1
+                        for ((i, pair) in popupChips.withIndex()) {
+                            val chip = pair.first
+                            chip.getLocationOnScreen(chipLoc)
+                            val padY = dp(10)
+                            if (rawX >= chipLoc[0] && rawX <= chipLoc[0] + chip.width &&
+                                rawY >= chipLoc[1] - padY && rawY <= chipLoc[1] + chip.height + padY
+                            ) {
+                                hitIdx = i
+                                break
+                            }
+                        }
+                        val nextIdx = when {
+                            hitIdx >= 0 -> hitIdx
+                            preselectFirstOnTimeout -> 0
+                            else -> -1
+                        }
+                        if (nextIdx != selectedVariantIdx) {
+                            selectedVariantIdx = nextIdx
+                            updateVariantChipHighlight(popupChips, selectedVariantIdx)
+                        }
+                        true
+                    } else {
+                        val x = event.x
+                        val y = event.y
+                        val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
+                        if (!inside && controller.onMove(insideBounds = false)) {
+                            main.removeCallbacks(longPressTask)
+                            v.isPressed = false
+                            hideKeyPreview()
+                        }
+                        true
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    main.removeCallbacks(longPressTask)
+                    v.isPressed = false
+                    hideKeyPreview()
+                    if (controller.onUp()) {
+                        commitArabicToken(primaryChar)
+                    } else if (popupChips.isNotEmpty()) {
+                        val chosen = popupChips.getOrNull(selectedVariantIdx)?.second
+                        if (chosen != null) {
+                            commitArabicToken(chosen)
+                            dismissVariantPopup()
+                        } else {
+                            // Keep multi-item popup open so user can tap any diacritic/variant comfortably
+                            variantPopupInteractiveTapMode = true
+                        }
+                        popupChips = emptyList()
+                        selectedVariantIdx = -1
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onCancel()
+                    v.isPressed = false
+                    hideKeyPreview()
+                    dismissVariantPopup()
+                    popupChips = emptyList()
+                    selectedVariantIdx = -1
                     true
                 }
                 else -> false
@@ -4327,18 +4882,188 @@ class ClipMaxImeService : InputMethodService() {
         attachKeyTouchFeedback(this, { showSystemImePicker() })
     }
 
+    private fun dismissLanguagePopup() {
+        val surface = imeSurfaceFrame
+        val popup = languagePopupHost
+        languagePopupHost = null
+        if (surface != null && popup != null) {
+            surface.removeView(popup)
+        }
+    }
+
+    private fun showLanguageSwitcherPopup(anchorView: View) {
+        val surface = imeSurfaceFrame ?: return
+        dismissLanguagePopup()
+        dismissVariantPopup()
+        dismissPasteUndoCapsule()
+
+        val activeLang = keyboardLanguage
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = roundedDrawable(
+                if (isClassicTheme) colorKeyBg else colorChipBg,
+                dp(14f),
+                colorKeyBorder
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(12f)
+            }
+            isClickable = true
+        }
+
+        val headerTv = TextView(this).apply {
+            text = "Keyboard Language"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorHintText)
+            setPadding(dp(6), 0, dp(6), dp(6))
+        }
+        card.addView(headerTv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        KeyboardLayoutSpec.LANGUAGE_POPUP_OPTIONS.forEachIndexed { idx, opt ->
+            val selected = activeLang == opt.code
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(9), dp(12), dp(9))
+                contentDescription = opt.accessibilityLabel
+                isClickable = true
+                isFocusable = true
+                background = roundedRipple(
+                    normalColor = if (selected) colorActiveTabBg else colorKeyBg,
+                    cornerRadiusPx = dp(10f),
+                    strokeColor = if (selected) colorAccent else colorKeyBorder
+                )
+                setOnClickListener {
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    dismissLanguagePopup()
+                    setKeyboardLanguage(opt.code)
+                }
+            }
+
+            val textCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            val titleTv = TextView(this).apply {
+                text = opt.primaryLabel
+                textSize = 14f
+                typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(if (selected) colorActiveTabText else colorKeyText)
+            }
+            val subTv = TextView(this).apply {
+                text = opt.secondaryLabel
+                textSize = 11f
+                setTextColor(if (selected) colorActiveTabText else colorHintText)
+            }
+            textCol.addView(titleTv)
+            textCol.addView(subTv)
+            row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            if (selected) {
+                val checkIv = createIconView(IconDrawable(IconType.DONE, colorActiveTabText, 14f))
+                row.addView(checkIv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    leftMargin = dp(10)
+                })
+            }
+
+            card.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (idx < KeyboardLayoutSpec.LANGUAGE_POPUP_OPTIONS.lastIndex) {
+                    bottomMargin = dp(6)
+                }
+            })
+        }
+
+        val targetW = minOf(dp(236), (surface.width - dp(16)).coerceAtLeast(dp(180)))
+        card.measure(
+            View.MeasureSpec.makeMeasureSpec(targetW, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(surface.height.coerceAtLeast(dp(140)), View.MeasureSpec.AT_MOST)
+        )
+        val popupH = card.measuredHeight
+
+        val anchorLoc = IntArray(2)
+        val surfaceLoc = IntArray(2)
+        anchorView.getLocationOnScreen(anchorLoc)
+        surface.getLocationOnScreen(surfaceLoc)
+        val relLeft = anchorLoc[0] - surfaceLoc[0]
+        val relTop = anchorLoc[1] - surfaceLoc[1]
+
+        val minLeft = dp(8)
+        val maxLeft = (surface.width - targetW - dp(8)).coerceAtLeast(minLeft)
+        val clampedLeft = (relLeft + (anchorView.width - targetW) / 2).coerceIn(minLeft, maxLeft)
+        val clampedTop = (relTop - popupH - dp(8)).coerceAtLeast(dp(6))
+
+        val lp = FrameLayout.LayoutParams(targetW, popupH).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = clampedLeft
+            topMargin = clampedTop
+        }
+        languagePopupHost = card
+        surface.addView(card, lp)
+        card.bringToFront()
+    }
+
     private fun createSpaceKey(): View = FrameLayout(this).apply {
         background = roundedRipple(colorKeyBg, keyCornerRadiusPx(), colorKeyBorder)
+        val uiSpec = KeyboardLayoutSpec.languageUiSpec(keyboardLanguage)
+        contentDescription = "Space, ${uiSpec.spacebarLabel}, hold to switch language"
 
         val tv = TextView(this@ClipMaxImeService).apply {
-            text = "English"
+            text = uiSpec.spacebarLabel
             textSize = 13f
             setTextColor(colorKeyText)
             gravity = Gravity.CENTER
         }
         addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        attachKeyTouchFeedback(this, { handleSpacePress() })
+        val controller = KeyboardLayoutSpec.LongPressKeyController()
+        val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
+        val longPressTask = Runnable {
+            if (controller.onLongPressTimeout()) {
+                this.isPressed = false
+                this.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                showLanguageSwitcherPopup(this)
+            }
+        }
+
+        setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onDown()
+                    v.isPressed = true
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    main.postDelayed(longPressTask, thresholdMs)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val x = event.x
+                    val y = event.y
+                    val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
+                    if (!inside && controller.onMove(insideBounds = false)) {
+                        main.removeCallbacks(longPressTask)
+                        v.isPressed = false
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    main.removeCallbacks(longPressTask)
+                    v.isPressed = false
+                    if (controller.onUp()) {
+                        handleSpacePress()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPressTask)
+                    controller.onCancel()
+                    v.isPressed = false
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun resolveCurrentActionKey(): InputFieldPolicy.ActionKeyResolution {
@@ -4490,7 +5215,7 @@ class ClipMaxImeService : InputMethodService() {
             val predictedAfterDelete = if (selected.isNullOrEmpty()) {
                 val preDelete = runCatching { conn.getTextBeforeCursor(64, 0)?.toString() }.getOrNull()
                 val deleteCount = if (!preDelete.isNullOrEmpty()) {
-                    EmojiInterfaceSpec.lastGraphemeUtf16Length(preDelete)
+                    KeyboardLayoutSpec.backspaceUtf16Count(preDelete, keyboardLanguage)
                 } else {
                     1
                 }
@@ -5123,7 +5848,8 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (contextMenuHost != null || isMergeMode || undoRedoHost != null ||
+            if (languagePopupHost != null || variantPopupHost != null ||
+                contextMenuHost != null || isMergeMode || undoRedoHost != null ||
                 isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
                 if (event.repeatCount == 0) {
                     event.startTracking()
@@ -5136,6 +5862,18 @@ class ClipMaxImeService : InputMethodService() {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (languagePopupHost != null) {
+                if (!event.isCanceled) {
+                    dismissLanguagePopup()
+                }
+                return true
+            }
+            if (variantPopupHost != null) {
+                if (!event.isCanceled) {
+                    dismissVariantPopup()
+                }
+                return true
+            }
             if (contextMenuHost != null) {
                 if (!event.isCanceled) {
                     dismissContextMenu(animate = true)
@@ -5186,6 +5924,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onWindowHidden() {
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
@@ -5209,6 +5949,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
@@ -5220,6 +5962,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
@@ -5229,6 +5973,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onFinishInput() {
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
@@ -5249,6 +5995,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        dismissLanguagePopup()
+        dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
@@ -5776,7 +6524,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun refreshTypingSuggestionsAsync() {
-        if (isPasswordTarget || isFilterMode) {
+        if (isPasswordTarget || isFilterMode || keyboardLanguage == SettingsPanelSpec.LANG_ARABIC) {
             clearTypingSuggestionsView()
             return
         }
@@ -5825,7 +6573,7 @@ class ClipMaxImeService : InputMethodService() {
                 maxSuggestions = 4
             )
             main.post {
-                if (reqGen != suggestionGeneration.get() || serviceDestroyed || isPasswordTarget || isFilterMode) {
+                if (reqGen != suggestionGeneration.get() || serviceDestroyed || isPasswordTarget || isFilterMode || keyboardLanguage == SettingsPanelSpec.LANG_ARABIC) {
                     return@post
                 }
                 activeComposingWord = ctx.composingWord
@@ -5841,7 +6589,8 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun isWordBoundaryDelimiter(ch: String): Boolean {
-        return ch == " " || ch == "." || ch == "," || ch == "!" || ch == "?" || ch == ";" || ch == ":"
+        return ch == " " || ch == "." || ch == "," || ch == "!" || ch == "?" || ch == ";" || ch == ":" ||
+            ch == "\u060C" || ch == "\u061B" || ch == "\u061F"
     }
 
     private fun syncAutoCapitalization(
@@ -5886,7 +6635,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun commitWordBoundaryWithIntelligence(conn: InputConnection, delimiter: String) {
         suggestionGeneration.incrementAndGet()
         val beforeFallback = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
-        if (isPasswordTarget || !isAutoCorrectEnabled || !fieldCapabilities.allowAutocorrect) {
+        if (isPasswordTarget || keyboardLanguage == SettingsPanelSpec.LANG_ARABIC || !isAutoCorrectEnabled || !fieldCapabilities.allowAutocorrect) {
             lastRevertOriginalWord = null
             insertionHistory.invalidateImmediateBackspaceRevert()
             conn.commitText(delimiter, 1)

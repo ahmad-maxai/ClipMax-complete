@@ -17,6 +17,8 @@ import {
 import { TopBar, Btn, IconBtn, Section, ConfirmModal, ClipMaxLogo } from "./primitives";
 import {
   ClipItem,
+  KeyboardLanguage,
+  KEYBOARD_LANGUAGE_LABELS,
   Nav,
   Retention,
   RETENTION_PRESET_KEYS,
@@ -52,6 +54,8 @@ interface SettingsScreenProps {
   themeMode: ThemeMode;
   systemDark: boolean;
   onChangeThemeMode: (mode: ThemeMode) => void;
+  keyboardLanguage: KeyboardLanguage;
+  onChangeKeyboardLanguage: (language: KeyboardLanguage) => void;
   nav: Nav;
   onboardingState?: OnboardingState | null;
   reducedMotion?: boolean;
@@ -70,6 +74,8 @@ export function SettingsScreen({
   themeMode,
   systemDark,
   onChangeThemeMode,
+  keyboardLanguage,
+  onChangeKeyboardLanguage,
   nav,
   onboardingState,
   reducedMotion = false,
@@ -202,6 +208,13 @@ export function SettingsScreen({
           ? `System (${systemDark ? "Dark" : "Light"})`
           : mode.charAt(0).toUpperCase() + mode.slice(1);
       toast(`Theme set to ${label}`);
+    });
+  };
+
+  const handleSelectKeyboardLanguage = (language: KeyboardLanguage) => {
+    preserveScroll(() => {
+      onChangeKeyboardLanguage(language);
+      toast(`Keyboard language set to ${KEYBOARD_LANGUAGE_LABELS[language]}`);
     });
   };
 
@@ -440,6 +453,36 @@ export function SettingsScreen({
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
                   <span className="truncate">2. Switch Active Input Method</span>
                 </Btn>
+              </div>
+            </div>
+
+            <div className="border-t border-border px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">Keyboard language</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Switch between English and Arabic. You can also hold the Spacebar on the keyboard.
+              </p>
+              <div
+                role="radiogroup"
+                aria-label="Keyboard language"
+                className="mt-2.5 grid grid-cols-2 gap-1.5"
+              >
+                {(["en", "ar"] as const).map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    role="radio"
+                    aria-checked={keyboardLanguage === lang}
+                    onClick={() => handleSelectKeyboardLanguage(lang)}
+                    className={cn(
+                      "h-9 rounded-lg border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring tap-target",
+                      keyboardLanguage === lang
+                        ? "border-mint bg-mint-soft text-mint-foreground"
+                        : "border-border bg-surface text-foreground hover:bg-accent"
+                    )}
+                  >
+                    {KEYBOARD_LANGUAGE_LABELS[lang]}
+                  </button>
+                ))}
               </div>
             </div>
           </Section>

@@ -26,6 +26,209 @@ internal object KeyboardLayoutSpec {
     fun embeddedNumberFor(letter: String): String? =
         ALPHA_TO_NUMBER_MAP[letter.uppercase()]
 
+    data class ArabicKeySpec(
+        val primary: String,
+        val hintDigit: String? = null
+    )
+
+    data class LanguageUiSpec(
+        val language: String,
+        val spacebarLabel: String,
+        val alphaToggleLabel: String,
+        val symbolsToggleLabel: String,
+        val alphaCommaChar: String,
+        val textDirectionRtl: Boolean
+    )
+
+    fun languageUiSpec(language: String?): LanguageUiSpec {
+        return if (SettingsPanelSpec.normalizeLanguageValue(language) == SettingsPanelSpec.LANG_ARABIC) {
+            LanguageUiSpec(
+                language = SettingsPanelSpec.LANG_ARABIC,
+                spacebarLabel = "العربية",
+                alphaToggleLabel = "أبج",
+                symbolsToggleLabel = "؟٣٢١",
+                alphaCommaChar = "\u060C",
+                textDirectionRtl = true
+            )
+        } else {
+            LanguageUiSpec(
+                language = SettingsPanelSpec.LANG_ENGLISH,
+                spacebarLabel = "English",
+                alphaToggleLabel = "ABC",
+                symbolsToggleLabel = "?123",
+                alphaCommaChar = ",",
+                textDirectionRtl = false
+            )
+        }
+    }
+
+    data class LanguagePopupOption(
+        val code: String,
+        val primaryLabel: String,
+        val secondaryLabel: String,
+        val accessibilityLabel: String
+    )
+
+    val LANGUAGE_POPUP_OPTIONS: List<LanguagePopupOption> = listOf(
+        LanguagePopupOption(
+            code = SettingsPanelSpec.LANG_ENGLISH,
+            primaryLabel = "English",
+            secondaryLabel = "QWERTY",
+            accessibilityLabel = "English (QWERTY)"
+        ),
+        LanguagePopupOption(
+            code = SettingsPanelSpec.LANG_ARABIC,
+            primaryLabel = "العربية",
+            secondaryLabel = "Arabic",
+            accessibilityLabel = "العربية (Arabic)"
+        )
+    )
+
+    // Standard Arabic layout matching reference screenshots:
+    // Row 1 (11 keys, top-right digit hints ١–٩ on first 9 keys): ض ص ث ق ف غ ع ه خ ح ج
+    val ARABIC_ALPHA_ROW1: List<ArabicKeySpec> = listOf(
+        ArabicKeySpec("ض", "١"),
+        ArabicKeySpec("ص", "٢"),
+        ArabicKeySpec("ث", "٣"),
+        ArabicKeySpec("ق", "٤"),
+        ArabicKeySpec("ف", "٥"),
+        ArabicKeySpec("غ", "٦"),
+        ArabicKeySpec("ع", "٧"),
+        ArabicKeySpec("ه", "٨"),
+        ArabicKeySpec("خ", "٩"),
+        ArabicKeySpec("ح", null),
+        ArabicKeySpec("ج", null)
+    )
+
+    // Row 2 (11 keys): ش س ي ب ل ا ت ن م ك ط
+    val ARABIC_ALPHA_ROW2: List<String> = listOf(
+        "ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"
+    )
+
+    // Row 3 (10 letters + Backspace): ذ ء ؤ ر ى ة و ز ظ د
+    val ARABIC_ALPHA_ROW3: List<String> = listOf(
+        "ذ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "د"
+    )
+
+    // Arabic Symbols & Numerals (?٣٢١)
+    val ARABIC_SYMBOLS_ROW1: List<String> = listOf("١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩", "٠")
+    val ARABIC_SYMBOLS_ROW2: List<String> = listOf("@", "#", "$", "_", "&", "-", "+", "(", ")", "/")
+    val ARABIC_SYMBOLS_ROW3: List<String> = listOf("*", "\"", "'", ":", "\u061B", "!", "\u061F")
+
+    // Arabic Secondary Symbols (=\<) including Arabic percent, Rial, guillemets, decimal/thousands separators
+    val ARABIC_SYMBOLS_EXT_ROW1: List<String> = listOf("~", "`", "|", "•", "√", "\u066A", "÷", "×", "\uFDFC", "°")
+    val ARABIC_SYMBOLS_EXT_ROW2: List<String> = listOf("£", "€", "¥", "¢", "^", "%", "=", "{", "}", "\\")
+    val ARABIC_SYMBOLS_EXT_ROW3: List<String> = listOf("<", ">", "«", "»", "\u066B", "\u066C", "[", "]")
+
+    // Arabic Diacritics (Tanwin, Harakat, Shaddah, Sukun, Tatweel) & Arabic Punctuation on long-press of "."
+    val ARABIC_PERIOD_VARIANTS: List<String> = listOf(
+        "\u064B", // Fathatan (ً)
+        "\u064C", // Dammatan (ٌ)
+        "\u064D", // Kasratan (ٍ)
+        "\u064E", // Fathah (َ)
+        "\u064F", // Dammah (ُ)
+        "\u0650", // Kasrah (ِ)
+        "\u0651", // Shaddah (ّ)
+        "\u0652", // Sukun (ْ)
+        "\u0640", // Tatweel / Kashida (ـ)
+        "\u061F", // Arabic Question Mark (؟)
+        "!",
+        "\u060C", // Arabic Comma (،)
+        "\u061B"  // Arabic Semicolon (؛)
+    )
+
+    val ARABIC_LONG_PRESS_VARIANTS: Map<String, List<String>> = mapOf(
+        // Top row letter keys (with embedded digit first where shown)
+        "ض" to listOf("١", "1"),
+        "ص" to listOf("٢", "2"),
+        "ث" to listOf("٣", "3"),
+        "ق" to listOf("٤", "4"),
+        "ف" to listOf("٥", "5", "ڤ"),
+        "غ" to listOf("٦", "6"),
+        "ع" to listOf("٧", "7"),
+        "ه" to listOf("٨", "8", "ة"),
+        "خ" to listOf("٩", "9"),
+        "ح" to listOf("٠", "0"),
+        "ج" to listOf("چ"),
+        // Row 2 letter variants
+        "ب" to listOf("پ"),
+        "ي" to listOf("ى", "ئ"),
+        "ا" to listOf("أ", "إ", "آ", "ٱ", "ء"),
+        "ت" to listOf("ة", "ط"),
+        "ك" to listOf("گ"),
+        "ط" to listOf("ظ"),
+        // Row 3 letter variants
+        "ذ" to listOf("د"),
+        "ء" to listOf("أ", "إ", "آ", "ؤ", "ئ"),
+        "ؤ" to listOf("و", "ء"),
+        "ى" to listOf("ي", "ا", "آ"),
+        "ة" to listOf("ه", "ت"),
+        "و" to listOf("ؤ"),
+        "ز" to listOf("ژ"),
+        "ظ" to listOf("ط"),
+        "د" to listOf("ذ"),
+        // Cross-numeral alternatives between Arabic-Indic and Western digits
+        "١" to listOf("1"),
+        "٢" to listOf("2"),
+        "٣" to listOf("3"),
+        "٤" to listOf("4"),
+        "٥" to listOf("5"),
+        "٦" to listOf("6"),
+        "٧" to listOf("7"),
+        "٨" to listOf("8"),
+        "٩" to listOf("9"),
+        "٠" to listOf("0"),
+        "1" to listOf("١"),
+        "2" to listOf("٢"),
+        "3" to listOf("٣"),
+        "4" to listOf("٤"),
+        "5" to listOf("٥"),
+        "6" to listOf("٦"),
+        "7" to listOf("٧"),
+        "8" to listOf("٨"),
+        "9" to listOf("٩"),
+        "0" to listOf("٠"),
+        // Punctuation & diacritics
+        "\u060C" to listOf(","),
+        "," to listOf("\u060C"),
+        "\u061B" to listOf(";"),
+        "\u061F" to listOf("?"),
+        "%" to listOf("\u066A", "‰"),
+        "\u066A" to listOf("%", "‰"),
+        "." to ARABIC_PERIOD_VARIANTS
+    )
+
+    fun arabicVariantsFor(key: String): List<String> =
+        ARABIC_LONG_PRESS_VARIANTS[key].orEmpty()
+
+    fun isArabicCombiningMark(cp: Int): Boolean =
+        cp in 0x064B..0x065F || cp == 0x0670 || cp in 0x06D6..0x06ED
+
+    fun displayLabelForArabicVariant(token: String): String {
+        if (token.length == 1) {
+            val cp = token[0].code
+            if (cp in 0x064B..0x065F || cp == 0x0670) {
+                return "\u25CC$token"
+            }
+        }
+        return token
+    }
+
+    /**
+     * Computes UTF-16 length to delete on Backspace.
+     * For standalone Arabic diacritics (fathah, dammah, kasrah, shaddah, sukun, tanwin, superscript alef),
+     * removes only the trailing combining mark first so mis-tapped harakat do not erase the base letter;
+     * otherwise deletes the complete trailing grapheme/emoji cluster safely.
+     */
+    fun backspaceUtf16Count(beforeCursor: CharSequence?, language: String): Int {
+        if (beforeCursor == null || beforeCursor.isEmpty()) return 0
+        val lastCp = Character.codePointBefore(beforeCursor, beforeCursor.length)
+        if (lastCp in 0x064B..0x065F || lastCp == 0x0670) {
+            return Character.charCount(lastCp)
+        }
+        return EmojiInterfaceSpec.lastGraphemeUtf16Length(beforeCursor)
+    }
+
     const val TOOLBAR_HEIGHT_DP = 38f
     const val STATUS_BANNER_HEIGHT_DP = 24f
 
