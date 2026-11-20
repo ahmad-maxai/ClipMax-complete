@@ -363,7 +363,7 @@ export default function App() {
             handleChangeAppUiLocale(appUiLocale === "ar" ? "en" : "ar")
           }
         >
-          <div className="w-full h-[100dvh] max-h-[100dvh] flex flex-col bg-background text-foreground overflow-hidden select-none font-sans antialiased">
+          <div className="w-full h-full max-h-full flex flex-col bg-background text-foreground overflow-hidden select-none font-sans antialiased">
             {renderScreen()}
           </div>
         </AppShell>
@@ -435,6 +435,8 @@ function AppShell({
 
 const PREF_WEB_BTN_X = "clipmax_translator_btn_x_fraction";
 const PREF_WEB_BTN_Y = "clipmax_translator_btn_y_fraction";
+const DEFAULT_WEB_BTN_X = 1.0;
+const DEFAULT_WEB_BTN_Y = 0.60;
 
 function WebPreviewTranslatorButton({
   locale,
@@ -444,18 +446,19 @@ function WebPreviewTranslatorButton({
   onToggle: () => void;
 }) {
   const common = getUiText(locale).common;
-  const btnSize = 46;
+  const btnSize = 48;
   const margin = 12;
+  const [tapAnimating, setTapAnimating] = useState(false);
   const [fractions, setFractions] = useState<{ x: number; y: number }>(() => {
     try {
       const sx = Number(localStorage.getItem(PREF_WEB_BTN_X));
       const sy = Number(localStorage.getItem(PREF_WEB_BTN_Y));
       return {
-        x: Number.isFinite(sx) && localStorage.getItem(PREF_WEB_BTN_X) !== null ? Math.min(1, Math.max(0, sx)) : 0.96,
-        y: Number.isFinite(sy) && localStorage.getItem(PREF_WEB_BTN_Y) !== null ? Math.min(1, Math.max(0, sy)) : 0.80,
+        x: Number.isFinite(sx) && localStorage.getItem(PREF_WEB_BTN_X) !== null ? Math.min(1, Math.max(0, sx)) : DEFAULT_WEB_BTN_X,
+        y: Number.isFinite(sy) && localStorage.getItem(PREF_WEB_BTN_Y) !== null ? Math.min(1, Math.max(0, sy)) : DEFAULT_WEB_BTN_Y,
       };
     } catch {
-      return { x: 0.96, y: 0.80 };
+      return { x: DEFAULT_WEB_BTN_X, y: DEFAULT_WEB_BTN_Y };
     }
   });
   const [viewport, setViewport] = useState(() => ({
@@ -490,6 +493,7 @@ function WebPreviewTranslatorButton({
     <button
       type="button"
       aria-label={common.translatorButtonAria}
+      onAnimationEnd={() => setTapAnimating(false)}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         dragRef.current = {
@@ -529,6 +533,8 @@ function WebPreviewTranslatorButton({
             localStorage.setItem(PREF_WEB_BTN_Y, String(fractions.y));
           } catch {}
         } else {
+          setTapAnimating(false);
+          requestAnimationFrame(() => setTapAnimating(true));
           onToggle();
         }
       }}
@@ -540,11 +546,36 @@ function WebPreviewTranslatorButton({
         top: `${top}px`,
         width: `${btnSize}px`,
         height: `${btnSize}px`,
-        boxShadow: "0 0 12px 3px rgba(61, 179, 126, 0.25)",
       }}
-      className="fixed z-45 flex items-center justify-center rounded-full border border-mint/60 bg-surface text-[13px] font-bold text-foreground shadow-md touch-none select-none cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={`fixed z-45 flex items-center justify-center rounded-full touch-none select-none cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-transform duration-150 ${
+        tapAnimating ? "clipmax-tap-pulse-anim" : "active:scale-95"
+      }`}
     >
-      {common.translatorButtonLabel}
+      {/* Turquoise outer ambient halo */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -inset-2 rounded-full clipmax-glass-glow-anim"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(20, 184, 166, 0.34) 0%, rgba(13, 148, 136, 0.14) 55%, transparent 75%)",
+        }}
+      />
+      {/* Translucent liquid-glass body */}
+      <span
+        aria-hidden
+        className="pointer-events-none relative flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-[#0d9488]/70 dark:border-[#2dd4bf]/70 backdrop-blur-md shadow-[0_6px_18px_rgba(13,148,136,0.28)] bg-gradient-to-br from-white/90 via-[#effaf7]/80 to-[#d8ede7]/85 dark:from-[#3a4b4a]/80 dark:via-[#1e292b]/75 dark:to-[#11191b]/82"
+      >
+        {/* Inner light rim bevel */}
+        <span className="pointer-events-none absolute inset-[1px] rounded-full border border-white/80 dark:border-[#ccfbf1]/30" />
+        {/* Curved top specular sheen */}
+        <span className="pointer-events-none absolute inset-x-1 top-[2px] h-[56%] rounded-full bg-gradient-to-b from-white/60 dark:from-white/20 to-transparent" />
+        {/* Periodic diagonal light sweep */}
+        <span className="pointer-events-none absolute -inset-y-3 w-5 bg-gradient-to-r from-transparent via-white/65 dark:via-[#ccfbf1]/45 to-transparent clipmax-glass-shine-anim" />
+        {/* Crisp label */}
+        <span className="relative z-10 text-[12.5px] font-bold tracking-tight text-[#111916] dark:text-[#f8fafc]">
+          {common.translatorButtonLabel}
+        </span>
+      </span>
     </button>
   );
 }

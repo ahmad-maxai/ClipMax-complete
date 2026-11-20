@@ -192,11 +192,20 @@ class ArabicUiLocalizationAndTranslatorTest {
         assertEquals(480f, dragUp.finalPosition.x, 0.5f)
         assertEquals(620f, dragUp.finalPosition.y, 0.5f)
 
-        // All theme palettes return distinct, non-zero visual styles
+        // Raised default vertical fraction clears bottom bars/CTAs cleanly across screen sizes
+        assertTrue(FloatingButtonSpec.DEFAULT_Y_FRACTION in 0.50f..0.68f)
+        assertTrue(FloatingButtonSpec.TAP_SCALE_PEAK in 1.05f..1.20f)
+        assertTrue(FloatingButtonSpec.SHINE_SWEEP_INTERVAL_MS > FloatingButtonSpec.SHINE_SWEEP_DURATION_MS)
+
+        // All theme palettes return distinct, non-zero liquid-glass visual styles
         for ((theme, night) in listOf("system" to false, "light" to false, "dark" to true, "classic" to false, "classic" to true)) {
             val style = FloatingButtonSpec.resolveStyle(KeyboardLayoutSpec.resolveThemePalette(theme, night))
             assertNotEquals(style.buttonBgColor, style.textColor)
             assertNotEquals(0, style.glowInnerColor)
+            assertNotEquals(0, style.glassTopColor)
+            assertNotEquals(0, style.glassBottomColor)
+            assertNotEquals(0, style.rimHighlightColor)
+            assertNotEquals(0, style.shineColor)
         }
     }
 }

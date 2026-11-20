@@ -16,13 +16,17 @@ internal object FloatingButtonSpec {
     const val PREF_BUTTON_X_FRACTION = "translator_btn_x_fraction"
     const val PREF_BUTTON_Y_FRACTION = "translator_btn_y_fraction"
 
-    const val BUTTON_DIAMETER_DP = 46f
-    const val OUTER_HALO_DIAMETER_DP = 58f
+    const val BUTTON_DIAMETER_DP = 48f
+    const val OUTER_HALO_DIAMETER_DP = 64f
     const val EDGE_MARGIN_DP = 8f
     const val TOUCH_SLOP_DP = 8f
 
     const val DEFAULT_X_FRACTION = 1.0f
-    const val DEFAULT_Y_FRACTION = 0.80f
+    const val DEFAULT_Y_FRACTION = 0.60f
+
+    const val SHINE_SWEEP_INTERVAL_MS = 4600L
+    const val SHINE_SWEEP_DURATION_MS = 850L
+    const val TAP_SCALE_PEAK = 1.13f
 
     data class PositionPx(
         val x: Float,
@@ -39,7 +43,13 @@ internal object FloatingButtonSpec {
         val buttonBorderColor: Int,
         val textColor: Int,
         val glowInnerColor: Int,
-        val glowMidColor: Int
+        val glowMidColor: Int,
+        val glassTopColor: Int = buttonBgColor,
+        val glassMidColor: Int = buttonBgColor,
+        val glassBottomColor: Int = buttonBgColor,
+        val rimHighlightColor: Int = 0xCCFFFFFF.toInt(),
+        val specularTopColor: Int = 0x6BFFFFFF.toInt(),
+        val shineColor: Int = 0x6BFFFFFF.toInt()
     )
 
     fun buttonLabelForLocale(appUiLocale: String?): String =
@@ -51,32 +61,56 @@ internal object FloatingButtonSpec {
     fun resolveStyle(palette: KeyboardLayoutSpec.ImeThemePalette): VisualStyle {
         return when {
             palette.isClassicTheme && !palette.isNightMode -> VisualStyle(
-                buttonBgColor = 0xF5FFFFFF.toInt(),
-                buttonBorderColor = palette.colorAccent,
+                buttonBgColor = 0xDDF4FAF8.toInt(),
+                buttonBorderColor = 0xB80D9488.toInt(),
                 textColor = 0xFF0F172A.toInt(),
-                glowInnerColor = 0x3D0D9488.toInt(),
-                glowMidColor = 0x170D9488.toInt()
+                glowInnerColor = 0x520D9488.toInt(),
+                glowMidColor = 0x1F14B8A6.toInt(),
+                glassTopColor = 0xEDFFFFFF.toInt(),
+                glassMidColor = 0xCEF0FAF7.toInt(),
+                glassBottomColor = 0xD4D7ECE6.toInt(),
+                rimHighlightColor = 0xD6FFFFFF.toInt(),
+                specularTopColor = 0x73FFFFFF.toInt(),
+                shineColor = 0x75FFFFFF.toInt()
             )
             palette.isClassicTheme -> VisualStyle(
-                buttonBgColor = 0xF21B2620.toInt(),
-                buttonBorderColor = palette.colorAccent,
-                textColor = 0xFFEAF1ED.toInt(),
-                glowInnerColor = 0x452DD4BF.toInt(),
-                glowMidColor = 0x1A2DD4BF.toInt()
+                buttonBgColor = 0xC41B2623.toInt(),
+                buttonBorderColor = 0xB82DD4BF.toInt(),
+                textColor = 0xFFF1F8F5.toInt(),
+                glowInnerColor = 0x592DD4BF.toInt(),
+                glowMidColor = 0x222DD4BF.toInt(),
+                glassTopColor = 0xCC354A45.toInt(),
+                glassMidColor = 0xBF1A2724.toInt(),
+                glassBottomColor = 0xD1101A17.toInt(),
+                rimHighlightColor = 0x59CCFBF1.toInt(),
+                specularTopColor = 0x3DE2FAF5.toInt(),
+                shineColor = 0x52CCFBF1.toInt()
             )
             !palette.isNightMode -> VisualStyle(
-                buttonBgColor = 0xF5FFFFFF.toInt(),
-                buttonBorderColor = 0xFF0D9488.toInt(),
+                buttonBgColor = 0xDDF5FBFA.toInt(),
+                buttonBorderColor = 0xB80D9488.toInt(),
                 textColor = 0xFF111916.toInt(),
-                glowInnerColor = 0x380D9488.toInt(),
-                glowMidColor = 0x140D9488.toInt()
+                glowInnerColor = 0x4E0D9488.toInt(),
+                glowMidColor = 0x1C14B8A6.toInt(),
+                glassTopColor = 0xEEFFFFFF.toInt(),
+                glassMidColor = 0xD0F1FAF8.toInt(),
+                glassBottomColor = 0xD6DAEFE9.toInt(),
+                rimHighlightColor = 0xDBFFFFFF.toInt(),
+                specularTopColor = 0x78FFFFFF.toInt(),
+                shineColor = 0x78FFFFFF.toInt()
             )
             else -> VisualStyle(
-                buttonBgColor = 0xF22B2F33.toInt(),
-                buttonBorderColor = 0xFF2DD4BF.toInt(),
-                textColor = 0xFFF1F5F9.toInt(),
-                glowInnerColor = 0x422DD4BF.toInt(),
-                glowMidColor = 0x182DD4BF.toInt()
+                buttonBgColor = 0xC420292B.toInt(),
+                buttonBorderColor = 0xB82DD4BF.toInt(),
+                textColor = 0xFFF8FAFC.toInt(),
+                glowInnerColor = 0x592DD4BF.toInt(),
+                glowMidColor = 0x222DD4BF.toInt(),
+                glassTopColor = 0xCC3B4C4D.toInt(),
+                glassMidColor = 0xBF1F292B.toInt(),
+                glassBottomColor = 0xD1121A1D.toInt(),
+                rimHighlightColor = 0x59CCFBF1.toInt(),
+                specularTopColor = 0x3EE2FAF5.toInt(),
+                shineColor = 0x54CCFBF1.toInt()
             )
         }
     }

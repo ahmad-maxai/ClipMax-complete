@@ -282,7 +282,7 @@ export function KeyboardOnboardingGuide({
               ? { duration: 0 }
               : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
           }
-          className="w-full max-w-sm rounded-3xl border border-border bg-surface p-6 text-center shadow-2xl"
+          className="w-full max-w-sm max-h-full overflow-y-auto rounded-3xl border border-border bg-surface p-6 text-center shadow-2xl"
         >
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-mint-soft text-mint">
             <CheckCircle2 className="h-8 w-8" />
@@ -455,7 +455,7 @@ export function KeyboardOnboardingGuide({
                   ),
                 }
               : {
-                  top: Math.min(viewport.height - 170, cutY + cutH + 46),
+                  top: Math.max(12, Math.min(viewport.height - 185, cutY + cutH + 46)),
                 }
           }
           className="pointer-events-auto fixed inset-x-4 mx-auto max-w-md rounded-2xl border border-border bg-surface p-4 shadow-2xl text-start"
