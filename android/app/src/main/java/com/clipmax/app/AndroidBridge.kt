@@ -335,6 +335,8 @@ class AndroidBridge(
         try {
             val prefs = CapturePreferences.preferences(context)
             CapturePreferences.setMode(prefs, retention)
+            CapturePreferences.cleanupExpired(store, prefs)
+            CaptureExpiryReceiver.schedule(context)
         } catch (e: Throwable) {
             // ignore
         }
@@ -365,6 +367,8 @@ class AndroidBridge(
         try {
             val prefs = CapturePreferences.preferences(context)
             CapturePreferences.setCustomRetention(prefs, duration, unit)
+            CapturePreferences.cleanupExpired(store, prefs)
+            CaptureExpiryReceiver.schedule(context)
         } catch (e: Throwable) {
             // ignore
         }

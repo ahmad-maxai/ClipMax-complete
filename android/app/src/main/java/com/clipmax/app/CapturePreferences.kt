@@ -17,6 +17,7 @@ internal object CapturePreferences {
     private const val LAST_CLIPBOARD_SIGNATURE_KEY = "last_clipboard_signature"
     private const val LAST_CLIP_TIMESTAMP_KEY = "last_clipboard_timestamp"
     private const val LAST_CAPTURED_IDS_KEY = "last_captured_ids"
+    private const val BASELINE_INITIALIZED_KEY = "baseline_initialized"
     private const val EXPIRY_PREFIX = "expiry:"
 
     val modes = listOf("forever", "1h", "6h", "24h", "72h", "off")
@@ -31,6 +32,13 @@ internal object CapturePreferences {
 
     fun preferences(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun isBaselineInitialized(preferences: SharedPreferences): Boolean =
+        preferences.getBoolean(BASELINE_INITIALIZED_KEY, false)
+
+    fun markBaselineInitialized(preferences: SharedPreferences) {
+        preferences.edit().putBoolean(BASELINE_INITIALIZED_KEY, true).commit()
+    }
 
     fun customDuration(preferences: SharedPreferences): Int =
         preferences.getInt(CUSTOM_DURATION_KEY, DEFAULT_CUSTOM_DURATION).let {
@@ -48,12 +56,12 @@ internal object CapturePreferences {
         preferences.edit()
             .putInt(CUSTOM_DURATION_KEY, safeDur)
             .putString(CUSTOM_UNIT_KEY, safeUnit)
-            .apply()
+            .commit()
     }
 
     fun setMode(preferences: SharedPreferences, value: String) {
         val safeMode = if (isValidMode(value)) value else DEFAULT_MODE
-        preferences.edit().putString(MODE_KEY, safeMode).apply()
+        preferences.edit().putString(MODE_KEY, safeMode).commit()
     }
 
     fun parseCustomDurationAndUnit(str: String): Long? {
@@ -106,7 +114,7 @@ internal object CapturePreferences {
         if (transition.rememberedEnabledMode != null) {
             editor.putString(LAST_ENABLED_MODE_KEY, transition.rememberedEnabledMode)
         }
-        editor.apply()
+        editor.commit()
     }
 
     fun lastClipboardSignature(preferences: SharedPreferences): String? =
@@ -125,7 +133,7 @@ internal object CapturePreferences {
             .orEmpty()
 
     fun markClipboardSignature(preferences: SharedPreferences, signature: String) {
-        preferences.edit().putString(LAST_CLIPBOARD_SIGNATURE_KEY, signature).apply()
+        preferences.edit().putString(LAST_CLIPBOARD_SIGNATURE_KEY, signature).commit()
     }
 
     fun markClipboardState(
@@ -138,19 +146,19 @@ internal object CapturePreferences {
             .putString(LAST_CLIPBOARD_SIGNATURE_KEY, signature)
             .putLong(LAST_CLIP_TIMESTAMP_KEY, clipTimestamp)
             .putString(LAST_CAPTURED_IDS_KEY, itemIds.joinToString(","))
-            .apply()
+            .commit()
     }
 
     fun onItemsDeleted(preferences: SharedPreferences, deletedIds: Collection<String>) {
         if (deletedIds.isEmpty()) return
         val lastIds = lastCapturedIds(preferences)
         if (lastIds.any { it in deletedIds }) {
-            preferences.edit().remove(LAST_CAPTURED_IDS_KEY).apply()
+            preferences.edit().remove(LAST_CAPTURED_IDS_KEY).commit()
         }
     }
 
     fun onAllItemsCleared(preferences: SharedPreferences) {
-        preferences.edit().remove(LAST_CAPTURED_IDS_KEY).apply()
+        preferences.edit().remove(LAST_CAPTURED_IDS_KEY).commit()
     }
 
     fun formatCustomLabel(duration: Int, unit: String): String {
@@ -185,7 +193,6 @@ internal object CapturePreferences {
 
     fun isEnabled(value: String): Boolean = value != "off"
 
-    /** Returns null for permanent storage or disabled capture; otherwise calculates millisecond duration. */
     fun parseRetentionMillis(value: String, preferences: SharedPreferences? = null): Long? {
         val trimmed = value.trim().lowercase()
         return when {
@@ -212,7 +219,7 @@ internal object CapturePreferences {
 
     fun setExpiry(preferences: SharedPreferences, itemId: String, expiresAtMillis: Long) {
         if (expiresAtMillis > 0L) {
-            preferences.edit().putLong(expiryKey(itemId), expiresAtMillis).apply()
+            preferences.edit().putLong(expiryKey(itemId), expiresAtMillis).commit()
         } else {
             removeExpiry(preferences, itemId)
         }
@@ -221,11 +228,6 @@ internal object CapturePreferences {
     fun hasFiniteRetention(preferences: SharedPreferences, value: String = mode(preferences)): Boolean =
         parseRetentionMillis(value, preferences) != null
 
-    /**
-     * Recalculates a fresh expiry timestamp starting at [now] using the current active retention
-     * setting when an item is unlocked. Returns null (and clears any expiry ledger entry) if
-     * active retention is Forever or Off. Never reuses an old expired timestamp.
-     */
     fun recalculateExpiryOnUnlock(
         preferences: SharedPreferences,
         itemId: String,
@@ -242,7 +244,7 @@ internal object CapturePreferences {
             editor.putLong(expiryKey(itemId), target)
             target
         }
-        editor.apply()
+        editor.commit()
         return nextExpiryAt
     }
 
@@ -251,17 +253,17 @@ internal object CapturePreferences {
         val editor = preferences.edit()
         if (expiry == null) editor.remove(expiryKey(itemId))
         else editor.putLong(expiryKey(itemId), now + expiry)
-        editor.apply()
+        editor.commit()
     }
 
     fun removeExpiry(preferences: SharedPreferences, itemId: String) {
-        preferences.edit().remove(expiryKey(itemId)).apply()
+        preferences.edit().remove(expiryKey(itemId)).commit()
     }
 
     fun clearExpiryLedger(preferences: SharedPreferences) {
         val editor = preferences.edit()
         preferences.all.keys.filter { it.startsWith(EXPIRY_PREFIX) }.forEach(editor::remove)
-        editor.apply()
+        editor.commit()
     }
 
     fun nextExpiry(preferences: SharedPreferences): Long? = preferences.all
@@ -270,26 +272,42 @@ internal object CapturePreferences {
         .mapNotNull { it.value as? Long }
         .minOrNull()
 
-    /** Deletes expired capture cards; pinned and expiry-locked items are NEVER deleted by retention cleanup. */
     @Synchronized
     fun cleanupExpired(store: ClipStore, preferences: SharedPreferences, now: Long = System.currentTimeMillis()): Int {
         val deletedIds = mutableListOf<String>()
         val editor = preferences.edit()
+        val currentMode = mode(preferences)
+        val finiteDuration = parseRetentionMillis(currentMode, preferences)
+
+        // Backfill/reconcile any items missing expiry metadata if finite retention is active
+        if (finiteDuration != null) {
+            for (item in store.listItems()) {
+                if (item.pinned || item.isExpiryLocked) continue
+                val expKey = expiryKey(item.id)
+                if (!preferences.contains(expKey)) {
+                    val assignedExpiry = item.createdAt + finiteDuration
+                    editor.putLong(expKey, assignedExpiry)
+                }
+            }
+            editor.commit()
+        }
+
         preferences.all.forEach { (key, value) ->
-            if (!key.startsWith(EXPIRY_PREFIX) || value !is Long || value > now) return@forEach
+            if (!key.startsWith(EXPIRY_PREFIX) || value !is Long) return@forEach
             val id = key.removePrefix(EXPIRY_PREFIX)
             val existing = store.getItem(id)
             if (existing != null && (existing.pinned || existing.isExpiryLocked)) {
-                // Pinned and expiry-locked items must never be deleted by retention cleanup
                 editor.remove(key)
                 return@forEach
             }
-            if (existing == null || runCatching { store.delete(id) }.getOrDefault(false)) {
-                if (existing != null) deletedIds.add(id)
-                editor.remove(key)
+            if (value <= now) {
+                if (existing == null || runCatching { store.delete(id) }.getOrDefault(false)) {
+                    if (existing != null) deletedIds.add(id)
+                    editor.remove(key)
+                }
             }
         }
-        editor.apply()
+        editor.commit()
         if (deletedIds.isNotEmpty()) {
             onItemsDeleted(preferences, deletedIds)
         }

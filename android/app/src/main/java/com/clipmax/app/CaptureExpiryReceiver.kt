@@ -31,18 +31,23 @@ class CaptureExpiryReceiver : BroadcastReceiver() {
 
         fun schedule(context: Context) {
             val app = context.applicationContext
-            val alarm = app.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val alarm = app.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
             val intent = Intent(app, CaptureExpiryReceiver::class.java).setAction(ACTION_EXPIRE)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             val operation = PendingIntent.getBroadcast(app, REQUEST_CODE, intent, flags)
             val next = CapturePreferences.nextExpiry(CapturePreferences.preferences(app))
             if (next == null) {
-                alarm.cancel(operation)
-                operation.cancel()
+                runCatching { alarm.cancel(operation) }
+                runCatching { operation.cancel() }
             } else {
                 val trigger = next.coerceAtLeast(System.currentTimeMillis() + 1_000L)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, operation)
-                else alarm.set(AlarmManager.RTC_WAKEUP, trigger, operation)
+                runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, operation)
+                    } else {
+                        alarm.set(AlarmManager.RTC_WAKEUP, trigger, operation)
+                    }
+                }
             }
         }
     }

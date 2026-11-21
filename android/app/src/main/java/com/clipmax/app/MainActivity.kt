@@ -98,6 +98,11 @@ class MainActivity : Activity() {
 
         store = ClipStore(filesDir)
         ClipStore.addChangeListener(storeChangeListener)
+        runCatching {
+            val prefs = CapturePreferences.preferences(this)
+            CapturePreferences.cleanupExpired(store, prefs)
+            CaptureExpiryReceiver.schedule(this)
+        }
 
         webView = WebView(this).apply {
             setBackgroundColor(if (resolveCompanionIsDark()) 0xFF202124.toInt() else 0xFFF4F7F5.toInt())

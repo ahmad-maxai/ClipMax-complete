@@ -587,4 +587,34 @@ internal object AppUiStrings {
                 InputFieldPolicy.ActionKeyKind.ENTER -> "Enter"
             }
         }
+
+    fun emojiRecentLabel(locale: String?): String =
+        if (isArabic(locale)) "الرموز المستخدمة مؤخراً" else "Recent"
+
+    fun emojiEmptyRecents(locale: String?): String =
+        if (isArabic(locale)) "لا توجد رموز مستخدمة مؤخراً. اضغط على أي رمز لإبقائه هنا." else "No recent emojis yet. Tap any emoji to keep it here."
+
+    fun stickerTabLabel(locale: String?): String =
+        if (isArabic(locale)) "الملصقات" else "Stickers"
+
+    fun gifTabLabel(locale: String?): String =
+        if (isArabic(locale)) "صور GIF" else "GIFs"
+
+    fun kaomojiTabLabel(locale: String?): String =
+        if (isArabic(locale)) "الرموز التعبيرية النصية" else "Kaomoji"
+
+    fun searchMediaPlaceholder(locale: String?): String =
+        if (isArabic(locale)) "بحث…" else "Search…"
+
+    fun cancelLabel(locale: String?): String =
+        if (isArabic(locale)) "إلغاء" else "Cancel"
+
+    fun removeFromRecents(locale: String?): String =
+        if (isArabic(locale)) "إزالة من الأخيرة" else "Remove from recent"
+
+    fun returnToKeyboardA11y(locale: String?): String =
+        if (isArabic(locale)) "العودة إلى لوحة المفاتيح" else "Return to keyboard"
+
+    fun deleteKeyA11y(locale: String?): String =
+        if (isArabic(locale)) "حذف" else "Delete"
 }
