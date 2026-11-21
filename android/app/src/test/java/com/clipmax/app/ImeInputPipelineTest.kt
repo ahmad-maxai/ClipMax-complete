@@ -114,7 +114,13 @@ class ImeInputPipelineTest {
         assertFalse(sentenceStart!!.midWord)
         assertTrue(sentenceStart.isSentenceStart)
         assertEquals("wrld", sentenceStart.composingWord)
-        assertEquals("Hello", sentenceStart.previousWord)
+        assertNull(sentenceStart.previousWord)
+
+        val midSentence = ImeInputPipeline.extractComposingContext("Hello wrld", "", hasSelection = false)
+        assertNotNull(midSentence)
+        assertFalse(midSentence!!.isSentenceStart)
+        assertEquals("wrld", midSentence.composingWord)
+        assertEquals("Hello", midSentence.previousWord)
 
         val afterSpace = ImeInputPipeline.extractComposingContext("Good ", "", hasSelection = false)
         assertNotNull(afterSpace)
@@ -185,7 +191,7 @@ class ImeInputPipelineTest {
         )
         val reverted = history.tryImmediateBackspaceRevertAutocorrect(gateway())
         assertEquals("teh", reverted)
-        assertTrue(buffer.toString().endsWith("teh "))
+        assertEquals("Prefix ClipMax snapshot paste teh", buffer.toString())
     }
 
     @Test
