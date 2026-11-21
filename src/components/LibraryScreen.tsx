@@ -210,7 +210,7 @@ export function LibraryScreen({
   };
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
+    <div className="flex h-full max-h-full w-full flex-col bg-background overflow-hidden">
       {/* Hidden file input for SAF document selection */}
       <input
         ref={fileInputRef}

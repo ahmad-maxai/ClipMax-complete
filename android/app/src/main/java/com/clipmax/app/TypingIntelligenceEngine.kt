@@ -379,6 +379,23 @@ internal class TypingIntelligenceEngine(wordsInFrequencyOrder: List<String>) {
         return false
     }
 
+    fun quickHighConfidenceCorrection(
+        composingWord: String,
+        fullTokenBeforeCursor: String,
+        isSentenceStart: Boolean,
+        suppressedWordsLower: Set<String> = emptySet()
+    ): String? {
+        if (composingWord.isEmpty() || containsArabicScript(composingWord) || containsArabicScript(fullTokenBeforeCursor) || !isLatinAsciiWord(composingWord)) {
+            return null
+        }
+        val lower = composingWord.lowercase(Locale.ROOT)
+        if (lower in suppressedWordsLower || isKnownWord(composingWord) || shouldProtectFromAutocorrect(composingWord, fullTokenBeforeCursor, isSentenceStart)) {
+            return null
+        }
+        val exactTypo = HIGH_CONFIDENCE_TYPOS[lower] ?: return null
+        return applyWordCasing(composingWord, exactTypo)
+    }
+
     fun analyzeWord(
         composingWord: String,
         fullTokenBeforeCursor: String,

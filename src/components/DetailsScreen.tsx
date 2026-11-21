@@ -225,7 +225,7 @@ export function DetailsScreen({
   ];
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
+    <div className="flex h-full max-h-full w-full flex-col bg-background overflow-hidden">
       <TopBar
         left={
           <IconBtn label={ui.common.back} onClick={() => nav({ name: "library" })}>

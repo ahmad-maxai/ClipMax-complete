@@ -84,6 +84,9 @@ class ClipStore(root: File) {
 
         private val storeLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
         private val changeListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+        private val changeVersionCounter = java.util.concurrent.atomic.AtomicLong(1L)
+
+        fun currentChangeVersion(): Long = changeVersionCounter.get()
 
         private fun lockFor(base: File): Any {
             val key = runCatching { base.canonicalPath }.getOrElse { base.absolutePath }
@@ -99,6 +102,7 @@ class ClipStore(root: File) {
         }
 
         private fun notifyChanged() {
+            changeVersionCounter.incrementAndGet()
             changeListeners.forEach { listener ->
                 runCatching { listener() }
             }

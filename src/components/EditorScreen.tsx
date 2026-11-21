@@ -228,7 +228,7 @@ export function EditorScreen({
   };
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
+    <div className="flex h-full max-h-full w-full flex-col bg-background overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"

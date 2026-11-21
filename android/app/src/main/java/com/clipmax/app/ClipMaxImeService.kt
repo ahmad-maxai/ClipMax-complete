@@ -48,6 +48,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -68,12 +70,49 @@ class ClipMaxImeService : InputMethodService() {
     private var inputSessionActive = false
     private var inputViewActive = false
     @Volatile private var captureMode = CapturePreferences.DEFAULT_MODE
+    private fun daemonThreadFactory(name: String): ThreadFactory = ThreadFactory { runnable ->
+        Thread(runnable, name).apply { isDaemon = true }
+    }
+
+    private fun submitSafely(executor: ExecutorService, task: () -> Unit): Boolean {
+        if (serviceDestroyed || executor.isShutdown) return false
+        return try {
+            executor.execute {
+                if (!serviceDestroyed) {
+                    task()
+                }
+            }
+            true
+        } catch (_: RejectedExecutionException) {
+            false
+        }
+    }
+
+    private fun submitFutureSafely(executor: ExecutorService, task: () -> Unit): Future<*>? {
+        if (serviceDestroyed || executor.isShutdown) return null
+        return try {
+            executor.submit {
+                if (!serviceDestroyed) {
+                    task()
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            null
+        }
+    }
+
     private val main = Handler(Looper.getMainLooper())
-    private val io: ExecutorService = Executors.newSingleThreadExecutor()
-    private val inserter: ExecutorService = Executors.newSingleThreadExecutor()
-    private val suggestExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val io: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("ClipMax-IME-IO"))
+    private val inserter: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("ClipMax-IME-Insert"))
+    private val suggestExecutor: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("ClipMax-IME-Suggest"))
+    private val icQueryExecutor: ExecutorService = Executors.newSingleThreadExecutor(daemonThreadFactory("ClipMax-IME-IC"))
     @Volatile private var generation = 0
     private var listRequest = 0
+    @Volatile private var lastLoadedStoreVersion = -1L
+    private var lastRenderedKeyboardRowsSig = ""
+    private var lastRenderedClipChipsSig = ""
+    private var lastRenderedPasteCapsuleSig = ""
+    private val shadowEditor = ImeInputPipeline.EditorShadowBuffer()
     private var isPasswordTarget = false
     private var fieldCapabilities = InputFieldPolicy.evaluate(InputType.TYPE_CLASS_TEXT, 0)
     private var currentEditorTarget = InsertionHistoryManager.EditorTarget(null, 0, 0, 0L)
@@ -251,18 +290,72 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private var lastRenderedThemeKey: String = ""
+    @Volatile private var prefsCached = false
+    @Volatile private var cachedAppTheme: String = "system"
+    @Volatile private var cachedAppUiLocale: String = SettingsPanelSpec.UI_LOCALE_ENGLISH
+    @Volatile private var cachedKeyboardLanguage: String = SettingsPanelSpec.LANG_ENGLISH
+    @Volatile private var cachedKeyboardHeight: String = "normal"
+    @Volatile private var cachedOneHandedMode: String = "off"
+    @Volatile private var cachedAutocompleteEnabled: Boolean = true
+    @Volatile private var cachedAutoCorrectEnabled: Boolean = true
+    @Volatile private var cachedSuggestionsEnabled: Boolean = true
+    @Volatile private var cachedThemePalette: KeyboardLayoutSpec.ImeThemePalette? = null
+
+    private fun ensurePrefsCached() {
+        if (prefsCached) return
+        refreshCachedPreferences()
+    }
+
+    private fun refreshCachedPreferences() {
+        val prefs = themePreferences
+        cachedAppTheme = SettingsPanelSpec.normalizeThemeValue(
+            runCatching { prefs.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
+        )
+        cachedAppUiLocale = SettingsPanelSpec.normalizeAppUiLocale(
+            runCatching { prefs.getString(SettingsPanelSpec.PREF_APP_UI_LOCALE, SettingsPanelSpec.UI_LOCALE_ENGLISH) }.getOrNull()
+        )
+        cachedKeyboardLanguage = SettingsPanelSpec.normalizeLanguageValue(
+            runCatching { prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH) }.getOrNull()
+        )
+        cachedKeyboardHeight = runCatching {
+            prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, "normal")
+        }.getOrNull() ?: "normal"
+        cachedOneHandedMode = runCatching {
+            prefs.getString(SettingsPanelSpec.PREF_ONE_HANDED, "off")
+        }.getOrNull() ?: "off"
+        cachedAutocompleteEnabled = runCatching { prefs.getBoolean("typing_autocomplete", true) }.getOrDefault(true)
+        cachedAutoCorrectEnabled = runCatching { prefs.getBoolean("typing_autocorrect", true) }.getOrDefault(true)
+        cachedSuggestionsEnabled = runCatching { prefs.getBoolean("typing_suggestions", true) }.getOrDefault(true)
+        cachedThemePalette = KeyboardLayoutSpec.resolveThemePalette(cachedAppTheme, isSystemNightMode())
+        prefsCached = true
+    }
+
+    private fun refreshCachedThemePalette() {
+        ensurePrefsCached()
+        cachedThemePalette = KeyboardLayoutSpec.resolveThemePalette(cachedAppTheme, isSystemNightMode())
+    }
+
+    private fun currentHeightPref(): String {
+        ensurePrefsCached()
+        return cachedKeyboardHeight
+    }
+
+    private fun currentOneHandedMode(): String {
+        ensurePrefsCached()
+        return cachedOneHandedMode
+    }
 
     private val appTheme: String
-        get() = SettingsPanelSpec.normalizeThemeValue(
-            runCatching { themePreferences.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
-        )
+        get() {
+            ensurePrefsCached()
+            return cachedAppTheme
+        }
 
     private val appUiLocale: String
-        get() = SettingsPanelSpec.normalizeAppUiLocale(
-            runCatching {
-                themePreferences.getString(SettingsPanelSpec.PREF_APP_UI_LOCALE, SettingsPanelSpec.UI_LOCALE_ENGLISH)
-            }.getOrNull()
-        )
+        get() {
+            ensurePrefsCached()
+            return cachedAppUiLocale
+        }
 
     private val isUiRtl: Boolean
         get() = AppUiStrings.isRtl(keyboardLanguage)
@@ -271,35 +364,45 @@ class ClipMaxImeService : InputMethodService() {
         get() = if (isUiRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
 
     private val keyboardLanguage: String
-        get() = SettingsPanelSpec.normalizeLanguageValue(
-            runCatching {
-                themePreferences.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH)
-            }.getOrNull()
-        )
+        get() {
+            ensurePrefsCached()
+            return cachedKeyboardLanguage
+        }
 
     private fun isSystemNightMode(): Boolean =
         (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private fun computeThemeStateKey(): String =
-        "${appTheme}:${keyboardLanguage}:${isNightMode}:${isClassicTheme}:${keyboardLanguage}"
+        "${appTheme}:${keyboardLanguage}:${isNightMode}:${isClassicTheme}:${cachedOneHandedMode}:${cachedKeyboardHeight}"
 
     private val currentThemePalette: KeyboardLayoutSpec.ImeThemePalette
         get() {
-            val saved = runCatching { themePreferences.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
-            return KeyboardLayoutSpec.resolveThemePalette(saved, isSystemNightMode())
+            ensurePrefsCached()
+            return cachedThemePalette ?: KeyboardLayoutSpec.resolveThemePalette(cachedAppTheme, isSystemNightMode()).also {
+                cachedThemePalette = it
+            }
         }
 
     private val isClassicTheme: Boolean
         get() = currentThemePalette.isClassicTheme
 
     private val isAutocompleteEnabled: Boolean
-        get() = themePreferences.getBoolean("typing_autocomplete", true)
+        get() {
+            ensurePrefsCached()
+            return cachedAutocompleteEnabled
+        }
 
     private val isAutoCorrectEnabled: Boolean
-        get() = themePreferences.getBoolean("typing_autocorrect", true)
+        get() {
+            ensurePrefsCached()
+            return cachedAutoCorrectEnabled
+        }
 
     private val isSuggestionsEnabled: Boolean
-        get() = themePreferences.getBoolean("typing_suggestions", true)
+        get() {
+            ensurePrefsCached()
+            return cachedSuggestionsEnabled
+        }
 
     // Theme Color Tokens (Evaluated dynamically, reads app preference before system night mode)
     private val isNightMode: Boolean get() = currentThemePalette.isNightMode
@@ -341,12 +444,16 @@ class ClipMaxImeService : InputMethodService() {
 
     private val capturePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == CapturePreferences.MODE_KEY) {
-            captureMode = CapturePreferences.mode(capturePreferences)
-            updateCaptureMonitoring()
-            main.post {
-                updateCaptureStatus()
-                updateClipboardCaptureToggleUI()
-                renderClipChips()
+            val nextMode = CapturePreferences.mode(capturePreferences)
+            if (nextMode != captureMode) {
+                captureMode = nextMode
+                updateCaptureMonitoring()
+                main.post {
+                    if (!serviceDestroyed) {
+                        updateCaptureStatus()
+                        updateClipboardCaptureToggleUI()
+                    }
+                }
             }
         }
     }
@@ -354,6 +461,7 @@ class ClipMaxImeService : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         serviceDestroyed = false
+        refreshCachedPreferences()
         store = ClipStore(filesDir)
         ClipStore.addChangeListener(storeChangeListener)
         capturePreferences = CapturePreferences.preferences(this)
@@ -361,19 +469,60 @@ class ClipMaxImeService : InputMethodService() {
         capturePreferences.registerOnSharedPreferenceChangeListener(capturePreferenceListener)
 
         // Observe in-app theme, UI locale, keyboard language & typing preference changes in real-time
-        themePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        themePreferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
             when (key) {
                 SettingsPanelSpec.PREF_APP_THEME -> main.post {
-                    window?.window?.let { applySystemNavBarTheme(it) }
-                    renderFullImeView()
+                    if (serviceDestroyed) return@post
+                    cachedAppTheme = SettingsPanelSpec.normalizeThemeValue(
+                        runCatching { prefs.getString(SettingsPanelSpec.PREF_APP_THEME, "system") }.getOrNull()
+                    )
+                    refreshCachedThemePalette()
+                    if (computeThemeStateKey() != lastRenderedThemeKey) {
+                        window?.window?.let { applySystemNavBarTheme(it) }
+                        renderFullImeView()
+                    }
                 }
                 SettingsPanelSpec.PREF_APP_UI_LOCALE -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedAppUiLocale = SettingsPanelSpec.normalizeAppUiLocale(
+                        runCatching { prefs.getString(SettingsPanelSpec.PREF_APP_UI_LOCALE, SettingsPanelSpec.UI_LOCALE_ENGLISH) }.getOrNull()
+                    )
                     onAppUiLocalePreferenceChanged()
                 }
                 SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedKeyboardLanguage = SettingsPanelSpec.normalizeLanguageValue(
+                        runCatching { prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, SettingsPanelSpec.LANG_ENGLISH) }.getOrNull()
+                    )
                     onKeyboardLanguagePreferenceChanged()
                 }
-                "typing_autocomplete", "typing_autocorrect", "typing_suggestions" -> main.post {
+                SettingsPanelSpec.PREF_KEYBOARD_HEIGHT -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedKeyboardHeight = runCatching {
+                        prefs.getString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, "normal")
+                    }.getOrNull() ?: "normal"
+                    applyCanonicalViewportHeightInPlace()
+                }
+                SettingsPanelSpec.PREF_ONE_HANDED -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedOneHandedMode = runCatching {
+                        prefs.getString(SettingsPanelSpec.PREF_ONE_HANDED, "off")
+                    }.getOrNull() ?: "off"
+                    applyOneHandedPadding()
+                }
+                "typing_autocomplete" -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedAutocompleteEnabled = runCatching { prefs.getBoolean("typing_autocomplete", true) }.getOrDefault(true)
+                    onTypingSettingsChanged()
+                }
+                "typing_autocorrect" -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedAutoCorrectEnabled = runCatching { prefs.getBoolean("typing_autocorrect", true) }.getOrDefault(true)
+                    onTypingSettingsChanged()
+                }
+                "typing_suggestions" -> main.post {
+                    if (serviceDestroyed) return@post
+                    cachedSuggestionsEnabled = runCatching { prefs.getBoolean("typing_suggestions", true) }.getOrDefault(true)
                     onTypingSettingsChanged()
                 }
             }
@@ -381,7 +530,7 @@ class ClipMaxImeService : InputMethodService() {
         themePreferences.registerOnSharedPreferenceChangeListener(themePreferenceListener)
 
         // Load bundled local-only English dictionary off the main UI thread
-        io.execute {
+        submitSafely(io) {
             val loaded = runCatching {
                 resources.openRawResource(R.raw.en_words).use { stream ->
                     TypingIntelligenceEngine.fromStream(stream)
@@ -563,7 +712,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun applyOneHandedPadding() {
         val content = contentContainer ?: return
-        val oneHanded = themePreferences.getString("one_handed_mode", "off") ?: "off"
+        val oneHanded = currentOneHandedMode()
         val (padLeft, padRight) = when (oneHanded) {
             "left" -> 0 to dp(54)
             "right" -> dp(54) to 0
@@ -574,7 +723,11 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun renderFullImeView() {
         val content = contentContainer ?: return
+        refreshCachedThemePalette()
         lastRenderedThemeKey = computeThemeStateKey()
+        lastRenderedKeyboardRowsSig = ""
+        lastRenderedClipChipsSig = ""
+        lastRenderedPasteCapsuleSig = ""
         dismissLanguagePopup()
         dismissVariantPopup()
         dismissContextMenu(animate = false)
@@ -1239,16 +1392,14 @@ class ClipMaxImeService : InputMethodService() {
         val btn = pasteUndoCapsuleBtn
         val config = pasteCapsuleController.currentConfig
         if (config.state == PasteUndoCapsuleSpec.CapsuleState.HIDDEN || toolbarState != 0) {
-            host.visibility = View.GONE
-            host.isClickable = false
-            btn?.isClickable = false
+            if (host.visibility != View.GONE) {
+                host.visibility = View.GONE
+                host.isClickable = false
+                btn?.isClickable = false
+            }
+            lastRenderedPasteCapsuleSig = "HIDDEN"
             return
         }
-
-        host.visibility = View.VISIBLE
-        host.bringToFront()
-        btn?.isClickable = true
-        btn?.isEnabled = true
 
         val iconType = if (config.action == PasteUndoCapsuleSpec.CapsuleAction.REDO) IconType.REDO else IconType.UNDO
         val capsuleFg = if (isNightMode) {
@@ -1256,8 +1407,19 @@ class ClipMaxImeService : InputMethodService() {
         } else {
             0xFF202124.toInt()
         }
+        val label = AppUiStrings.pasteCapsuleLabel(keyboardLanguage, config.action)
+        val sig = ImeInputPipeline.ViewSignatureSpec.pasteCapsuleUiSignature(config, toolbarState, label, capsuleFg)
+        if (host.visibility == View.VISIBLE && sig == lastRenderedPasteCapsuleSig) {
+            return
+        }
+        lastRenderedPasteCapsuleSig = sig
+
+        host.visibility = View.VISIBLE
+        host.bringToFront()
+        btn?.isClickable = true
+        btn?.isEnabled = true
         pasteUndoCapsuleIcon?.setImageDrawable(IconDrawable(iconType, capsuleFg, PasteUndoCapsuleSpec.ICON_SIZE_DP))
-        pasteUndoCapsuleText?.text = AppUiStrings.pasteCapsuleLabel(keyboardLanguage, config.action)
+        pasteUndoCapsuleText?.text = label
         btn?.contentDescription = AppUiStrings.pasteCapsuleA11y(keyboardLanguage, config.action)
     }
 
@@ -1481,29 +1643,33 @@ class ClipMaxImeService : InputMethodService() {
             initialSelected = appTheme
         ) { nextTheme ->
             if (appTheme != nextTheme) {
+                cachedAppTheme = SettingsPanelSpec.normalizeThemeValue(nextTheme)
+                refreshCachedThemePalette()
                 themePreferences.edit().putString(SettingsPanelSpec.PREF_APP_THEME, nextTheme).apply()
                 renderFullImeView()
             }
         }
 
         // 3. Keyboard Height (Compact | Normal | Tall)
-        val currentHeight = themePreferences.getString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, "normal") ?: "normal"
+        val currentHeight = currentHeightPref()
         addSegmentedSettingCard(
             title = AppUiStrings.keyboardHeightSettingTitle(keyboardLanguage),
             options = AppUiStrings.heightOptions(keyboardLanguage),
             initialSelected = currentHeight
         ) { nextHeight ->
+            cachedKeyboardHeight = nextHeight
             themePreferences.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_HEIGHT, nextHeight).apply()
             applyCanonicalViewportHeightInPlace()
         }
 
         // 4. One-Handed Mode (Left | Off | Right)
-        val currentOneHanded = themePreferences.getString(SettingsPanelSpec.PREF_ONE_HANDED, "off") ?: "off"
+        val currentOneHanded = currentOneHandedMode()
         addSegmentedSettingCard(
             title = AppUiStrings.oneHandedSettingTitle(keyboardLanguage),
             options = AppUiStrings.oneHandedOptions(keyboardLanguage),
             initialSelected = currentOneHanded
         ) { nextMode ->
+            cachedOneHandedMode = nextMode
             themePreferences.edit().putString(SettingsPanelSpec.PREF_ONE_HANDED, nextMode).apply()
             applyOneHandedPadding()
         }
@@ -1559,6 +1725,11 @@ class ClipMaxImeService : InputMethodService() {
             localizedOnOff.forEachIndexed { idx, opt ->
                 val pill = makeOptionPill(opt.label, localizedSettingTitle, dp(30))
                 pill.setOnClickListener {
+                    when (def.prefKey) {
+                        "typing_autocomplete" -> cachedAutocompleteEnabled = opt.value
+                        "typing_autocorrect" -> cachedAutoCorrectEnabled = opt.value
+                        "typing_suggestions" -> cachedSuggestionsEnabled = opt.value
+                    }
                     themePreferences.edit().putBoolean(def.prefKey, opt.value).apply()
                     onTypingSettingsChanged()
                     refreshBinary(opt.value)
@@ -1568,7 +1739,13 @@ class ClipMaxImeService : InputMethodService() {
                     if (idx == 0) marginEnd = pillGapPx
                 })
             }
-            refreshBinary(themePreferences.getBoolean(def.prefKey, def.defaultValue))
+            val initialBinaryVal = when (def.prefKey) {
+                "typing_autocomplete" -> isAutocompleteEnabled
+                "typing_autocorrect" -> isAutoCorrectEnabled
+                "typing_suggestions" -> isSuggestionsEnabled
+                else -> def.defaultValue
+            }
+            refreshBinary(initialBinaryVal)
 
             typingCard.addView(pairRow, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2294,7 +2471,7 @@ class ClipMaxImeService : InputMethodService() {
         isMergeMode = false
         mergeSourceId = null
         isSplitMergeHistoryBusy = true
-        io.execute {
+        val submitted = submitSafely(io) {
             try {
                 val mergeRes = store.merge(sourceId, targetId)
                 val snapshot = OperationSnapshot(
@@ -2331,6 +2508,9 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
+        if (!submitted) {
+            isSplitMergeHistoryBusy = false
+        }
     }
 
     private fun splitItem(targetId: String) {
@@ -2339,7 +2519,7 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         isSplitMergeHistoryBusy = true
-        io.execute {
+        val submitted = submitSafely(io) {
             try {
                 val splitRes = store.split(targetId)
                 if (splitRes == null) {
@@ -2349,7 +2529,7 @@ class ClipMaxImeService : InputMethodService() {
                             setStatus(AppUiStrings.splitTooShortStatus(keyboardLanguage))
                         }
                     }
-                    return@execute
+                    return@submitSafely
                 }
                 val snapshot = OperationSnapshot(
                     description = "Split",
@@ -2380,6 +2560,9 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
+        if (!submitted) {
+            isSplitMergeHistoryBusy = false
+        }
     }
 
     private fun performUndo() {
@@ -2397,7 +2580,7 @@ class ClipMaxImeService : InputMethodService() {
                 isExpiryLocked = orig.isExpiryLocked
             )
         }
-        io.execute {
+        val submitted = submitSafely(io) {
             try {
                 store.applyHistoryTransaction(deleteIds, restoreRecords)
                 main.post {
@@ -2424,6 +2607,9 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
+        if (!submitted) {
+            isSplitMergeHistoryBusy = false
+        }
     }
 
     private fun performRedo() {
@@ -2441,7 +2627,7 @@ class ClipMaxImeService : InputMethodService() {
                 isExpiryLocked = added.isExpiryLocked
             )
         }
-        io.execute {
+        val submitted = submitSafely(io) {
             try {
                 store.applyHistoryTransaction(deleteIds, restoreRecords)
                 main.post {
@@ -2467,6 +2653,9 @@ class ClipMaxImeService : InputMethodService() {
                     }
                 }
             }
+        }
+        if (!submitted) {
+            isSplitMergeHistoryBusy = false
         }
     }
 
@@ -2695,14 +2884,14 @@ class ClipMaxImeService : InputMethodService() {
                 tint = pinColor
             ) {
                 dismissContextMenu(animate = true)
-                io.execute {
-                    val fresh = store.getItem(targetId) ?: return@execute
+                submitSafely(io) {
+                    val fresh = store.getItem(targetId) ?: return@submitSafely
                     val nextPinned = !fresh.pinned
                     store.setPinned(targetId, nextPinned)
                     if (nextPinned) {
                         CapturePreferences.removeExpiry(capturePreferences, targetId)
                     }
-                    main.post { reloadItems() }
+                    main.post { if (!serviceDestroyed) reloadItems() }
                 }
             }
 
@@ -2713,8 +2902,8 @@ class ClipMaxImeService : InputMethodService() {
                 tint = lockColor
             ) {
                 dismissContextMenu(animate = true)
-                io.execute {
-                    val fresh = store.getItem(targetId) ?: return@execute
+                submitSafely(io) {
+                    val fresh = store.getItem(targetId) ?: return@submitSafely
                     val nextLocked = !fresh.isExpiryLocked
                     val updated = store.setExpiryLocked(targetId, nextLocked)
                     if (nextLocked || updated.pinned) {
@@ -2724,8 +2913,10 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     CaptureExpiryReceiver.schedule(this@ClipMaxImeService)
                     main.post {
-                        setStatus(AppUiStrings.expiryLockedStatus(keyboardLanguage, nextLocked))
-                        reloadItems()
+                        if (!serviceDestroyed) {
+                            setStatus(AppUiStrings.expiryLockedStatus(keyboardLanguage, nextLocked))
+                            reloadItems()
+                        }
                     }
                 }
             }
@@ -2752,12 +2943,12 @@ class ClipMaxImeService : InputMethodService() {
                 tint = colorDangerText
             ) {
                 dismissContextMenu(animate = true)
-                io.execute {
+                submitSafely(io) {
                     if (store.delete(targetId)) {
                         CapturePreferences.removeExpiry(capturePreferences, targetId)
                         CapturePreferences.onItemsDeleted(capturePreferences, listOf(targetId))
                     }
-                    main.post { reloadItems() }
+                    main.post { if (!serviceDestroyed) reloadItems() }
                 }
             }
 
@@ -3055,6 +3246,22 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun renderClipChips() {
         val container = chipsContainer ?: return
+        val base = if (keyboardSearchQuery.isNotEmpty()) keyboardSearchResults else items
+        val visible = if (pinnedOnly) base.filter { it.pinned } else base
+        val chipsSig = ImeInputPipeline.ViewSignatureSpec.clipChipsSignature(
+            storeRevision = lastLoadedStoreVersion,
+            itemCount = visible.size,
+            firstId = visible.firstOrNull()?.id,
+            isPasswordTarget = isPasswordTarget,
+            pinnedOnly = pinnedOnly,
+            filterQuery = keyboardSearchQuery,
+            themeKey = computeThemeStateKey(),
+            oneHandedMode = currentOneHandedMode()
+        )
+        if (container.childCount > 0 && chipsSig == lastRenderedClipChipsSig) {
+            return
+        }
+        lastRenderedClipChipsSig = chipsSig
         container.removeAllViews()
 
         if (isPasswordTarget) {
@@ -3067,9 +3274,6 @@ class ClipMaxImeService : InputMethodService() {
             })
             return
         }
-
-        val base = if (keyboardSearchQuery.isNotEmpty()) keyboardSearchResults else items
-        val visible = if (pinnedOnly) base.filter { it.pinned } else base
 
         if (visible.isEmpty()) {
             container.addView(TextView(this).apply {
@@ -3128,7 +3332,7 @@ class ClipMaxImeService : InputMethodService() {
         )
 
         val screenW = resources.displayMetrics.widthPixels
-        val oneHandedPad = if ((themePreferences.getString("one_handed_mode", "off") ?: "off") != "off") dp(54) else 0
+        val oneHandedPad = if (currentOneHandedMode() != "off") dp(54) else 0
         val availableToolbarW = (screenW - oneHandedPad - dp(86)).coerceAtLeast(dp(180))
         val adaptiveMaxW = minOf(dp(220), (availableToolbarW * 0.62f).toInt()).coerceAtLeast(dp(145))
 
@@ -3219,7 +3423,7 @@ class ClipMaxImeService : InputMethodService() {
         val density = dm.density.coerceAtLeast(1f)
         val screenHeightDp = dm.heightPixels / density
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val heightPref = themePreferences.getString("keyboard_height", "normal") ?: "normal"
+        val heightPref = currentHeightPref()
         return KeyboardLayoutSpec.computeViewportSpecDp(
             heightPref = heightPref,
             screenHeightDp = screenHeightDp,
@@ -3240,7 +3444,7 @@ class ClipMaxImeService : InputMethodService() {
         val density = dm.density.coerceAtLeast(1f)
         val screenHeightDp = dm.heightPixels / density
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val heightPref = themePreferences.getString("keyboard_height", "normal") ?: "normal"
+        val heightPref = currentHeightPref()
         val geom = KeyboardLayoutSpec.computeGeometryDp(
             heightPref = heightPref,
             screenHeightDp = screenHeightDp,
@@ -3268,6 +3472,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun setAppUiLocale(locale: String) {
         val normalized = SettingsPanelSpec.normalizeAppUiLocale(locale)
         if (keyboardLanguage == normalized) return
+        cachedAppUiLocale = normalized
         themePreferences.edit().putString(SettingsPanelSpec.PREF_APP_UI_LOCALE, normalized).apply()
         onAppUiLocalePreferenceChanged()
     }
@@ -3290,6 +3495,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun setKeyboardLanguage(language: String) {
         val normalized = SettingsPanelSpec.normalizeLanguageValue(language)
         if (keyboardLanguage == normalized) return
+        cachedKeyboardLanguage = normalized
         themePreferences.edit().putString(SettingsPanelSpec.PREF_KEYBOARD_LANGUAGE, normalized).apply()
         onKeyboardLanguagePreferenceChanged()
     }
@@ -3309,12 +3515,43 @@ class ClipMaxImeService : InputMethodService() {
         when {
             isSettingsOpen -> return
             isEmojiPickerOpen -> renderFullImeView()
-            keyboardRowsContainer != null -> renderKeyboardRows()
+            keyboardRowsContainer != null -> renderKeyboardRowsIfNeeded()
         }
+    }
+
+    private fun currentKeyboardRowsSignature(): String {
+        val dm = resources.displayMetrics
+        val density = dm.density.coerceAtLeast(1f)
+        val screenHeightDp = (dm.heightPixels / density).toInt()
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return ImeInputPipeline.ViewSignatureSpec.keyboardRowsSignature(
+            language = keyboardLanguage,
+            mode = keyboardMode,
+            themeKey = computeThemeStateKey(),
+            heightPref = currentHeightPref(),
+            screenHeightDp = screenHeightDp,
+            isLandscape = isLandscape,
+            isFilterMode = isFilterMode,
+            isInserting = isInserting,
+            isPasswordTarget = isPasswordTarget
+        )
+    }
+
+    private fun renderKeyboardRowsIfNeeded() {
+        val container = keyboardRowsContainer ?: return
+        val nextSig = currentKeyboardRowsSignature()
+        if (container.childCount > 0 && nextSig == lastRenderedKeyboardRowsSig) {
+            updateEnterKeyUI()
+            updateShiftUI()
+            updateToolbarCenterVisibility()
+            return
+        }
+        renderKeyboardRows()
     }
 
     private fun renderKeyboardRows() {
         val container = keyboardRowsContainer ?: return
+        lastRenderedKeyboardRowsSig = currentKeyboardRowsSignature()
         dismissVariantPopup()
         dismissLanguagePopup()
         container.removeAllViews()
@@ -4332,8 +4569,11 @@ class ClipMaxImeService : InputMethodService() {
             insertionHistory.invalidateImmediateBackspaceRevert()
             lastRevertOriginalWord = null
             clearTypingSuggestionsView()
-            conn.commitText(emoji, 1)
+            if (commitTextSafely(conn, emoji, 1)) {
+                shadowEditor.onCommitText(emoji)
+            }
             updateInsertionHistoryButtons()
+            syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
         }
         recentEmojiHistory.record(emoji)
         persistRecentEmojis()
@@ -4369,19 +4609,26 @@ class ClipMaxImeService : InputMethodService() {
         val targetWidth = maxOf(keyView.width, dp(44))
         val targetHeight = dp(52)
 
-        val lp = popup.layoutParams as? FrameLayout.LayoutParams ?: FrameLayout.LayoutParams(targetWidth, targetHeight)
-        lp.width = targetWidth
-        lp.height = targetHeight
-        lp.leftMargin = 0
-        lp.topMargin = 0
-        popup.layoutParams = lp
+        val existingLp = popup.layoutParams as? FrameLayout.LayoutParams
+        if (existingLp == null || existingLp.width != targetWidth || existingLp.height != targetHeight ||
+            existingLp.leftMargin != 0 || existingLp.topMargin != 0
+        ) {
+            val lp = existingLp ?: FrameLayout.LayoutParams(targetWidth, targetHeight)
+            lp.width = targetWidth
+            lp.height = targetHeight
+            lp.leftMargin = 0
+            lp.topMargin = 0
+            popup.layoutParams = lp
+        }
 
         val minX = dp(2).toFloat()
         val maxX = (root.width - targetWidth - dp(2)).toFloat().coerceAtLeast(minX)
         popup.translationX = (relLeft + (keyView.width - targetWidth) / 2).toFloat().coerceIn(minX, maxX)
         popup.translationY = (relTop - targetHeight + dp(2)).toFloat().coerceAtLeast(0f)
-        popup.visibility = View.VISIBLE
-        popup.bringToFront()
+        if (popup.visibility != View.VISIBLE) {
+            popup.visibility = View.VISIBLE
+            popup.bringToFront()
+        }
     }
 
     private fun hideKeyPreview() {
@@ -4389,6 +4636,13 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun attachKeyTouchFeedback(keyView: View, onCommit: () -> Unit, previewChar: (() -> String)? = null) {
+        keyView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                v.isPressed = false
+                hideKeyPreview()
+            }
+        })
         keyView.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -4418,7 +4672,7 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
                     v.isPressed = false
                     hideKeyPreview()
                     true
@@ -4435,18 +4689,30 @@ class ClipMaxImeService : InputMethodService() {
     ) {
         val controller = KeyboardLayoutSpec.LongPressKeyController()
         val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
-        val longPressTask = Runnable {
-            if (controller.onLongPressTimeout()) {
-                keyView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                showKeyPreview(keyView, longPressChar)
-                handleGenericCharPress(longPressChar)
-            }
+        var touchSessionGeneration = 0
+        var activeTask: Runnable? = null
+
+        fun cancelPendingLongPress() {
+            touchSessionGeneration++
+            activeTask?.let(main::removeCallbacks)
+            activeTask = null
         }
+
+        keyView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelPendingLongPress()
+                controller.onCancel()
+                v.isPressed = false
+                hideKeyPreview()
+            }
+        })
 
         keyView.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
+                    val gen = touchSessionGeneration
                     controller.onDown()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -4456,7 +4722,16 @@ class ClipMaxImeService : InputMethodService() {
                         primaryChar.uppercase(Locale.ROOT)
                     }
                     showKeyPreview(v, displayChar)
-                    main.postDelayed(longPressTask, thresholdMs)
+                    val task = Runnable {
+                        if (gen != touchSessionGeneration || serviceDestroyed || !v.isAttachedToWindow) return@Runnable
+                        if (controller.onLongPressTimeout()) {
+                            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            showKeyPreview(v, longPressChar)
+                            handleGenericCharPress(longPressChar)
+                        }
+                    }
+                    activeTask = task
+                    main.postDelayed(task, thresholdMs)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -4464,14 +4739,14 @@ class ClipMaxImeService : InputMethodService() {
                     val y = event.y
                     val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
                     if (!inside && controller.onMove(insideBounds = false)) {
-                        main.removeCallbacks(longPressTask)
+                        cancelPendingLongPress()
                         v.isPressed = false
                         hideKeyPreview()
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
                     v.isPressed = false
                     hideKeyPreview()
                     if (controller.onUp()) {
@@ -4479,8 +4754,8 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    main.removeCallbacks(longPressTask)
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                    cancelPendingLongPress()
                     controller.onCancel()
                     v.isPressed = false
                     hideKeyPreview()
@@ -4549,28 +4824,49 @@ class ClipMaxImeService : InputMethodService() {
 
         val controller = KeyboardLayoutSpec.LongPressKeyController()
         val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
-        val longPressTask = Runnable {
-            if (controller.onLongPressTimeout()) {
-                this.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                hideKeyPreview()
-                dismissPasteUndoCapsule()
-                shiftStateMachine.resetDoubleTapTimer()
-                isEmojiPickerOpen = true
-                isClipboardPanelOpen = false
-                isSettingsOpen = false
-                renderFullImeView()
-            }
+        var touchSessionGeneration = 0
+        var activeTask: Runnable? = null
+
+        fun cancelPendingLongPress() {
+            touchSessionGeneration++
+            activeTask?.let(main::removeCallbacks)
+            activeTask = null
         }
+
+        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelPendingLongPress()
+                controller.onCancel()
+                v.isPressed = false
+                hideKeyPreview()
+            }
+        })
 
         setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
+                    val gen = touchSessionGeneration
                     controller.onDown()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     showKeyPreview(v, commaChar)
-                    main.postDelayed(longPressTask, thresholdMs)
+                    val task = Runnable {
+                        if (gen != touchSessionGeneration || serviceDestroyed || !v.isAttachedToWindow) return@Runnable
+                        if (controller.onLongPressTimeout()) {
+                            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            hideKeyPreview()
+                            dismissPasteUndoCapsule()
+                            shiftStateMachine.resetDoubleTapTimer()
+                            isEmojiPickerOpen = true
+                            isClipboardPanelOpen = false
+                            isSettingsOpen = false
+                            renderFullImeView()
+                        }
+                    }
+                    activeTask = task
+                    main.postDelayed(task, thresholdMs)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -4578,14 +4874,14 @@ class ClipMaxImeService : InputMethodService() {
                     val y = event.y
                     val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
                     if (!inside && controller.onMove(insideBounds = false)) {
-                        main.removeCallbacks(longPressTask)
+                        cancelPendingLongPress()
                         v.isPressed = false
                         hideKeyPreview()
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
                     v.isPressed = false
                     hideKeyPreview()
                     if (controller.onUp()) {
@@ -4593,8 +4889,8 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    main.removeCallbacks(longPressTask)
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                    cancelPendingLongPress()
                     controller.onCancel()
                     v.isPressed = false
                     hideKeyPreview()
@@ -4834,22 +5130,33 @@ class ClipMaxImeService : InputMethodService() {
         val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
         var popupChips: List<Pair<View, String>> = emptyList()
         var selectedVariantIdx = -1
+        var touchSessionGeneration = 0
+        var activeTask: Runnable? = null
 
-        val longPressTask = Runnable {
-            if (controller.onLongPressTimeout()) {
-                keyView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                hideKeyPreview()
-                keyView.isPressed = false
-                selectedVariantIdx = if (preselectFirstOnTimeout && variants.isNotEmpty()) 0 else -1
-                variantPopupInteractiveTapMode = false
-                popupChips = showArabicVariantPopup(keyView, variants, preselectFirstOnTimeout)
-            }
+        fun cancelPendingLongPress() {
+            touchSessionGeneration++
+            activeTask?.let(main::removeCallbacks)
+            activeTask = null
         }
+
+        keyView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelPendingLongPress()
+                controller.onCancel()
+                v.isPressed = false
+                hideKeyPreview()
+                dismissVariantPopup()
+                popupChips = emptyList()
+                selectedVariantIdx = -1
+            }
+        })
 
         keyView.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
+                    val gen = touchSessionGeneration
                     dismissVariantPopup()
                     popupChips = emptyList()
                     selectedVariantIdx = -1
@@ -4857,7 +5164,19 @@ class ClipMaxImeService : InputMethodService() {
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     showKeyPreview(v, primaryChar)
-                    main.postDelayed(longPressTask, thresholdMs)
+                    val task = Runnable {
+                        if (gen != touchSessionGeneration || serviceDestroyed || !v.isAttachedToWindow) return@Runnable
+                        if (controller.onLongPressTimeout()) {
+                            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            hideKeyPreview()
+                            v.isPressed = false
+                            selectedVariantIdx = if (preselectFirstOnTimeout && variants.isNotEmpty()) 0 else -1
+                            variantPopupInteractiveTapMode = false
+                            popupChips = showArabicVariantPopup(v, variants, preselectFirstOnTimeout)
+                        }
+                    }
+                    activeTask = task
+                    main.postDelayed(task, thresholdMs)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -4892,7 +5211,7 @@ class ClipMaxImeService : InputMethodService() {
                         val y = event.y
                         val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
                         if (!inside && controller.onMove(insideBounds = false)) {
-                            main.removeCallbacks(longPressTask)
+                            cancelPendingLongPress()
                             v.isPressed = false
                             hideKeyPreview()
                         }
@@ -4900,7 +5219,7 @@ class ClipMaxImeService : InputMethodService() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
                     v.isPressed = false
                     hideKeyPreview()
                     if (controller.onUp()) {
@@ -4919,8 +5238,8 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    main.removeCallbacks(longPressTask)
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                    cancelPendingLongPress()
                     controller.onCancel()
                     v.isPressed = false
                     hideKeyPreview()
@@ -5161,22 +5480,42 @@ class ClipMaxImeService : InputMethodService() {
 
         val controller = KeyboardLayoutSpec.LongPressKeyController()
         val thresholdMs = ViewConfiguration.getLongPressTimeout().toLong().coerceIn(320L, 420L)
-        val longPressTask = Runnable {
-            if (controller.onLongPressTimeout()) {
-                this.isPressed = false
-                this.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                showLanguageSwitcherPopup(this)
-            }
+        var touchSessionGeneration = 0
+        var activeTask: Runnable? = null
+
+        fun cancelPendingLongPress() {
+            touchSessionGeneration++
+            activeTask?.let(main::removeCallbacks)
+            activeTask = null
         }
+
+        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                cancelPendingLongPress()
+                controller.onCancel()
+                v.isPressed = false
+            }
+        })
 
         setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
+                    val gen = touchSessionGeneration
                     controller.onDown()
                     v.isPressed = true
                     v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    main.postDelayed(longPressTask, thresholdMs)
+                    val task = Runnable {
+                        if (gen != touchSessionGeneration || serviceDestroyed || !v.isAttachedToWindow) return@Runnable
+                        if (controller.onLongPressTimeout()) {
+                            v.isPressed = false
+                            v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            showLanguageSwitcherPopup(v)
+                        }
+                    }
+                    activeTask = task
+                    main.postDelayed(task, thresholdMs)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -5184,21 +5523,21 @@ class ClipMaxImeService : InputMethodService() {
                     val y = event.y
                     val inside = x >= -dp(12) && x <= v.width + dp(12) && y >= -dp(24) && y <= v.height + dp(12)
                     if (!inside && controller.onMove(insideBounds = false)) {
-                        main.removeCallbacks(longPressTask)
+                        cancelPendingLongPress()
                         v.isPressed = false
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    main.removeCallbacks(longPressTask)
+                    cancelPendingLongPress()
                     v.isPressed = false
                     if (controller.onUp()) {
                         handleSpacePress()
                     }
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> {
-                    main.removeCallbacks(longPressTask)
+                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                    cancelPendingLongPress()
                     controller.onCancel()
                     v.isPressed = false
                     true
@@ -5264,7 +5603,9 @@ class ClipMaxImeService : InputMethodService() {
             if (conn != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 lastRevertOriginalWord = null
-                conn.commitText(letter, 1)
+                if (commitTextSafely(conn, letter, 1)) {
+                    shadowEditor.onCommitText(letter)
+                }
                 updateInsertionHistoryButtons()
                 refreshTypingSuggestionsAsync()
             }
@@ -5288,10 +5629,11 @@ class ClipMaxImeService : InputMethodService() {
             if (isWordBoundaryDelimiter(char)) {
                 commitWordBoundaryWithIntelligence(conn, char)
             } else {
-                val beforeBefore = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 lastRevertOriginalWord = null
-                conn.commitText(char, 1)
+                if (commitTextSafely(conn, char, 1)) {
+                    shadowEditor.onCommitText(char)
+                }
                 updateInsertionHistoryButtons()
                 if (char == "'") {
                     refreshTypingSuggestionsAsync()
@@ -5300,7 +5642,7 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 syncAutoCapitalization(
                     preserveManualShift = false,
-                    predictedBeforeText = beforeBefore?.plus(char)
+                    predictedBeforeText = shadowEditor.beforeText(48)
                 )
             }
         }
@@ -5330,7 +5672,7 @@ class ClipMaxImeService : InputMethodService() {
             }
         } else {
             val conn = currentInputConnection ?: return
-            val gateway = buildEditorGateway(conn)
+            val gateway = buildShadowGateway(conn)
             if (gateway != null && !isPasswordTarget) {
                 val reverted = insertionHistory.tryImmediateBackspaceRevertAutocorrect(gateway)
                 if (reverted != null) {
@@ -5340,32 +5682,36 @@ class ClipMaxImeService : InputMethodService() {
                     lastRevertOriginalWord = null
                     updateInsertionHistoryButtons()
                     refreshTypingSuggestionsAsync()
-                    syncAutoCapitalization(preserveManualShift = false)
+                    syncAutoCapitalization(
+                        preserveManualShift = false,
+                        predictedBeforeText = shadowEditor.beforeText(48)
+                    )
                     return
                 }
             }
 
             insertionHistory.invalidateImmediateBackspaceRevert()
             lastRevertOriginalWord = null
-            val selected = runCatching { conn.getSelectedText(0) }.getOrNull()
-            val predictedAfterDelete = if (selected.isNullOrEmpty()) {
-                val preDelete = runCatching { conn.getTextBeforeCursor(64, 0)?.toString() }.getOrNull()
+            if (shadowEditor.hasSelection) {
+                if (commitTextSafely(conn, "", 1)) {
+                    shadowEditor.onDeleteSelection()
+                }
+            } else {
+                val preDelete = shadowEditor.beforeText(64)
                 val deleteCount = if (!preDelete.isNullOrEmpty()) {
                     KeyboardLayoutSpec.backspaceUtf16Count(preDelete, keyboardLanguage)
                 } else {
                     1
                 }
-                conn.deleteSurroundingText(deleteCount, 0)
-                preDelete?.dropLast(deleteCount)
-            } else {
-                conn.commitText("", 1)
-                null
+                if (deleteSurroundingTextSafely(conn, deleteCount, 0)) {
+                    shadowEditor.onDeleteBeforeCursor(deleteCount)
+                }
             }
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
             syncAutoCapitalization(
                 preserveManualShift = false,
-                predictedBeforeText = predictedAfterDelete
+                predictedBeforeText = shadowEditor.beforeText(48)
             )
         }
     }
@@ -5386,7 +5732,8 @@ class ClipMaxImeService : InputMethodService() {
             if (actionId != null) {
                 insertionHistory.invalidateImmediateBackspaceRevert()
                 clearTypingSuggestionsView()
-                conn.performEditorAction(actionId)
+                performEditorActionSafely(conn, actionId)
+                shadowEditor.invalidateHostSync()
                 syncAutoCapitalization(preserveManualShift = false)
             } else {
                 commitWordBoundaryWithIntelligence(conn, "\n")
@@ -5423,25 +5770,46 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     private fun setupBackspaceRepeat(view: View) {
-        val repeatRunnable = object : Runnable {
-            override fun run() {
-                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                handleBackspace()
-                main.postDelayed(this, 50)
-            }
+        var repeatGen = 0
+        var activeRepeat: Runnable? = null
+
+        fun stopRepeat() {
+            repeatGen++
+            activeRepeat?.let(main::removeCallbacks)
+            activeRepeat = null
         }
-        view.setOnTouchListener { _, event ->
+
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                stopRepeat()
+                v.isPressed = false
+            }
+        })
+
+        view.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    stopRepeat()
+                    val gen = repeatGen
+                    v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     handleBackspace()
-                    main.postDelayed(repeatRunnable, 350)
-                    view.isPressed = true
+                    val runnable = object : Runnable {
+                        override fun run() {
+                            if (gen != repeatGen || serviceDestroyed || !v.isAttachedToWindow || !v.isPressed) return
+                            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleBackspace()
+                            main.postDelayed(this, 50)
+                        }
+                    }
+                    activeRepeat = runnable
+                    main.postDelayed(runnable, 350)
+                    v.isPressed = true
                     true
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    main.removeCallbacks(repeatRunnable)
-                    view.isPressed = false
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_OUTSIDE -> {
+                    stopRepeat()
+                    v.isPressed = false
                     true
                 }
                 else -> false
@@ -5452,10 +5820,18 @@ class ClipMaxImeService : InputMethodService() {
     // =========================================================================
     // PERSISTENCE & CHUNKED INSERTION
     // =========================================================================
+    private fun reloadItemsIfNeeded() {
+        if (lastLoadedStoreVersion >= 0L && lastLoadedStoreVersion == ClipStore.currentChangeVersion()) {
+            return
+        }
+        reloadItems()
+    }
+
     fun reloadItems() {
         val request = ++listRequest
-        io.execute {
+        submitSafely(io) {
             CapturePreferences.cleanupExpired(store, capturePreferences)
+            val storeVersionAtRead = ClipStore.currentChangeVersion()
             val found = runCatching { store.listItems() }.getOrElse { emptyList() }
             val prebuiltSnippets = HashMap<String, String>(minOf(found.size, 64))
             for (item in found.take(64)) {
@@ -5465,7 +5841,8 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
             main.post {
-                if (request != listRequest || imeRootFrame == null) return@post
+                if (serviceDestroyed || request != listRequest || imeRootFrame == null) return@post
+                lastLoadedStoreVersion = storeVersionAtRead
                 snippetCache = prebuiltSnippets
                 items = found.sortedWith(
                     compareByDescending<ClipItem> { it.pinned }
@@ -5496,7 +5873,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun runKeyboardSearch() {
         val query = keyboardSearchQuery.trim()
         val request = ++keyboardSearchRequest
-        io.execute {
+        submitSafely(io) {
             val found = if (query.isEmpty()) {
                 items
             } else {
@@ -5546,14 +5923,6 @@ class ClipMaxImeService : InputMethodService() {
         generation++
         val token = generation
         val startTarget = currentEditorTarget
-        val gatewayBefore = buildEditorGateway(connection)
-        val hasSelectionBefore = gatewayBefore?.hasActiveSelection() == true
-        val beforeAnchor = if (!hasSelectionBefore) {
-            gatewayBefore?.textBeforeCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
-        } else ""
-        val afterAnchor = if (!hasSelectionBefore) {
-            gatewayBefore?.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
-        } else ""
 
         dismissPasteUndoCapsule()
         isInserting = true
@@ -5562,8 +5931,15 @@ class ClipMaxImeService : InputMethodService() {
         activeItemCodePoints = 0
         setStatus(initialStatus)
 
-        insertTask = inserter.submit {
+        insertTask = submitFutureSafely(inserter) {
             try {
+                val hasSelectionBefore = readHasSelectionFromIcOffMainThread(connection)
+                val beforeAnchor = if (!hasSelectionBefore) {
+                    readTextBeforeFromIcOffMainThread(connection, InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+                } else ""
+                val afterAnchor = if (!hasSelectionBefore) {
+                    readTextAfterFromIcOffMainThread(connection, InsertionHistoryManager.ANCHOR_LENGTH).orEmpty()
+                } else ""
                 val source = openSource()
                 activeItemCodePoints = source.characterCount
                 val trackedBuffer = if (!hasSelectionBefore && source.characterCount <= InsertionHistoryManager.MAX_TRACKED_INSERTION_CHARS) {
@@ -5633,8 +6009,18 @@ class ClipMaxImeService : InputMethodService() {
                             updatePasteUndoCapsuleUI()
                         }
                         if (complete) {
+                            if (insertedText != null && insertedText.length <= ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_BEFORE_CHARS && !hasSelectionBefore) {
+                                shadowEditor.onCommitText(insertedText)
+                            } else {
+                                shadowEditor.invalidateHostSync()
+                            }
                             shiftStateMachine.onNonLetterInput()
-                            syncAutoCapitalization(preserveManualShift = false)
+                            syncAutoCapitalization(
+                                preserveManualShift = false,
+                                predictedBeforeText = shadowEditor.beforeText(48)
+                            )
+                        } else {
+                            shadowEditor.invalidateHostSync()
                         }
                         setStatus(AppUiStrings.insertionCompletedOrPausedStatus(keyboardLanguage, complete, insertedCodePoints.grouped()))
                     }
@@ -5661,8 +6047,8 @@ class ClipMaxImeService : InputMethodService() {
         val points = chunk.codePointCount(0, chunk.length)
         main.post {
             try {
-                if (generation == token && isInserting) {
-                    accepted = connection.commitText(chunk, 1)
+                if (!serviceDestroyed && generation == token && isInserting) {
+                    accepted = runCatching { connection.commitText(chunk, 1) }.getOrDefault(false)
                     if (!accepted) {
                         failure = IOException("Destination app rejected chunk")
                     } else {
@@ -5702,7 +6088,7 @@ class ClipMaxImeService : InputMethodService() {
         banner?.visibility = targetVis
         statusCancelBtn?.visibility = if (isInserting) View.VISIBLE else View.GONE
         if (visChanged && !isSettingsOpen && !isClipboardPanelOpen && keyboardRowsContainer != null) {
-            renderKeyboardRows()
+            renderKeyboardRowsIfNeeded()
         }
     }
 
@@ -5756,11 +6142,41 @@ class ClipMaxImeService : InputMethodService() {
             !(sameHostNonPassword && (nextInputClass == 0 || effectivePrevInputClass == 0))
         val hardFieldChanged = pkgChanged || fieldChanged || inputClassChanged || isPasswordTarget
 
+        val initialBefore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { attribute.getInitialTextBeforeCursor(ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_BEFORE_CHARS, 0)?.toString() }.getOrNull()
+        } else null
+        val initialAfter = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { attribute.getInitialTextAfterCursor(ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_AFTER_CHARS, 0)?.toString() }.getOrNull()
+        } else null
+        val initialSelected = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { attribute.getInitialSelectedText(0)?.toString() }.getOrNull()
+        } else null
+        val initialHasSelection = !initialSelected.isNullOrEmpty() ||
+            (attribute.initialSelStart >= 0 && attribute.initialSelEnd >= 0 && attribute.initialSelStart != attribute.initialSelEnd)
+
         val nowMs = SystemClock.elapsedRealtime()
-        val tempGateway = buildEditorGateway(currentInputConnection)
-        val canPreserveViaGateway = !hardFieldChanged && pasteCapsuleController.isActive && tempGateway != null && (
-            if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(tempGateway).allowed
-            else insertionHistory.canSafelyUndo(tempGateway).allowed
+        val snapshotGatewayForPreserve = if (!hardFieldChanged && pasteCapsuleController.isActive) {
+            val conn = currentInputConnection
+            if (conn != null && initialBefore != null) {
+                ImeInputPipeline.SnapshotHostEditorGateway(
+                    target = currentEditorTarget,
+                    passwordField = isPasswordTarget,
+                    preReadBefore = initialBefore,
+                    preReadAfter = initialAfter,
+                    preReadSelected = initialSelected,
+                    sink = buildIcMutationSink(conn)
+                )
+            } else if (conn != null && shadowEditor.synchronizedWithHost) {
+                buildShadowGateway(conn)
+            } else {
+                null
+            }
+        } else {
+            null
+        }
+        val canPreserveViaGateway = !hardFieldChanged && pasteCapsuleController.isActive && snapshotGatewayForPreserve != null && (
+            if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(snapshotGatewayForPreserve).allowed
+            else insertionHistory.canSafelyUndo(snapshotGatewayForPreserve).allowed
         )
         val preserveSession = PasteUndoCapsuleSpec.shouldPreserveSessionOnStartInput(
             restarting = restarting,
@@ -5770,6 +6186,13 @@ class ClipMaxImeService : InputMethodService() {
             lastActionElapsedMs = pasteCapsuleController.lastActionElapsedMs,
             nowMs = nowMs,
             canPreserveViaGateway = canPreserveViaGateway
+        )
+        shadowEditor.resetForInputSession(
+            initialBefore = initialBefore,
+            initialAfter = initialAfter,
+            initialHasSelection = initialHasSelection,
+            selStart = attribute.initialSelStart,
+            selEnd = attribute.initialSelEnd
         )
 
         suggestionGeneration.incrementAndGet()
@@ -5807,37 +6230,10 @@ class ClipMaxImeService : InputMethodService() {
             editorSessionId++
             dismissPasteUndoCapsule()
         } else if (preserveSession && !isInserting && pasteCapsuleController.isActive && !canPreserveViaGateway) {
-            // Host triggered restartInput during large-text layout reflow; re-verify once settled.
+            // Host triggered restartInput during large-text layout reflow; verify off main thread once settled.
             val verifyRestartToken = ++pasteRestartVerifyToken
             val expectedSessionId = editorSessionId
-            main.postDelayed({
-                if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
-                    return@postDelayed
-                }
-                if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) return@postDelayed
-                val g = buildEditorGateway()
-                val stillValid = g != null && (
-                    if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g).allowed
-                    else insertionHistory.canSafelyUndo(g).allowed
-                )
-                if (!stillValid && g != null && g.textBeforeCursor(32) != null) {
-                    main.postDelayed({
-                        if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
-                            return@postDelayed
-                        }
-                        if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) return@postDelayed
-                        val g2 = buildEditorGateway()
-                        val validLate = g2 != null && (
-                            if (pasteCapsuleController.isRedoMode) insertionHistory.canSafelyRedo(g2).allowed
-                            else insertionHistory.canSafelyUndo(g2).allowed
-                        )
-                        if (!validLate && g2 != null && g2.textBeforeCursor(32) != null) {
-                            editorSessionId++
-                            dismissPasteUndoCapsule()
-                        }
-                    }, 600L)
-                }
-            }, 700L)
+            schedulePreserveSessionVerification(verifyRestartToken, expectedSessionId, 700L, allowRetry = true)
         }
         lastEditorPackage = attribute.packageName
         lastEditorFieldId = attribute.fieldId
@@ -5886,14 +6282,24 @@ class ClipMaxImeService : InputMethodService() {
         } else if (keyboardRowsContainer != null && !isClipboardPanelOpen && !isSettingsOpen && !isEmojiPickerOpen &&
             (modeController.currentMode != prevMode || isPasswordTarget != wasPasswordTarget)
         ) {
-            renderKeyboardRows()
+            renderKeyboardRowsIfNeeded()
         }
         if (pasteCapsuleController.isActive && isPasswordTarget) {
             dismissPasteUndoCapsule()
         }
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
-        syncAutoCapitalization(preserveManualShift = false)
+        syncAutoCapitalization(
+            preserveManualShift = false,
+            predictedBeforeText = shadowEditor.beforeText(48)
+        )
+        if (!shadowEditor.synchronizedWithHost) {
+            scheduleEditorContextSync(
+                conn = currentInputConnection,
+                triggerSuggestions = false,
+                preserveManualShift = false
+            )
+        }
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
@@ -5921,13 +6327,23 @@ class ClipMaxImeService : InputMethodService() {
         }
         updateToolbarCenterVisibility()
         updateInsertionHistoryButtons()
-        renderKeyboardRows()
-        syncAutoCapitalization(preserveManualShift = manualShiftOverride)
+        renderKeyboardRowsIfNeeded()
+        syncAutoCapitalization(
+            preserveManualShift = manualShiftOverride,
+            predictedBeforeText = shadowEditor.beforeText(48)
+        )
+        if (!shadowEditor.synchronizedWithHost && shadowEditor.awaitingHostSync) {
+            scheduleEditorContextSync(
+                conn = currentInputConnection,
+                triggerSuggestions = false,
+                preserveManualShift = manualShiftOverride
+            )
+        }
         updateCaptureMonitoring()
         if (!isPasswordTarget && CapturePreferences.isEnabled(captureMode)) {
             capturePrimaryClip(CaptureSource.CLIPBOARD_POLL)
         }
-        reloadItems()
+        reloadItemsIfNeeded()
         scheduleExpiryCleanup()
     }
 
@@ -5941,44 +6357,91 @@ class ClipMaxImeService : InputMethodService() {
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         if (!inputViewActive) return
+        val classification = shadowEditor.onSelectionReported(oldSelStart, oldSelEnd, newSelStart, newSelEnd)
+
         if (pasteCapsuleController.isActive && !isInserting) {
-            val gateway = buildEditorGateway()
             val validNewBounds = newSelStart >= 0 && newSelEnd >= 0
-            val hasSelection = (validNewBounds && newSelStart != newSelEnd) || (gateway?.hasActiveSelection() == true)
             val cursorMoved = validNewBounds && ((oldSelStart != newSelStart) || (oldSelEnd != newSelEnd))
-            val canUndoNow = gateway != null && insertionHistory.canSafelyUndo(gateway).allowed
-            val canRedoNow = gateway != null && insertionHistory.canSafelyRedo(gateway).allowed
-            val dismissed = pasteCapsuleController.onEditorSelectionChanged(
-                nowMs = SystemClock.elapsedRealtime(),
-                hasSelection = hasSelection,
-                cursorMoved = cursorMoved,
-                canUndoNow = canUndoNow,
-                canRedoNow = canRedoNow
-            )
-            if (dismissed) {
-                updatePasteUndoCapsuleUI()
+            val shadowGateway = if (shadowEditor.synchronizedWithHost) buildShadowGateway() else null
+            if (shadowGateway != null) {
+                val hasSelection = (validNewBounds && newSelStart != newSelEnd) || shadowGateway.hasActiveSelection()
+                val canUndoNow = insertionHistory.canSafelyUndo(shadowGateway).allowed
+                val canRedoNow = insertionHistory.canSafelyRedo(shadowGateway).allowed
+                val dismissed = pasteCapsuleController.onEditorSelectionChanged(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    hasSelection = hasSelection,
+                    cursorMoved = cursorMoved,
+                    canUndoNow = canUndoNow,
+                    canRedoNow = canRedoNow
+                )
+                if (dismissed) {
+                    updatePasteUndoCapsuleUI()
+                }
+            } else if (cursorMoved || classification != ImeInputPipeline.SelectionClassification.EXPECTED_STEP) {
+                val conn = currentInputConnection
+                val targetSession = editorSessionId
+                if (conn != null) {
+                    submitSafely(icQueryExecutor) {
+                        val snapshotGateway = buildSnapshotGatewayOffMainThread(conn, 2048, InsertionHistoryManager.ANCHOR_LENGTH)
+                        main.post {
+                            if (serviceDestroyed || !inputViewActive || targetSession != editorSessionId || !pasteCapsuleController.isActive || isInserting) {
+                                return@post
+                            }
+                            val hasSelection = (validNewBounds && newSelStart != newSelEnd) || snapshotGateway.hasActiveSelection()
+                            val canUndoNow = insertionHistory.canSafelyUndo(snapshotGateway).allowed
+                            val canRedoNow = insertionHistory.canSafelyRedo(snapshotGateway).allowed
+                            val dismissed = pasteCapsuleController.onEditorSelectionChanged(
+                                nowMs = SystemClock.elapsedRealtime(),
+                                hasSelection = hasSelection,
+                                cursorMoved = cursorMoved,
+                                canUndoNow = canUndoNow,
+                                canRedoNow = canRedoNow
+                            )
+                            if (dismissed) {
+                                updatePasteUndoCapsuleUI()
+                            }
+                        }
+                    }
+                }
             }
         }
         updateInsertionHistoryButtons()
-        if (newSelStart != newSelEnd) {
-            clearTypingSuggestionsView()
-            syncAutoCapitalization(preserveManualShift = false)
-            return
-        }
-        // If cursor jumped outside 1-char typing flow, clear manual shift override & re-sync context
-        val delta = kotlin.math.abs(newSelStart - oldSelStart)
-        if (delta > 1) {
-            shiftStateMachine.onNonLetterInput()
-            insertionHistory.invalidateImmediateBackspaceRevert()
-            lastRevertOriginalWord = null
-            if (!isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled) {
-                refreshTypingSuggestionsAsync()
-            } else {
+
+        when (classification) {
+            ImeInputPipeline.SelectionClassification.RANGE_SELECTED -> {
                 clearTypingSuggestionsView()
+                syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                scheduleEditorContextSync(
+                    conn = currentInputConnection,
+                    triggerSuggestions = false,
+                    preserveManualShift = false
+                )
             }
-            syncAutoCapitalization(preserveManualShift = false)
-        } else {
-            syncAutoCapitalization(preserveManualShift = true)
+            ImeInputPipeline.SelectionClassification.CURSOR_JUMP -> {
+                shiftStateMachine.onNonLetterInput()
+                insertionHistory.invalidateImmediateBackspaceRevert()
+                lastRevertOriginalWord = null
+                shadowEditor.markHostSyncNeeded()
+                syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                scheduleEditorContextSync(
+                    conn = currentInputConnection,
+                    triggerSuggestions = !isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled,
+                    preserveManualShift = false
+                )
+            }
+            ImeInputPipeline.SelectionClassification.EXPECTED_STEP -> {
+                if (!shadowEditor.synchronizedWithHost && shadowEditor.awaitingHostSync) {
+                    scheduleEditorContextSync(
+                        conn = currentInputConnection,
+                        triggerSuggestions = !isFilterMode && !isPasswordTarget && fieldCapabilities.allowSuggestions && isSuggestionsEnabled,
+                        preserveManualShift = true
+                    )
+                }
+                syncAutoCapitalization(
+                    preserveManualShift = true,
+                    predictedBeforeText = shadowEditor.beforeText(48)
+                )
+            }
         }
     }
 
@@ -6060,6 +6523,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onWindowHidden() {
+        hideKeyPreview()
         dismissLanguagePopup()
         dismissVariantPopup()
         dismissContextMenu(animate = false)
@@ -6085,12 +6549,14 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        hideKeyPreview()
         dismissLanguagePopup()
         dismissVariantPopup()
         dismissContextMenu(animate = false)
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
         super.onConfigurationChanged(newConfig)
+        refreshCachedThemePalette()
         window?.window?.let { applySystemNavBarTheme(it) }
         if (imeRootFrame != null) {
             renderFullImeView()
@@ -6098,6 +6564,7 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        hideKeyPreview()
         dismissLanguagePopup()
         dismissVariantPopup()
         dismissContextMenu(animate = false)
@@ -6151,103 +6618,24 @@ class ClipMaxImeService : InputMethodService() {
         io.shutdownNow()
         inserter.shutdownNow()
         suggestExecutor.shutdownNow()
+        icQueryExecutor.shutdownNow()
         super.onDestroy()
     }
 
     // =========================================================================
-    // HOST INSERTION UNDO/REDO & TYPING INTELLIGENCE HELPERS
+    // HOST INSERTION UNDO/REDO & TYPING INTELLIGENCE HELPERS (NON-BLOCKING)
     // =========================================================================
-    private fun buildEditorGateway(conn: InputConnection? = currentInputConnection): InsertionHistoryManager.HostEditorGateway? {
-        val ic = conn ?: return null
-        return object : InsertionHistoryManager.HostEditorGateway {
-            override fun currentTarget(): InsertionHistoryManager.EditorTarget = currentEditorTarget
-            override fun isPasswordField(): Boolean = isPasswordTarget
-            override fun hasActiveSelection(): Boolean {
-                val sel = runCatching { ic.getSelectedText(0) }.getOrNull()
-                if (!sel.isNullOrEmpty()) return true
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val surrounding = runCatching { ic.getSurroundingText(0, 0, 0) }.getOrNull()
-                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
-                        return surrounding.selectionStart != surrounding.selectionEnd
-                    }
-                }
-                return false
-            }
+    private fun commitTextSafely(conn: InputConnection, text: String, newCursorPosition: Int = 1): Boolean =
+        runCatching { conn.commitText(text, newCursorPosition) }.getOrDefault(false)
 
-            override fun textBeforeCursor(maxChars: Int): String? {
-                if (maxChars <= 0) return ""
-                val direct = runCatching { ic.getTextBeforeCursor(maxChars, 0)?.toString() }.getOrNull()
-                if (direct != null && (direct.length >= maxChars || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
-                    return direct
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    // Android S+ getSurroundingText throws IllegalArgumentException if fetchLen > 2048
-                    val fetchLen = minOf(maxChars, 2048)
-                    val surrounding = runCatching { ic.getSurroundingText(fetchLen, 0, 0) }.getOrNull()
-                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
-                        val selStart = surrounding.selectionStart.coerceIn(0, surrounding.text.length)
-                        val fromSurrounding = surrounding.text.subSequence(0, selStart).toString()
-                        if (direct == null || fromSurrounding.length > direct.length) {
-                            return fromSurrounding
-                        }
-                    }
-                }
-                if (direct != null && (direct.isNotEmpty() || maxChars <= 2048)) return direct
-                if (maxChars > 2048) {
-                    val fallbackDirect = runCatching { ic.getTextBeforeCursor(2048, 0)?.toString() }.getOrNull()
-                    if (!fallbackDirect.isNullOrEmpty()) return fallbackDirect
-                }
-                if (maxChars > 512) {
-                    for (limit in intArrayOf(1024, 512)) {
-                        val fallbackSmall = runCatching { ic.getTextBeforeCursor(limit, 0)?.toString() }.getOrNull()
-                        if (!fallbackSmall.isNullOrEmpty()) return fallbackSmall
-                    }
-                }
-                if (direct != null) return direct
-                val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
-                if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
-                    val localSelStart = extracted.selectionStart - extracted.startOffset
-                    if (localSelStart in 0..extracted.text.length && (extracted.startOffset == 0 || localSelStart >= maxChars)) {
-                        val start = (localSelStart - maxChars).coerceAtLeast(0)
-                        return extracted.text.subSequence(start, localSelStart).toString()
-                    }
-                }
-                return null
-            }
+    private fun deleteSurroundingTextSafely(conn: InputConnection, beforeLength: Int, afterLength: Int): Boolean =
+        runCatching { conn.deleteSurroundingText(beforeLength, afterLength) }.getOrDefault(false)
 
-            override fun textAfterCursor(maxChars: Int): String? {
-                if (maxChars <= 0) return ""
-                val direct = runCatching { ic.getTextAfterCursor(maxChars, 0)?.toString() }.getOrNull()
-                if (direct != null && (direct.length >= maxChars || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
-                    return direct
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val fetchLen = minOf(maxChars, 2048)
-                    val surrounding = runCatching { ic.getSurroundingText(0, fetchLen, 0) }.getOrNull()
-                    if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
-                        val selEnd = surrounding.selectionEnd.coerceIn(0, surrounding.text.length)
-                        val fromSurrounding = surrounding.text.subSequence(selEnd, surrounding.text.length).toString()
-                        if (direct == null || fromSurrounding.length > direct.length) {
-                            return fromSurrounding
-                        }
-                    }
-                }
-                if (direct != null) return direct
-                if (maxChars > 2048) {
-                    val fallbackDirect = runCatching { ic.getTextAfterCursor(2048, 0)?.toString() }.getOrNull()
-                    if (fallbackDirect != null) return fallbackDirect
-                }
-                val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
-                if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
-                    val localSelEnd = extracted.selectionEnd - extracted.startOffset
-                    if (localSelEnd in 0..extracted.text.length) {
-                        val end = (localSelEnd + maxChars).coerceAtMost(extracted.text.length)
-                        return extracted.text.subSequence(localSelEnd, end).toString()
-                    }
-                }
-                return null
-            }
+    private fun performEditorActionSafely(conn: InputConnection, actionId: Int): Boolean =
+        runCatching { conn.performEditorAction(actionId) }.getOrDefault(false)
 
+    private fun buildIcMutationSink(ic: InputConnection): ImeInputPipeline.MutationSink =
+        object : ImeInputPipeline.MutationSink {
             override fun deleteBeforeCursor(length: Int): Boolean {
                 if (length < 0) return false
                 if (length == 0) return true
@@ -6265,6 +6653,7 @@ class ClipMaxImeService : InputMethodService() {
                         }
                         continue
                     }
+                    shadowEditor.onDeleteBeforeCursor(step)
                     remaining -= step
                 }
                 return true
@@ -6273,7 +6662,9 @@ class ClipMaxImeService : InputMethodService() {
             override fun commitText(text: String): Boolean {
                 if (text.isEmpty()) return true
                 if (text.length <= 16_384) {
-                    return runCatching { ic.commitText(text, 1) }.getOrDefault(false)
+                    val ok = runCatching { ic.commitText(text, 1) }.getOrDefault(false)
+                    if (ok) shadowEditor.onCommitText(text)
+                    return ok
                 }
                 var offset = 0
                 while (offset < text.length) {
@@ -6283,15 +6674,19 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     val chunk = text.substring(offset, end)
                     val ok = runCatching { ic.commitText(chunk, 1) }.getOrDefault(false)
-                    if (!ok) return false
+                    if (!ok) {
+                        shadowEditor.invalidateHostSync()
+                        return false
+                    }
                     offset = end
                 }
+                shadowEditor.onCommitText(text)
                 return true
             }
 
             override fun runBatchEdit(block: () -> Boolean): Boolean {
                 return try {
-                    ic.beginBatchEdit()
+                    runCatching { ic.beginBatchEdit() }
                     runCatching { ic.finishComposingText() }
                     block()
                 } finally {
@@ -6299,6 +6694,218 @@ class ClipMaxImeService : InputMethodService() {
                 }
             }
         }
+
+    private fun buildShadowGateway(conn: InputConnection? = currentInputConnection): InsertionHistoryManager.HostEditorGateway? {
+        val ic = conn ?: return null
+        val before = shadowEditor.beforeText(ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_BEFORE_CHARS)
+        val after = shadowEditor.afterText(ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_AFTER_CHARS)
+        val selected = if (shadowEditor.hasSelection) "\u200B" else null
+        return ImeInputPipeline.SnapshotHostEditorGateway(
+            target = currentEditorTarget,
+            passwordField = isPasswordTarget,
+            preReadBefore = before,
+            preReadAfter = after,
+            preReadSelected = selected,
+            sink = buildIcMutationSink(ic)
+        )
+    }
+
+    // Must ONLY be invoked from background executors (icQueryExecutor / inserter) — NEVER on MainLooper.
+    private fun readHasSelectionFromIcOffMainThread(ic: InputConnection): Boolean {
+        val sel = runCatching { ic.getSelectedText(0) }.getOrNull()
+        if (!sel.isNullOrEmpty()) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val surrounding = runCatching { ic.getSurroundingText(0, 0, 0) }.getOrNull()
+            if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
+                return surrounding.selectionStart != surrounding.selectionEnd
+            }
+        }
+        return false
+    }
+
+    // Must ONLY be invoked from background executors (icQueryExecutor / inserter) — NEVER on MainLooper.
+    private fun readSelectedFromIcOffMainThread(ic: InputConnection): String? =
+        runCatching { ic.getSelectedText(0)?.toString() }.getOrNull()
+
+    // Must ONLY be invoked from background executors (icQueryExecutor / inserter) — NEVER on MainLooper.
+    private fun readTextBeforeFromIcOffMainThread(ic: InputConnection, maxChars: Int): String? {
+        if (maxChars <= 0) return ""
+        val direct = runCatching { ic.getTextBeforeCursor(maxChars, 0)?.toString() }.getOrNull()
+        if (direct != null && (direct.length >= maxChars || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
+            return direct
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val fetchLen = minOf(maxChars, 2048)
+            val surrounding = runCatching { ic.getSurroundingText(fetchLen, 0, 0) }.getOrNull()
+            if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
+                val selStart = surrounding.selectionStart.coerceIn(0, surrounding.text.length)
+                val fromSurrounding = surrounding.text.subSequence(0, selStart).toString()
+                if (direct == null || fromSurrounding.length > direct.length) {
+                    return fromSurrounding
+                }
+            }
+        }
+        if (direct != null && (direct.isNotEmpty() || maxChars <= 2048)) return direct
+        if (maxChars > 2048) {
+            val fallbackDirect = runCatching { ic.getTextBeforeCursor(2048, 0)?.toString() }.getOrNull()
+            if (!fallbackDirect.isNullOrEmpty()) return fallbackDirect
+        }
+        if (maxChars > 512) {
+            for (limit in intArrayOf(1024, 512)) {
+                val fallbackSmall = runCatching { ic.getTextBeforeCursor(limit, 0)?.toString() }.getOrNull()
+                if (!fallbackSmall.isNullOrEmpty()) return fallbackSmall
+            }
+        }
+        if (direct != null) return direct
+        val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
+        if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
+            val localSelStart = extracted.selectionStart - extracted.startOffset
+            if (localSelStart in 0..extracted.text.length && (extracted.startOffset == 0 || localSelStart >= maxChars)) {
+                val start = (localSelStart - maxChars).coerceAtLeast(0)
+                return extracted.text.subSequence(start, localSelStart).toString()
+            }
+        }
+        return null
+    }
+
+    // Must ONLY be invoked from background executors (icQueryExecutor / inserter) — NEVER on MainLooper.
+    private fun readTextAfterFromIcOffMainThread(ic: InputConnection, maxChars: Int): String? {
+        if (maxChars <= 0) return ""
+        val direct = runCatching { ic.getTextAfterCursor(maxChars, 0)?.toString() }.getOrNull()
+        if (direct != null && (direct.length >= maxChars || Build.VERSION.SDK_INT < Build.VERSION_CODES.S)) {
+            return direct
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val fetchLen = minOf(maxChars, 2048)
+            val surrounding = runCatching { ic.getSurroundingText(0, fetchLen, 0) }.getOrNull()
+            if (surrounding != null && surrounding.selectionStart >= 0 && surrounding.selectionEnd >= 0) {
+                val selEnd = surrounding.selectionEnd.coerceIn(0, surrounding.text.length)
+                val fromSurrounding = surrounding.text.subSequence(selEnd, surrounding.text.length).toString()
+                if (direct == null || fromSurrounding.length > direct.length) {
+                    return fromSurrounding
+                }
+            }
+        }
+        if (direct != null) return direct
+        if (maxChars > 2048) {
+            val fallbackDirect = runCatching { ic.getTextAfterCursor(2048, 0)?.toString() }.getOrNull()
+            if (fallbackDirect != null) return fallbackDirect
+        }
+        val extracted = runCatching { ic.getExtractedText(ExtractedTextRequest(), 0) }.getOrNull()
+        if (extracted != null && extracted.text != null && extracted.startOffset >= 0) {
+            val localSelEnd = extracted.selectionEnd - extracted.startOffset
+            if (localSelEnd in 0..extracted.text.length) {
+                val end = (localSelEnd + maxChars).coerceAtMost(extracted.text.length)
+                return extracted.text.subSequence(localSelEnd, end).toString()
+            }
+        }
+        return null
+    }
+
+    // Must ONLY be invoked from icQueryExecutor — NEVER on MainLooper.
+    private fun buildSnapshotGatewayOffMainThread(
+        ic: InputConnection,
+        maxBeforeChars: Int,
+        maxAfterChars: Int,
+        targetSnapshot: InsertionHistoryManager.EditorTarget = currentEditorTarget,
+        passwordSnapshot: Boolean = isPasswordTarget
+    ): ImeInputPipeline.SnapshotHostEditorGateway {
+        val selected = readSelectedFromIcOffMainThread(ic)
+        val hasSel = !selected.isNullOrEmpty() || readHasSelectionFromIcOffMainThread(ic)
+        val before = readTextBeforeFromIcOffMainThread(ic, maxBeforeChars)
+        val after = readTextAfterFromIcOffMainThread(ic, maxAfterChars)
+        return ImeInputPipeline.SnapshotHostEditorGateway(
+            target = targetSnapshot,
+            passwordField = passwordSnapshot,
+            preReadBefore = before,
+            preReadAfter = after,
+            preReadSelected = if (hasSel) (selected ?: "\u200B") else null,
+            sink = buildIcMutationSink(ic)
+        )
+    }
+
+    private fun scheduleEditorContextSync(
+        conn: InputConnection? = currentInputConnection,
+        triggerSuggestions: Boolean = true,
+        preserveManualShift: Boolean = true
+    ) {
+        val ic = conn ?: return
+        if (serviceDestroyed) return
+        val expectedRevision = shadowEditor.revision
+        val expectedSession = editorSessionId
+        submitSafely(icQueryExecutor) {
+            val before = readTextBeforeFromIcOffMainThread(
+                ic,
+                ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_BEFORE_CHARS
+            )
+            val after = readTextAfterFromIcOffMainThread(
+                ic,
+                ImeInputPipeline.EditorShadowBuffer.MAX_SHADOW_AFTER_CHARS
+            )
+            val hasSelection = readHasSelectionFromIcOffMainThread(ic)
+            main.post {
+                if (serviceDestroyed || expectedSession != editorSessionId) return@post
+                val applied = shadowEditor.applyHostSnapshot(
+                    expectedRevision = expectedRevision,
+                    before = before,
+                    after = after,
+                    hasSelection = hasSelection
+                )
+                if (applied) {
+                    syncAutoCapitalization(
+                        preserveManualShift = preserveManualShift,
+                        predictedBeforeText = shadowEditor.beforeText(48)
+                    )
+                    if (triggerSuggestions && inputViewActive && !isFilterMode && !isPasswordTarget) {
+                        refreshTypingSuggestionsAsync()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun schedulePreserveSessionVerification(
+        verifyRestartToken: Int,
+        expectedSessionId: Long,
+        delayMs: Long,
+        allowRetry: Boolean
+    ) {
+        main.postDelayed({
+            if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
+                return@postDelayed
+            }
+            if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) {
+                return@postDelayed
+            }
+            val conn = currentInputConnection ?: return@postDelayed
+            val targetSnap = currentEditorTarget
+            val pwSnap = isPasswordTarget
+            submitSafely(icQueryExecutor) {
+                val g = buildSnapshotGatewayOffMainThread(conn, 2048, InsertionHistoryManager.ANCHOR_LENGTH, targetSnap, pwSnap)
+                val before32 = g.textBeforeCursor(32)
+                main.post {
+                    if (serviceDestroyed || pasteRestartVerifyToken != verifyRestartToken || editorSessionId != expectedSessionId) {
+                        return@post
+                    }
+                    if (isInserting || !pasteCapsuleController.isActive || pasteCapsuleController.isPendingConfirmation) {
+                        return@post
+                    }
+                    val valid = if (pasteCapsuleController.isRedoMode) {
+                        insertionHistory.canSafelyRedo(g).allowed
+                    } else {
+                        insertionHistory.canSafelyUndo(g).allowed
+                    }
+                    if (!valid && before32 != null) {
+                        if (allowRetry) {
+                            schedulePreserveSessionVerification(verifyRestartToken, expectedSessionId, 600L, allowRetry = false)
+                        } else {
+                            editorSessionId++
+                            dismissPasteUndoCapsule()
+                        }
+                    }
+                }
+            }
+        }, delayMs)
     }
 
     private fun updateInsertionHistoryButtons() {
@@ -6316,13 +6923,13 @@ class ClipMaxImeService : InputMethodService() {
             clearTypingSuggestionsView()
         }
         shiftStateMachine.onNonLetterInput()
-        syncAutoCapitalization(preserveManualShift = false)
+        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
         setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, message))
     }
 
     private fun performInsertionUndo() {
-        val gateway = buildEditorGateway()
-        if (gateway == null) {
+        val conn = currentInputConnection
+        if (conn == null) {
             setStatus(AppUiStrings.undoWaitingForFieldStatus(keyboardLanguage))
             if (!insertionHistory.hasAnyUndoEntries() || !inputSessionActive) {
                 dismissPasteUndoCapsule()
@@ -6332,63 +6939,55 @@ class ClipMaxImeService : InputMethodService() {
         val verifyToken = ++pasteHistoryVerifyToken
         val pendingEntry = insertionHistory.peekUndo()
         val checkLen = minOf(2048, maxOf(128, (pendingEntry?.insertedText?.length ?: 128) + (pendingEntry?.beforeAnchor?.length ?: 0) + 64))
-        val preBefore = gateway.textBeforeCursor(checkLen)
-        val result = insertionHistory.undo(gateway)
-        val entry = result.entry
+        val targetSnap = currentEditorTarget
+        val pwSnap = isPasswordTarget
+        val sessionSnap = editorSessionId
 
-        if (!result.success || entry == null) {
-            shiftStateMachine.onNonLetterInput()
-            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
-            val shouldPreserveRetry = insertionHistory.hasAnyUndoEntries() &&
-                !gateway.isPasswordField() &&
-                (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
-            if (shouldPreserveRetry) {
-                pasteCapsuleController.onUndoConfirmationRejected(
-                    preserveUndoForRetry = true,
-                    nowMs = SystemClock.elapsedRealtime()
+        submitSafely(icQueryExecutor) {
+            val gateway = buildSnapshotGatewayOffMainThread(conn, checkLen, InsertionHistoryManager.ANCHOR_LENGTH, targetSnap, pwSnap)
+            val preBefore = gateway.textBeforeCursor(checkLen)
+            main.post {
+                if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken || editorSessionId != sessionSnap) {
+                    return@post
+                }
+                val result = insertionHistory.undo(gateway)
+                val entry = result.entry
+                if (!result.success || entry == null) {
+                    shiftStateMachine.onNonLetterInput()
+                    setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
+                    val shouldPreserveRetry = insertionHistory.hasAnyUndoEntries() &&
+                        !gateway.isPasswordField() &&
+                        (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
+                    if (shouldPreserveRetry) {
+                        pasteCapsuleController.onUndoConfirmationRejected(
+                            preserveUndoForRetry = true,
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        updatePasteUndoCapsuleUI()
+                    } else {
+                        dismissPasteUndoCapsule()
+                    }
+                    syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                    return@post
+                }
+
+                shadowEditor.invalidateHostSync()
+                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                pasteCapsuleController.onUndoPendingConfirmation(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    isLargeOperation = isLargeOperation
                 )
                 updatePasteUndoCapsuleUI()
-            } else {
-                dismissPasteUndoCapsule()
+                setStatus(AppUiStrings.confirmingUndoStatus(keyboardLanguage))
+
+                val verifySchedule = if (isLargeOperation) {
+                    longArrayOf(35L, 120L, 260L, 450L, 700L)
+                } else {
+                    longArrayOf(25L, 100L, 240L, 450L)
+                }
+                scheduleUndoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
             }
-            syncAutoCapitalization(preserveManualShift = false)
-            return
         }
-
-        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-        val immediateBefore = gateway.textBeforeCursor(checkLen)
-        val immediateAfter = gateway.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
-        val immediateConfirmed = insertionHistory.confirmUndoMutation(
-            entry = entry,
-            preBefore = preBefore,
-            postBefore = immediateBefore,
-            postAfter = immediateAfter,
-            gateway = gateway
-        )
-        if (immediateConfirmed) {
-            pasteCapsuleController.onUndoConfirmed(
-                nowMs = SystemClock.elapsedRealtime(),
-                isLargeOperation = isLargeOperation
-            )
-            updatePasteUndoCapsuleUI()
-            applyConfirmedUndoSideEffects(entry, result.message)
-            return
-        }
-
-        // Do NOT transition to Redo until host editor confirms the mutation occurred.
-        pasteCapsuleController.onUndoPendingConfirmation(
-            nowMs = SystemClock.elapsedRealtime(),
-            isLargeOperation = isLargeOperation
-        )
-        updatePasteUndoCapsuleUI()
-        setStatus(AppUiStrings.confirmingUndoStatus(keyboardLanguage))
-
-        val verifySchedule = if (isLargeOperation) {
-            longArrayOf(50L, 150L, 300L, 500L, 750L)
-        } else {
-            longArrayOf(50L, 150L, 300L, 500L)
-        }
-        scheduleUndoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
     }
 
     private fun scheduleUndoMutationVerification(
@@ -6403,38 +7002,57 @@ class ClipMaxImeService : InputMethodService() {
         if (stepIndex >= scheduleMs.size) return
         main.postDelayed({
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-            val g = buildEditorGateway()
-            val after = g?.textBeforeCursor(checkLen)
-            val afterTrailing = g?.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
-            if (g != null && insertionHistory.confirmUndoMutation(entry, preBefore, after, afterTrailing, g)) {
-                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-                pasteCapsuleController.onUndoConfirmed(
-                    nowMs = SystemClock.elapsedRealtime(),
-                    isLargeOperation = isLargeOperation
-                )
-                updatePasteUndoCapsuleUI()
-                applyConfirmedUndoSideEffects(entry, successMessage)
-                return@postDelayed
-            }
-            if (stepIndex + 1 < scheduleMs.size) {
-                scheduleUndoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
-            } else {
+            val conn = currentInputConnection
+            if (conn == null) {
                 insertionHistory.rollbackLastUndo(entry)
-                val canPreserve = g != null && !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
                 pasteCapsuleController.onUndoConfirmationRejected(
-                    preserveUndoForRetry = canPreserve,
+                    preserveUndoForRetry = false,
                     nowMs = SystemClock.elapsedRealtime()
                 )
                 updatePasteUndoCapsuleUI()
-                syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.undoRejectedStatus(keyboardLanguage, canPreserve))
+                syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                setStatus(AppUiStrings.undoRejectedStatus(keyboardLanguage, false))
+                return@postDelayed
+            }
+            val targetSnap = currentEditorTarget
+            val pwSnap = isPasswordTarget
+            submitSafely(icQueryExecutor) {
+                val g = buildSnapshotGatewayOffMainThread(conn, checkLen, InsertionHistoryManager.ANCHOR_LENGTH, targetSnap, pwSnap)
+                val after = g.textBeforeCursor(checkLen)
+                val afterTrailing = g.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+                main.post {
+                    if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@post
+                    if (insertionHistory.confirmUndoMutation(entry, preBefore, after, afterTrailing, g)) {
+                        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                        pasteCapsuleController.onUndoConfirmed(
+                            nowMs = SystemClock.elapsedRealtime(),
+                            isLargeOperation = isLargeOperation
+                        )
+                        updatePasteUndoCapsuleUI()
+                        applyConfirmedUndoSideEffects(entry, successMessage)
+                        return@post
+                    }
+                    if (stepIndex + 1 < scheduleMs.size) {
+                        scheduleUndoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+                    } else {
+                        insertionHistory.rollbackLastUndo(entry)
+                        val canPreserve = !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
+                        pasteCapsuleController.onUndoConfirmationRejected(
+                            preserveUndoForRetry = canPreserve,
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        updatePasteUndoCapsuleUI()
+                        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                        setStatus(AppUiStrings.undoRejectedStatus(keyboardLanguage, canPreserve))
+                    }
+                }
             }
         }, scheduleMs[stepIndex])
     }
 
     private fun performInsertionRedo() {
-        val gateway = buildEditorGateway()
-        if (gateway == null) {
+        val conn = currentInputConnection
+        if (conn == null) {
             setStatus(AppUiStrings.redoWaitingForFieldStatus(keyboardLanguage))
             if (!insertionHistory.hasAnyRedoEntries() || !inputSessionActive) {
                 dismissPasteUndoCapsule()
@@ -6444,66 +7062,57 @@ class ClipMaxImeService : InputMethodService() {
         val verifyToken = ++pasteHistoryVerifyToken
         val pendingEntry = insertionHistory.peekRedo()
         val checkLen = minOf(2048, maxOf(128, (pendingEntry?.insertedText?.length ?: 128) + (pendingEntry?.beforeAnchor?.length ?: 0) + 64))
-        val preBefore = gateway.textBeforeCursor(checkLen)
-        val result = insertionHistory.redo(gateway)
-        val entry = result.entry
-        clearTypingSuggestionsView()
-        shiftStateMachine.onNonLetterInput()
+        val targetSnap = currentEditorTarget
+        val pwSnap = isPasswordTarget
+        val sessionSnap = editorSessionId
 
-        if (!result.success || entry == null) {
-            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
-            val shouldPreserveRetry = insertionHistory.hasAnyRedoEntries() &&
-                !gateway.isPasswordField() &&
-                (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
-            if (shouldPreserveRetry) {
-                pasteCapsuleController.onRedoConfirmationRejected(
-                    preserveRedoForRetry = true,
-                    nowMs = SystemClock.elapsedRealtime()
+        submitSafely(icQueryExecutor) {
+            val gateway = buildSnapshotGatewayOffMainThread(conn, checkLen, InsertionHistoryManager.ANCHOR_LENGTH, targetSnap, pwSnap)
+            val preBefore = gateway.textBeforeCursor(checkLen)
+            main.post {
+                if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken || editorSessionId != sessionSnap) {
+                    return@post
+                }
+                val result = insertionHistory.redo(gateway)
+                val entry = result.entry
+                clearTypingSuggestionsView()
+                shiftStateMachine.onNonLetterInput()
+
+                if (!result.success || entry == null) {
+                    setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
+                    val shouldPreserveRetry = insertionHistory.hasAnyRedoEntries() &&
+                        !gateway.isPasswordField() &&
+                        (pendingEntry == null || pendingEntry.target.isCompatibleWith(gateway.currentTarget()))
+                    if (shouldPreserveRetry) {
+                        pasteCapsuleController.onRedoConfirmationRejected(
+                            preserveRedoForRetry = true,
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        updatePasteUndoCapsuleUI()
+                    } else {
+                        dismissPasteUndoCapsule()
+                    }
+                    syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                    return@post
+                }
+
+                shadowEditor.invalidateHostSync()
+                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                pasteCapsuleController.onRedoPendingConfirmation(
+                    nowMs = SystemClock.elapsedRealtime(),
+                    isLargeOperation = isLargeOperation
                 )
                 updatePasteUndoCapsuleUI()
-            } else {
-                dismissPasteUndoCapsule()
+                setStatus(AppUiStrings.confirmingRedoStatus(keyboardLanguage))
+
+                val verifySchedule = if (isLargeOperation) {
+                    longArrayOf(35L, 120L, 260L, 450L, 700L)
+                } else {
+                    longArrayOf(25L, 100L, 240L, 450L)
+                }
+                scheduleRedoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
             }
-            syncAutoCapitalization(preserveManualShift = false)
-            return
         }
-
-        val canUndoRemaining = insertionHistory.hasAnyUndoEntries()
-        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-        val immediateBefore = gateway.textBeforeCursor(checkLen)
-        val immediateAfter = gateway.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
-        val immediateConfirmed = insertionHistory.confirmRedoMutation(
-            entry = entry,
-            preBefore = preBefore,
-            postBefore = immediateBefore,
-            postAfter = immediateAfter,
-            gateway = gateway
-        )
-        if (immediateConfirmed) {
-            pasteCapsuleController.onRedoConfirmed(
-                canUndoRemaining = canUndoRemaining,
-                nowMs = SystemClock.elapsedRealtime(),
-                isLargeOperation = isLargeOperation
-            )
-            updatePasteUndoCapsuleUI()
-            syncAutoCapitalization(preserveManualShift = false)
-            setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, result.message))
-            return
-        }
-
-        pasteCapsuleController.onRedoPendingConfirmation(
-            nowMs = SystemClock.elapsedRealtime(),
-            isLargeOperation = isLargeOperation
-        )
-        updatePasteUndoCapsuleUI()
-        setStatus(AppUiStrings.confirmingRedoStatus(keyboardLanguage))
-
-        val verifySchedule = if (isLargeOperation) {
-            longArrayOf(50L, 150L, 300L, 500L, 750L)
-        } else {
-            longArrayOf(50L, 150L, 300L, 500L)
-        }
-        scheduleRedoMutationVerification(entry, result.message, verifyToken, checkLen, preBefore, verifySchedule, 0)
     }
 
     private fun scheduleRedoMutationVerification(
@@ -6518,33 +7127,52 @@ class ClipMaxImeService : InputMethodService() {
         if (stepIndex >= scheduleMs.size) return
         main.postDelayed({
             if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@postDelayed
-            val g = buildEditorGateway()
-            val after = g?.textBeforeCursor(checkLen)
-            val afterTrailing = g?.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
-            if (g != null && insertionHistory.confirmRedoMutation(entry, preBefore, after, afterTrailing, g)) {
-                val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
-                pasteCapsuleController.onRedoConfirmed(
-                    canUndoRemaining = insertionHistory.hasAnyUndoEntries(),
-                    nowMs = SystemClock.elapsedRealtime(),
-                    isLargeOperation = isLargeOperation
-                )
-                updatePasteUndoCapsuleUI()
-                syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, successMessage))
-                return@postDelayed
-            }
-            if (stepIndex + 1 < scheduleMs.size) {
-                scheduleRedoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
-            } else {
+            val conn = currentInputConnection
+            if (conn == null) {
                 insertionHistory.rollbackLastRedo(entry)
-                val canPreserve = g != null && !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
                 pasteCapsuleController.onRedoConfirmationRejected(
-                    preserveRedoForRetry = canPreserve,
+                    preserveRedoForRetry = false,
                     nowMs = SystemClock.elapsedRealtime()
                 )
                 updatePasteUndoCapsuleUI()
-                syncAutoCapitalization(preserveManualShift = false)
-                setStatus(AppUiStrings.redoRejectedStatus(keyboardLanguage, canPreserve))
+                syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                setStatus(AppUiStrings.redoRejectedStatus(keyboardLanguage, false))
+                return@postDelayed
+            }
+            val targetSnap = currentEditorTarget
+            val pwSnap = isPasswordTarget
+            submitSafely(icQueryExecutor) {
+                val g = buildSnapshotGatewayOffMainThread(conn, checkLen, InsertionHistoryManager.ANCHOR_LENGTH, targetSnap, pwSnap)
+                val after = g.textBeforeCursor(checkLen)
+                val afterTrailing = g.textAfterCursor(InsertionHistoryManager.ANCHOR_LENGTH)
+                main.post {
+                    if (serviceDestroyed || pasteHistoryVerifyToken != verifyToken) return@post
+                    if (insertionHistory.confirmRedoMutation(entry, preBefore, after, afterTrailing, g)) {
+                        val isLargeOperation = entry.insertedText.length >= PasteUndoCapsuleSpec.LARGE_PASTE_CHAR_THRESHOLD
+                        pasteCapsuleController.onRedoConfirmed(
+                            canUndoRemaining = insertionHistory.hasAnyUndoEntries(),
+                            nowMs = SystemClock.elapsedRealtime(),
+                            isLargeOperation = isLargeOperation
+                        )
+                        updatePasteUndoCapsuleUI()
+                        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                        setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, successMessage))
+                        return@post
+                    }
+                    if (stepIndex + 1 < scheduleMs.size) {
+                        scheduleRedoMutationVerification(entry, successMessage, verifyToken, checkLen, preBefore, scheduleMs, stepIndex + 1)
+                    } else {
+                        insertionHistory.rollbackLastRedo(entry)
+                        val canPreserve = !g.isPasswordField() && entry.target.isCompatibleWith(g.currentTarget())
+                        pasteCapsuleController.onRedoConfirmationRejected(
+                            preserveRedoForRetry = canPreserve,
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        updatePasteUndoCapsuleUI()
+                        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+                        setStatus(AppUiStrings.redoRejectedStatus(keyboardLanguage, canPreserve))
+                    }
+                }
             }
         }, scheduleMs[stepIndex])
     }
@@ -6588,77 +7216,6 @@ class ClipMaxImeService : InputMethodService() {
         suggestionScrollView?.visibility = if (stripState.showSuggestionsStrip) View.VISIBLE else View.GONE
     }
 
-    private data class ComposingContext(
-        val composingWord: String,
-        val fullToken: String,
-        val beforeAnchor: String,
-        val afterAnchor: String,
-        val isSentenceStart: Boolean,
-        val previousWord: String?,
-        val endedWithSpace: Boolean,
-        val midWord: Boolean
-    )
-
-    private fun extractComposingContext(conn: InputConnection): ComposingContext? {
-        val before = runCatching { conn.getTextBeforeCursor(72, 0)?.toString() }.getOrNull() ?: return null
-        val after = runCatching { conn.getTextAfterCursor(48, 0)?.toString() }.getOrNull().orEmpty()
-        val selected = runCatching { conn.getSelectedText(0) }.getOrNull()
-        if (!selected.isNullOrEmpty()) return null
-
-        val midWord = after.isNotEmpty() && (after[0].isLetterOrDigit() || after[0] == '\'')
-        val endedWithSpace = before.isNotEmpty() && before.last().isWhitespace()
-
-        // Full non-whitespace token right before cursor
-        var wsIdx = before.length - 1
-        while (wsIdx >= 0 && !before[wsIdx].isWhitespace()) wsIdx--
-        val fullToken = if (midWord || endedWithSpace) "" else before.substring(wsIdx + 1)
-
-        // Trailing letter/apostrophe word
-        var wordStart = before.length - 1
-        while (wordStart >= 0 && (before[wordStart].isLetter() || before[wordStart] == '\'')) {
-            wordStart--
-        }
-        val composingWord = if (midWord || endedWithSpace) "" else before.substring(wordStart + 1)
-        val anchorBeforeWord = if (composingWord.isNotEmpty()) {
-            before.substring(0, wordStart + 1).takeLast(InsertionHistoryManager.ANCHOR_LENGTH)
-        } else {
-            before.takeLast(InsertionHistoryManager.ANCHOR_LENGTH)
-        }
-
-        // Check sentence start before fullToken
-        var scanIdx = if (fullToken.isNotEmpty()) wsIdx else before.length - 1
-        while (scanIdx >= 0 && before[scanIdx] == ' ') scanIdx--
-        val isSentenceStart = scanIdx < 0 || before[scanIdx] in charArrayOf('\n', '.', '!', '?')
-
-        // Extract previous completed word (when composing or right after space)
-        var prevEnd = scanIdx
-        while (prevEnd >= 0 && !before[prevEnd].isLetter() && before[prevEnd] != '\'') {
-            if (!before[prevEnd].isWhitespace()) {
-                prevEnd = -1
-                break
-            }
-            prevEnd--
-        }
-        val prevWord = if (prevEnd >= 0) {
-            var prevStart = prevEnd
-            while (prevStart >= 0 && (before[prevStart].isLetter() || before[prevStart] == '\'')) prevStart--
-            before.substring(prevStart + 1, prevEnd + 1).takeIf { it.isNotEmpty() }
-        } else {
-            null
-        }
-
-        return ComposingContext(
-            composingWord = composingWord,
-            fullToken = fullToken,
-            beforeAnchor = anchorBeforeWord,
-            afterAnchor = after,
-            isSentenceStart = isSentenceStart,
-            previousWord = prevWord,
-            endedWithSpace = endedWithSpace,
-            midWord = midWord
-        )
-    }
-
     private fun refreshTypingSuggestionsAsync() {
         if (isPasswordTarget || isFilterMode || keyboardLanguage == SettingsPanelSpec.LANG_ARABIC) {
             clearTypingSuggestionsView()
@@ -6673,8 +7230,12 @@ class ClipMaxImeService : InputMethodService() {
             return
         }
         val conn = currentInputConnection ?: return
-        val ctx = extractComposingContext(conn) ?: run {
+        val ctx = shadowEditor.currentComposingContext()
+        if (ctx == null) {
             clearTypingSuggestionsView()
+            if (!shadowEditor.synchronizedWithHost && shadowEditor.awaitingHostSync) {
+                scheduleEditorContextSync(conn, triggerSuggestions = true, preserveManualShift = true)
+            }
             return
         }
         if (ctx.midWord || ctx.composingWord.isEmpty()) {
@@ -6698,7 +7259,7 @@ class ClipMaxImeService : InputMethodService() {
 
         val reqGen = suggestionGeneration.incrementAndGet()
         val suppressedSnapshot = suppressedAutocorrectWords.toSet()
-        suggestExecutor.execute {
+        submitSafely(suggestExecutor) {
             val analysis = typingEngine.analyzeWord(
                 composingWord = ctx.composingWord,
                 fullTokenBeforeCursor = ctx.fullToken,
@@ -6747,20 +7308,16 @@ class ClipMaxImeService : InputMethodService() {
             capMode = resolved,
             preserveManualShift = preserveManualShift
         ) {
-            val conn = currentInputConnection
-            val before = predictedBeforeText ?: runCatching { conn?.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
-            val after = runCatching { conn?.getTextAfterCursor(16, 0)?.toString() }.getOrNull()
-            val hasSel = !runCatching { conn?.getSelectedText(0) }.getOrNull().isNullOrEmpty()
-            val androidCaps = if (info != null && conn != null) {
-                runCatching { conn.getCursorCapsMode(info.inputType) }.getOrDefault(0)
-            } else 0
+            val before = predictedBeforeText ?: shadowEditor.beforeText(48)
+            val after = shadowEditor.afterText(16)
+            val hasSel = shadowEditor.hasSelection
 
             AutoCapitalizationPolicy.shouldAutoShift(
                 capMode = resolved,
                 textBeforeCursor = before,
                 textAfterCursor = after,
                 hasSelection = hasSel,
-                androidCursorCapsMode = androidCaps
+                androidCursorCapsMode = 0
             )
         }
         if (changed) {
@@ -6770,56 +7327,61 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun commitWordBoundaryWithIntelligence(conn: InputConnection, delimiter: String) {
         suggestionGeneration.incrementAndGet()
-        val beforeFallback = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
         if (isPasswordTarget || keyboardLanguage == SettingsPanelSpec.LANG_ARABIC || !isAutoCorrectEnabled || !fieldCapabilities.allowAutocorrect) {
             lastRevertOriginalWord = null
             insertionHistory.invalidateImmediateBackspaceRevert()
-            conn.commitText(delimiter, 1)
+            if (commitTextSafely(conn, delimiter, 1)) {
+                shadowEditor.onCommitText(delimiter)
+            }
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
             syncAutoCapitalization(
                 preserveManualShift = false,
-                predictedBeforeText = beforeFallback?.plus(delimiter)
+                predictedBeforeText = shadowEditor.beforeText(48)
             )
             return
         }
 
-        val ctx = extractComposingContext(conn)
+        val ctx = shadowEditor.currentComposingContext()
         val word = ctx?.composingWord.orEmpty()
         if (ctx == null || ctx.midWord || word.length < 2) {
             lastRevertOriginalWord = null
             insertionHistory.invalidateImmediateBackspaceRevert()
-            conn.commitText(delimiter, 1)
+            if (commitTextSafely(conn, delimiter, 1)) {
+                shadowEditor.onCommitText(delimiter)
+            }
             updateInsertionHistoryButtons()
             refreshTypingSuggestionsAsync()
             syncAutoCapitalization(
                 preserveManualShift = false,
-                predictedBeforeText = beforeFallback?.plus(delimiter)
+                predictedBeforeText = shadowEditor.beforeText(48)
             )
             return
         }
 
         val suppressedSnapshot = suppressedAutocorrectWords.toSet()
         val cached = currentWordAnalysis?.takeIf { it.originalWord == word }
-        val analysis = cached ?: typingEngine.analyzeWord(
-            composingWord = word,
-            fullTokenBeforeCursor = ctx.fullToken,
-            isSentenceStart = ctx.isSentenceStart,
-            autocompleteEnabled = isAutocompleteEnabled && fieldCapabilities.allowAutocomplete,
-            autoCorrectEnabled = true,
-            suppressedWordsLower = suppressedSnapshot,
-            maxSuggestions = 4
-        )
+        val correction = if (cached != null) {
+            cached.autoCorrection
+        } else {
+            typingEngine.quickHighConfidenceCorrection(
+                composingWord = word,
+                fullTokenBeforeCursor = ctx.fullToken,
+                isSentenceStart = ctx.isSentenceStart,
+                suppressedWordsLower = suppressedSnapshot
+            )
+        }
 
-        val correction = analysis.autoCorrection
         if (correction != null && correction != word && word.lowercase(Locale.ROOT) !in suppressedSnapshot) {
             val committed = try {
-                conn.beginBatchEdit()
-                conn.deleteSurroundingText(word.length, 0) && conn.commitText(correction + delimiter, 1)
+                runCatching { conn.beginBatchEdit() }
+                deleteSurroundingTextSafely(conn, word.length, 0) &&
+                    commitTextSafely(conn, correction + delimiter, 1)
             } finally {
                 runCatching { conn.endBatchEdit() }
             }
             if (committed) {
+                shadowEditor.onReplaceBeforeCursor(word.length, correction + delimiter)
                 insertionHistory.recordAutocorrect(
                     target = currentEditorTarget,
                     rawOriginalWord = word,
@@ -6842,7 +7404,7 @@ class ClipMaxImeService : InputMethodService() {
                 updateInsertionHistoryButtons()
                 syncAutoCapitalization(
                     preserveManualShift = false,
-                    predictedBeforeText = ctx.beforeAnchor + correction + delimiter
+                    predictedBeforeText = shadowEditor.beforeText(48)
                 )
                 return
             }
@@ -6850,12 +7412,14 @@ class ClipMaxImeService : InputMethodService() {
 
         lastRevertOriginalWord = null
         insertionHistory.invalidateImmediateBackspaceRevert()
-        conn.commitText(delimiter, 1)
+        if (commitTextSafely(conn, delimiter, 1)) {
+            shadowEditor.onCommitText(delimiter)
+        }
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
         syncAutoCapitalization(
             preserveManualShift = false,
-            predictedBeforeText = ctx.beforeAnchor + ctx.composingWord + delimiter
+            predictedBeforeText = shadowEditor.beforeText(48)
         )
     }
 
@@ -6867,7 +7431,7 @@ class ClipMaxImeService : InputMethodService() {
         val revertOrig = lastRevertOriginalWord
         if (revertOrig != null) {
             container.addView(buildSuggestionChip(AppUiStrings.undoSuggestionChipLabel(keyboardLanguage, revertOrig), isHighlight = false, isRevert = true) {
-                val gateway = buildEditorGateway()
+                val gateway = buildShadowGateway()
                 if (gateway != null) {
                     val res = insertionHistory.undo(gateway)
                     if (res.success && fieldCapabilities.allowSessionLearning) {
@@ -6876,6 +7440,7 @@ class ClipMaxImeService : InputMethodService() {
                     lastRevertOriginalWord = null
                     updateInsertionHistoryButtons()
                     refreshTypingSuggestionsAsync()
+                    syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
                     setStatus(AppUiStrings.localizeHistoryMessage(keyboardLanguage, res.message))
                 }
             })
@@ -6953,37 +7518,41 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun acceptTypedWordAsIs(word: String) {
         val conn = currentInputConnection ?: return
-        val ctx = extractComposingContext(conn) ?: return
+        val ctx = shadowEditor.currentComposingContext() ?: return
         if (ctx.composingWord != word || ctx.midWord) return
         if (fieldCapabilities.allowSessionLearning) {
             suppressedAutocorrectWords.add(word.lowercase(Locale.ROOT))
         }
         lastRevertOriginalWord = null
         insertionHistory.invalidateImmediateBackspaceRevert()
-        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        val after = shadowEditor.afterText(1)
         if (after.isEmpty() || !after[0].isWhitespace()) {
-            conn.commitText(" ", 1)
+            if (commitTextSafely(conn, " ", 1)) {
+                shadowEditor.onCommitText(" ")
+            }
         }
         shiftStateMachine.onNonLetterInput()
         updateInsertionHistoryButtons()
         refreshTypingSuggestionsAsync()
-        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = ctx.beforeAnchor + word + " ")
+        syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
     }
 
     private fun applyManualSuggestion(chosenWord: String) {
         val conn = currentInputConnection ?: return
-        val ctx = extractComposingContext(conn) ?: return
+        val ctx = shadowEditor.currentComposingContext() ?: return
         val word = ctx.composingWord
         if (word.isEmpty() || ctx.midWord) return
-        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        val after = shadowEditor.afterText(1)
         val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
         val committed = try {
-            conn.beginBatchEdit()
-            conn.deleteSurroundingText(word.length, 0) && conn.commitText(chosenWord + trailingSpace, 1)
+            runCatching { conn.beginBatchEdit() }
+            deleteSurroundingTextSafely(conn, word.length, 0) &&
+                commitTextSafely(conn, chosenWord + trailingSpace, 1)
         } finally {
             runCatching { conn.endBatchEdit() }
         }
         if (committed) {
+            shadowEditor.onReplaceBeforeCursor(word.length, chosenWord + trailingSpace)
             lastRevertOriginalWord = null
             shiftStateMachine.onNonLetterInput()
             insertionHistory.invalidateImmediateBackspaceRevert()
@@ -7000,16 +7569,18 @@ class ClipMaxImeService : InputMethodService() {
             } else {
                 showClipboardPillsInToolbar()
             }
-            syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = ctx.beforeAnchor + chosenWord + trailingSpace)
+            syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
         }
     }
 
     private fun insertNextWordSuggestion(nextWord: String) {
         val conn = currentInputConnection ?: return
-        val beforeFallback = runCatching { conn.getTextBeforeCursor(48, 0)?.toString() }.getOrNull()
-        val after = runCatching { conn.getTextAfterCursor(1, 0)?.toString() }.getOrNull().orEmpty()
+        val after = shadowEditor.afterText(1)
         val trailingSpace = if (after.isEmpty() || !after[0].isWhitespace()) " " else ""
-        conn.commitText(nextWord + trailingSpace, 1)
+        val committedText = nextWord + trailingSpace
+        if (commitTextSafely(conn, committedText, 1)) {
+            shadowEditor.onCommitText(committedText)
+        }
         lastRevertOriginalWord = null
         shiftStateMachine.onNonLetterInput()
         insertionHistory.invalidateImmediateBackspaceRevert()
@@ -7017,7 +7588,7 @@ class ClipMaxImeService : InputMethodService() {
         refreshTypingSuggestionsAsync()
         syncAutoCapitalization(
             preserveManualShift = false,
-            predictedBeforeText = beforeFallback?.plus(nextWord + trailingSpace)
+            predictedBeforeText = shadowEditor.beforeText(48)
         )
     }
 
@@ -7033,23 +7604,28 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun captureCurrentSelection() {
         if (!inputSessionActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return
-        val selected = runCatching { currentInputConnection?.getSelectedText(0) }.getOrNull()
-        if (selected != null && selected.isNotEmpty()) {
-            val mode = captureMode
-            ClipboardCaptureCoordinator.captureSelection(
-                context = this,
-                selectedText = selected,
-                isSensitiveField = isPasswordTarget
-            ) { outcome ->
-                if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
-                    setStatus(AppUiStrings.capturedCardsStatus(keyboardLanguage, outcome.savedCount, mode))
-                    reloadItems()
-                    scheduleExpiryCleanup()
+        val ic = currentInputConnection ?: return
+        submitSafely(icQueryExecutor) {
+            val selected = readSelectedFromIcOffMainThread(ic)
+            if (selected != null && selected.isNotEmpty()) {
+                val mode = captureMode
+                main.post {
+                    if (serviceDestroyed || !inputSessionActive || isPasswordTarget || !CapturePreferences.isEnabled(captureMode)) return@post
+                    ClipboardCaptureCoordinator.captureSelection(
+                        context = this,
+                        selectedText = selected,
+                        isSensitiveField = isPasswordTarget
+                    ) { outcome ->
+                        if (!serviceDestroyed && outcome != null && outcome.savedCount > 0) {
+                            setStatus(AppUiStrings.capturedCardsStatus(keyboardLanguage, outcome.savedCount, mode))
+                            reloadItems()
+                            scheduleExpiryCleanup()
+                        }
+                    }
                 }
             }
         }
     }
-
     private fun updateCaptureMonitoring() {
         val manager = clipboardManager ?: return
         val listener = clipboardListener ?: return
@@ -7087,7 +7663,7 @@ class ClipMaxImeService : InputMethodService() {
         if (!inputSessionActive) return
         val next = CapturePreferences.nextExpiry(capturePreferences) ?: return
         val task = Runnable {
-            io.execute {
+            submitSafely(io) {
                 val deleted = CapturePreferences.cleanupExpired(store, capturePreferences)
                 main.post {
                     if (deleted > 0) reloadItems()

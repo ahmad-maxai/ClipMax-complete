@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   ArrowLeft,
   ArchiveRestore,
@@ -111,7 +111,49 @@ export function SettingsScreen({
   });
   const [customInputError, setCustomInputError] = useState<string | null>(null);
 
+  const customDurationDebounceRef = useRef<{
+    timer: number;
+    duration: number;
+    unit: "m" | "h";
+    onChange: (r: Retention) => void;
+  } | null>(null);
+
+  const clearPendingCustomDuration = () => {
+    const pending = customDurationDebounceRef.current;
+    if (pending) {
+      window.clearTimeout(pending.timer);
+      customDurationDebounceRef.current = null;
+    }
+  };
+
+  const commitCustomRetentionNow = (
+    duration: number,
+    unit: "m" | "h",
+    commitRetention: (r: Retention) => void = onChangeRetention
+  ) => {
+    saveStoredCustomDuration(duration);
+    saveStoredCustomUnit(unit);
+    const customVal = `custom:${duration}${unit}`;
+    commitRetention(customVal);
+    saveStoredRetention(customVal);
+  };
+
+  const flushPendingCustomDuration = () => {
+    const pending = customDurationDebounceRef.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    customDurationDebounceRef.current = null;
+    commitCustomRetentionNow(pending.duration, pending.unit, pending.onChange);
+  };
+
+  useEffect(() => {
+    return () => {
+      flushPendingCustomDuration();
+    };
+  }, []);
+
   const handleSelectPreset = (r: Retention) => {
+    clearPendingCustomDuration();
     preserveScroll(() => {
       setCustomInputError(null);
       onChangeRetention(r);
@@ -121,6 +163,7 @@ export function SettingsScreen({
   };
 
   const handleSelectCustom = () => {
+    clearPendingCustomDuration();
     preserveScroll(() => {
       const parsed = parseInt(customDurationInput, 10);
       const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
@@ -128,11 +171,8 @@ export function SettingsScreen({
         setCustomDurationInput("15");
         setCustomInputError(null);
       }
-      saveStoredCustomDuration(safeDuration);
-      saveStoredCustomUnit(customUnit);
+      commitCustomRetentionNow(safeDuration, customUnit);
       const customVal = `custom:${safeDuration}${customUnit}`;
-      onChangeRetention(customVal);
-      saveStoredRetention(customVal);
       toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, customUnit)));
     });
   };
@@ -141,24 +181,33 @@ export function SettingsScreen({
     setCustomDurationInput(valStr);
     const parsed = parseInt(valStr, 10);
     if (!valStr.trim() || isNaN(parsed) || parsed <= 0) {
+      clearPendingCustomDuration();
       setCustomInputError(t.customInputErr);
       return;
     }
     setCustomInputError(null);
-    saveStoredCustomDuration(parsed);
-    const customVal = `custom:${parsed}${customUnit}`;
-    onChangeRetention(customVal);
-    saveStoredRetention(customVal);
+    clearPendingCustomDuration();
+    const targetUnit = customUnit;
+    const commitFn = onChangeRetention;
+    const timer = window.setTimeout(() => {
+      customDurationDebounceRef.current = null;
+      commitCustomRetentionNow(parsed, targetUnit, commitFn);
+    }, 140);
+    customDurationDebounceRef.current = {
+      timer,
+      duration: parsed,
+      unit: targetUnit,
+      onChange: commitFn,
+    };
   };
 
   const handleCustomUnitChange = (newUnit: "m" | "h") => {
+    clearPendingCustomDuration();
     setCustomUnit(newUnit);
-    saveStoredCustomUnit(newUnit);
     const parsed = parseInt(customDurationInput, 10);
     const safeDuration = Number.isInteger(parsed) && parsed > 0 ? parsed : 15;
+    commitCustomRetentionNow(safeDuration, newUnit);
     const customVal = `custom:${safeDuration}${newUnit}`;
-    onChangeRetention(customVal);
-    saveStoredRetention(customVal);
     toast(t.retentionToast(formatRetentionLocalized(customVal, locale, safeDuration, newUnit)));
   };
 
@@ -314,7 +363,7 @@ export function SettingsScreen({
   };
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col bg-background overflow-hidden">
+    <div className="flex h-full max-h-full w-full flex-col bg-background overflow-hidden">
       <input
         ref={zipInputRef}
         type="file"
@@ -599,6 +648,7 @@ export function SettingsScreen({
                       step="1"
                       value={customDurationInput}
                       onChange={(e) => handleCustomDurationChange(e.target.value)}
+                      onBlur={flushPendingCustomDuration}
                       placeholder="15"
                       className={cn(
                         "w-full h-9 rounded-lg border bg-surface px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-mint tap-target",
