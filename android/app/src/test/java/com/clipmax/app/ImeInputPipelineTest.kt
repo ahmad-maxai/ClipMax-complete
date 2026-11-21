@@ -252,9 +252,15 @@ class ImeInputPipelineTest {
         try {
             val store = ClipStore(tempDir)
             val v0 = ClipStore.currentChangeVersion()
-            store.saveNew("Note", "Hello ClipMax")
+            val saved = store.save(null, "Note", "Hello ClipMax")
             val v1 = ClipStore.currentChangeVersion()
             assertTrue(v1 > v0)
+            store.setPinned(saved.id, true)
+            val v2 = ClipStore.currentChangeVersion()
+            assertTrue(v2 > v1)
+            assertTrue(store.delete(saved.id))
+            val v3 = ClipStore.currentChangeVersion()
+            assertTrue(v3 > v2)
         } finally {
             tempDir.deleteRecursively()
         }
