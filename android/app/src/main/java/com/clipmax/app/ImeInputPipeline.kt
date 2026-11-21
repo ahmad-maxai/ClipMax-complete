@@ -10,7 +10,7 @@ import kotlin.math.abs
  * suggestion refreshes, auto-capitalization, and lifecycle transitions never
  * block MainLooper on synchronous InputConnection queries.
  */
-object ImeInputPipeline {
+internal object ImeInputPipeline {
 
     data class ComposingContextSnapshot(
         val composingWord: String,
@@ -330,6 +330,6 @@ object ImeInputPipeline {
             label: String,
             fgColor: Int
         ): String =
-            "${config.state.name}|${config.action.name}|$toolbarState|$label|$fgColor"
+            "${config.state.name}|${config.action?.name ?: "NONE"}|$toolbarState|$label|$fgColor"
     }
 }

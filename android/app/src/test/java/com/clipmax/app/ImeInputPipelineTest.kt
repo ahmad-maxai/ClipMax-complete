@@ -237,6 +237,17 @@ class ImeInputPipelineTest {
         assertEquals(rowsA, rowsB)
         assertTrue(rowsA != rowsC)
 
+        val undoConfig = PasteUndoCapsuleSpec.resolveConfig(isActive = true, isRedoMode = false)
+        val redoConfig = PasteUndoCapsuleSpec.resolveConfig(isActive = true, isRedoMode = true)
+        val hiddenConfig = PasteUndoCapsuleSpec.resolveConfig(isActive = false, isRedoMode = false)
+        assertNull(hiddenConfig.action)
+
+        val sigUndo = ImeInputPipeline.ViewSignatureSpec.pasteCapsuleUiSignature(undoConfig, 0, "Undo", 0xFF000000.toInt())
+        val sigRedo = ImeInputPipeline.ViewSignatureSpec.pasteCapsuleUiSignature(redoConfig, 0, "Redo", 0xFF000000.toInt())
+        val sigHidden = ImeInputPipeline.ViewSignatureSpec.pasteCapsuleUiSignature(hiddenConfig, 0, "", 0xFF000000.toInt())
+        assertTrue(sigUndo != sigRedo)
+        assertTrue(sigHidden.contains("|NONE|"))
+
         val tempDir = Files.createTempDirectory("clipstore-version-test").toFile()
         try {
             val store = ClipStore(tempDir)
