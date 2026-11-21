@@ -322,6 +322,7 @@ internal object AppUiStrings {
                 EmojiCatalog.CategoryId.TRAVEL -> "السفر"
                 EmojiCatalog.CategoryId.OBJECTS -> "الأشياء"
                 EmojiCatalog.CategoryId.SYMBOLS -> "الرموز"
+                EmojiCatalog.CategoryId.FLAGS -> "الأعلام"
             }
         } else {
             category.label
@@ -588,12 +589,6 @@ internal object AppUiStrings {
             }
         }
 
-    fun emojiRecentLabel(locale: String?): String =
-        if (isArabic(locale)) "الرموز المستخدمة مؤخراً" else "Recent"
-
-    fun emojiEmptyRecents(locale: String?): String =
-        if (isArabic(locale)) "لا توجد رموز مستخدمة مؤخراً. اضغط على أي رمز لإبقائه هنا." else "No recent emojis yet. Tap any emoji to keep it here."
-
     fun stickerTabLabel(locale: String?): String =
         if (isArabic(locale)) "الملصقات" else "Stickers"
 
@@ -605,16 +600,4 @@ internal object AppUiStrings {
 
     fun searchMediaPlaceholder(locale: String?): String =
         if (isArabic(locale)) "بحث…" else "Search…"
-
-    fun cancelLabel(locale: String?): String =
-        if (isArabic(locale)) "إلغاء" else "Cancel"
-
-    fun removeFromRecents(locale: String?): String =
-        if (isArabic(locale)) "إزالة من الأخيرة" else "Remove from recent"
-
-    fun returnToKeyboardA11y(locale: String?): String =
-        if (isArabic(locale)) "العودة إلى لوحة المفاتيح" else "Return to keyboard"
-
-    fun deleteKeyA11y(locale: String?): String =
-        if (isArabic(locale)) "حذف" else "Delete"
 }

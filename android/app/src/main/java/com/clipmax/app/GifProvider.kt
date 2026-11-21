@@ -22,9 +22,9 @@ internal interface GifProvider {
     )
 
     sealed interface GifFetchResult {
-        data class Success(val items: List<GifItem>) : GifFetchResult()
-        data class Unconfigured(val message: String) : GifFetchResult()
-        data class NetworkError(val error: String) : GifFetchResult()
+        data class Success(val items: List<GifItem>) : GifFetchResult
+        data class Unconfigured(val message: String) : GifFetchResult
+        data class NetworkError(val error: String) : GifFetchResult
     }
 
     fun fetchFeatured(callback: (GifFetchResult) -> Unit)

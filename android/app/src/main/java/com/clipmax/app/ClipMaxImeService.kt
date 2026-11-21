@@ -4100,6 +4100,7 @@ class ClipMaxImeService : InputMethodService() {
             EmojiCatalog.CategoryId.TRAVEL -> IconType.EMOJI_TRAVEL
             EmojiCatalog.CategoryId.OBJECTS -> IconType.EMOJI_OBJECTS
             EmojiCatalog.CategoryId.SYMBOLS -> IconType.EMOJI_SYMBOLS
+            EmojiCatalog.CategoryId.FLAGS -> IconType.EMOJI_SYMBOLS
         }
     }
 
