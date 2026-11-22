@@ -248,8 +248,6 @@ class ClipMaxImeService : InputMethodService() {
     private var currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.EMOJI
     private var isMediaSearchTyping = false
     private var mediaSearchQuery = ""
-    private var isTenorKeyTyping = false
-    private var tenorKeyDraft = ""
     private var mediaSearchInputText: TextView? = null
     private var mediaSearchClearBtn: View? = null
     private var mediaSearchResultsStrip: LinearLayout? = null
@@ -264,12 +262,14 @@ class ClipMaxImeService : InputMethodService() {
     private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
     private val emojiScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController()
 
-    private var selectedStickerSectionIdx = 1
+    private var selectedStickerSectionIdx = 2
+    private var isStickerPackManagerOpen = false
+    private var stickerStoreHost: LinearLayout? = null
     private var stickerScrollView: android.widget.ScrollView? = null
     private var stickerTabsScrollView: HorizontalScrollView? = null
     private val stickerSectionViews = mutableListOf<View>()
     private val stickerTabViews = mutableListOf<Pair<Int, FrameLayout>>()
-    private val stickerScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController(1)
+    private val stickerScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController(2)
 
     private var selectedKaomojiCategoryIdx = 1
     private var kaomojiScrollView: android.widget.ScrollView? = null
@@ -281,22 +281,33 @@ class ClipMaxImeService : InputMethodService() {
 
     private var selectedGifCategoryTag = "featured"
     private var gifFetchResult: GifProvider.GifFetchResult? = null
+    private var gifCurrentPage = 1
+    private var gifHasNext = false
+    private var gifAccumulatedItems: List<GifProvider.GifItem> = emptyList()
     private var gifIsLoading = false
+    private var gifIsLoadingMore = false
     private var gifRequestGen = 0
     private var gifGridHost: LinearLayout? = null
     private var mediaViewportGen = 0
     private val mediaIoExecutor: ExecutorService = Executors.newFixedThreadPool(2, daemonThreadFactory("ClipMax-Media"))
-    private val stickerBitmapCache = LruCache<String, Bitmap>(32)
+    private val stickerBitmapCache = LruCache<String, Bitmap>(64)
     private val mediaCacheManager: MediaCacheManager by lazy { MediaCacheManager(this) }
     private val mediaPreferences: SharedPreferences by lazy {
         getSharedPreferences(MediaKeyboardSpec.PREF_MEDIA_FILE, Context.MODE_PRIVATE)
     }
-    private val gifProvider: TenorV2GifProvider by lazy {
-        TenorV2GifProvider(this, resolveEffectiveTenorApiKey())
+    private val stickerPackManager: StickerPackManager by lazy {
+        StickerPackManager(this, mediaPreferences)
+    }
+    private val gifProvider: KlipyGifProvider by lazy {
+        KlipyGifProvider(this)
     }
     private val recentStickerHistory: MediaKeyboardSpec.RecentStickerHistory by lazy {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_STICKERS, null) }.getOrNull()
         MediaKeyboardSpec.RecentStickerHistory(MediaKeyboardSpec.RecentStickerHistory.decode(raw))
+    }
+    private val favoriteStickers: MediaKeyboardSpec.StickerFavoritesHistory by lazy {
+        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_FAVORITE_STICKERS, null) }.getOrNull()
+        MediaKeyboardSpec.StickerFavoritesHistory(MediaKeyboardSpec.StickerFavoritesHistory.decode(raw))
     }
     private val recentKaomojiHistory: MediaKeyboardSpec.RecentKaomojiHistory by lazy {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, null) }.getOrNull()
@@ -882,16 +893,14 @@ class ClipMaxImeService : InputMethodService() {
             // 3B. Compact Expandable Saved-Clipboard / Pinned Panel
             viewportContainer.addView(buildClipboardPanel())
         } else {
-            // 3C. Live Search Clips Bar, Media Search Bar, or Tenor API Key Entry Bar above keyboard
-            if (isTenorKeyTyping) {
-                viewportContainer.addView(buildTenorKeyEntryInterface(viewport))
-            } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            // 3C. Live Search Clips Bar or Media Search Bar above keyboard
+            if (isEmojiPickerOpen && isMediaSearchTyping) {
                 viewportContainer.addView(buildMediaSearchInterface(viewport))
             } else if (isFilterMode) {
                 viewportContainer.addView(buildSearchInterface(viewport))
             }
 
-            if (isEmojiPickerOpen && !isMediaSearchTyping && !isTenorKeyTyping) {
+            if (isEmojiPickerOpen && !isMediaSearchTyping) {
                 // 3D. Unified 4-Mode Native Media Keyboard (Emoji | GIF | Stickers | Kaomoji)
                 viewportContainer.addView(buildMediaPickerPanel())
                 if (isFilterMode) {
@@ -1088,7 +1097,7 @@ class ClipMaxImeService : InputMethodService() {
                     isFilterMode = false
                     isEmojiPickerOpen = false
                     isMediaSearchTyping = false
-                    isTenorKeyTyping = false
+                    isStickerPackManagerOpen = false
                     isSettingsOpen = false
                     settingsSavedScrollY = 0
                     isClipboardPanelOpen = !isClipboardPanelOpen
@@ -1200,14 +1209,14 @@ class ClipMaxImeService : InputMethodService() {
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 dismissPasteUndoCapsule()
-                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen || isMediaSearchTyping || isTenorKeyTyping
+                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen || isMediaSearchTyping || isStickerPackManagerOpen
                 val wasFilterMode = isFilterMode
                 toolbarState = 0
                 isSettingsOpen = false
                 isClipboardPanelOpen = false
                 isEmojiPickerOpen = false
                 isMediaSearchTyping = false
-                isTenorKeyTyping = false
+                isStickerPackManagerOpen = false
                 clipboardSavedScrollY = 0
                 settingsSavedScrollY = 0
                 isFilterMode = false
@@ -1304,7 +1313,7 @@ class ClipMaxImeService : InputMethodService() {
                 isClipboardPanelOpen = true
                 isEmojiPickerOpen = false
                 isMediaSearchTyping = false
-                isTenorKeyTyping = false
+                isStickerPackManagerOpen = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -1337,7 +1346,7 @@ class ClipMaxImeService : InputMethodService() {
                 isClipboardPanelOpen = false
                 isEmojiPickerOpen = false
                 isMediaSearchTyping = false
-                isTenorKeyTyping = false
+                isStickerPackManagerOpen = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -1361,7 +1370,7 @@ class ClipMaxImeService : InputMethodService() {
             isClipboardPanelOpen = false
             isEmojiPickerOpen = false
             isMediaSearchTyping = false
-            isTenorKeyTyping = false
+            isStickerPackManagerOpen = false
             clipboardSavedScrollY = 0
             isFilterMode = false
             pinnedOnly = false
@@ -1849,81 +1858,6 @@ class ClipMaxImeService : InputMethodService() {
             })
         }
         list.addView(typingCard)
-
-        // 5B. GIFs & Tenor API Key Configuration Card
-        val tenorCard = makeSettingCard()
-        val effectiveKey = resolveEffectiveTenorApiKey()
-        val keyConfigured = MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)
-        val tenorTitle = TextView(this@ClipMaxImeService).apply {
-            text = if (keyConfigured) {
-                "GIF Search (Tenor API: ${MediaKeyboardSpec.TenorApiKeyConfig.maskKey(effectiveKey)})"
-            } else {
-                AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage)
-            }
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(pillPalette.sectionTitleFg)
-            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-        }
-        tenorCard.addView(tenorTitle, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = dp(6) })
-
-        val tenorRow = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val pasteKeyPill = makeOptionPill(
-            if (AppUiStrings.isArabic(keyboardLanguage)) "لصق المفتاح" else "Paste Key",
-            AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage),
-            dp(30)
-        ).apply {
-            applyPillVisual(this, false)
-            setOnClickListener {
-                pasteTenorApiKeyFromClipboard(openGifModeAfter = false)
-                renderFullImeView()
-            }
-        }
-        tenorRow.addView(pasteKeyPill, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
-            marginEnd = pillGapPx
-        })
-
-        val typeKeyPill = makeOptionPill(
-            if (AppUiStrings.isArabic(keyboardLanguage)) "كتابة المفتاح" else "Type Key",
-            AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage),
-            dp(30)
-        ).apply {
-            applyPillVisual(this, true)
-            setOnClickListener {
-                startTenorKeyTypingSession()
-            }
-        }
-        tenorRow.addView(typeKeyPill, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
-            if (keyConfigured) marginEnd = pillGapPx
-        })
-
-        if (keyConfigured && !mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, null).isNullOrBlank()) {
-            val clearKeyPill = makeOptionPill(
-                AppUiStrings.tenorApiKeyClear(keyboardLanguage),
-                AppUiStrings.tenorApiKeyClear(keyboardLanguage),
-                dp(30)
-            ).apply {
-                applyPillVisual(this, false)
-                setTextColor(colorDangerText)
-                setOnClickListener {
-                    saveTenorApiKey("")
-                    renderFullImeView()
-                }
-            }
-            tenorRow.addView(clearKeyPill, LinearLayout.LayoutParams(0, dp(30), 0.7f))
-        }
-        tenorCard.addView(tenorRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        list.addView(tenorCard)
 
         // 6. Full-width Action Pill: Share ClipMax
         val shareLabel = AppUiStrings.shareClipMaxLabel(keyboardLanguage)
@@ -3591,7 +3525,7 @@ class ClipMaxImeService : InputMethodService() {
         val screenHeightDp = dm.heightPixels / density
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val heightPref = currentHeightPref()
-        val isExpandedMediaView = isEmojiPickerOpen && !isMediaSearchTyping && !isTenorKeyTyping &&
+        val isExpandedMediaView = isEmojiPickerOpen && !isMediaSearchTyping &&
             !isSettingsOpen && !isClipboardPanelOpen
         return if (isExpandedMediaView) {
             KeyboardLayoutSpec.computeMediaViewportSpecDp(
@@ -3626,7 +3560,7 @@ class ClipMaxImeService : InputMethodService() {
             heightPref = heightPref,
             screenHeightDp = screenHeightDp,
             isLandscape = isLandscape,
-            hasFilterBar = isFilterMode || (isEmojiPickerOpen && isMediaSearchTyping) || isTenorKeyTyping,
+            hasFilterBar = isFilterMode || (isEmojiPickerOpen && isMediaSearchTyping),
             hasStatusBanner = isInserting || isPasswordTarget
         )
         currentLayoutGeometry = geom
@@ -4395,80 +4329,15 @@ class ClipMaxImeService : InputMethodService() {
 
     private var mediaStatusBannerRunnable: Runnable? = null
 
-    private fun resolveEffectiveTenorApiKey(): String {
-        val fromPref = runCatching {
-            mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, null)
-        }.getOrNull()
-        val fromRes = runCatching { getString(R.string.clipmax_tenor_api_key) }.getOrNull()
-        return MediaKeyboardSpec.TenorApiKeyConfig.resolveEffectiveKey(fromPref, fromRes)
-    }
-
-    private fun saveTenorApiKey(key: String) {
-        val cleaned = key.trim()
-        mediaPreferences.edit().apply {
-            if (cleaned.isEmpty()) remove(MediaKeyboardSpec.PREF_TENOR_API_KEY)
-            else putString(MediaKeyboardSpec.PREF_TENOR_API_KEY, cleaned)
-        }.apply()
-        gifProvider.updateApiKey(cleaned)
-        gifFetchResult = null
-        gifIsLoading = false
-        gifRequestGen++
-        if (cleaned.isNotEmpty() && isEmojiPickerOpen && currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-            loadGifsForCurrentState()
-        }
-    }
-
-    private fun pasteTenorApiKeyFromClipboard(openGifModeAfter: Boolean) {
-        val cm = clipboardManager ?: (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)
-        val clip = runCatching { cm?.primaryClip }.getOrNull()
-        val pasted = if (clip != null && clip.itemCount > 0) {
-            clip.getItemAt(0).coerceToText(this)?.toString()?.trim().orEmpty()
-        } else {
-            ""
-        }
-        if (pasted.isEmpty()) {
-            showMediaStatusBanner(
-                if (AppUiStrings.isArabic(keyboardLanguage)) "الحافظة فارغة — انسخ مفتاح Tenor API أولاً."
-                else "Clipboard is empty — copy your Tenor API key first."
-            )
-            return
-        }
-        saveTenorApiKey(pasted)
-        if (openGifModeAfter) {
-            isSettingsOpen = false
-            isClipboardPanelOpen = false
-            isFilterMode = false
-            isTenorKeyTyping = false
-            isMediaSearchTyping = false
-            isEmojiPickerOpen = true
-            currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
-            loadGifsForCurrentState()
-            renderFullImeView()
-        } else {
-            showMediaStatusBanner(
-                if (AppUiStrings.isArabic(keyboardLanguage)) "تم حفظ مفتاح Tenor API."
-                else "Tenor API key saved."
-            )
-        }
-    }
-
-    private fun startTenorKeyTypingSession() {
-        dismissPasteUndoCapsule()
-        isSettingsOpen = false
-        isClipboardPanelOpen = false
-        isFilterMode = false
-        isMediaSearchTyping = false
-        isTenorKeyTyping = true
-        tenorKeyDraft = runCatching {
-            mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, "")
-        }.getOrNull().orEmpty()
-        modeController.toAlpha()
-        renderFullImeView()
-    }
-
     private fun persistRecentStickers() {
         mediaPreferences.edit()
             .putString(MediaKeyboardSpec.PREF_RECENT_STICKERS, recentStickerHistory.encode())
+            .apply()
+    }
+
+    private fun persistFavoriteStickers() {
+        mediaPreferences.edit()
+            .putString(MediaKeyboardSpec.PREF_FAVORITE_STICKERS, favoriteStickers.encode())
             .apply()
     }
 
@@ -4484,12 +4353,7 @@ class ClipMaxImeService : InputMethodService() {
             .apply()
     }
 
-    private fun showMediaStatusBanner(msg: String) {
-        val root = emojiPickerRoot
-        if (root == null) {
-            setStatus(msg)
-            return
-        }
+    private fun dismissMediaStatusBanners(root: FrameLayout) {
         mediaStatusBannerRunnable?.let(main::removeCallbacks)
         for (i in root.childCount - 1 downTo 0) {
             val child = root.getChildAt(i)
@@ -4497,6 +4361,15 @@ class ClipMaxImeService : InputMethodService() {
                 root.removeViewAt(i)
             }
         }
+    }
+
+    private fun showMediaStatusBanner(msg: String) {
+        val root = emojiPickerRoot
+        if (root == null) {
+            setStatus(msg)
+            return
+        }
+        dismissMediaStatusBanners(root)
         val pill = TextView(this).apply {
             tag = "media_status_banner"
             text = msg
@@ -4538,11 +4411,185 @@ class ClipMaxImeService : InputMethodService() {
         main.postDelayed(task, 3200L)
     }
 
+    private fun shareMediaViaChooser(file: File, mimeType: String, title: String) {
+        val uri = MediaContentProvider.uriForFile(file.name)
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, title)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(sendIntent, title).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val launched = runCatching {
+            startActivity(chooser)
+            true
+        }.getOrDefault(false)
+        if (!launched) {
+            showMediaStatusBanner(AppUiStrings.mediaSaveFailedStatus(keyboardLanguage))
+        }
+    }
+
+    private fun saveMediaToPictures(file: File, mimeType: String, title: String) {
+        submitSafely(mediaIoExecutor) {
+            val savedOk = runCatching {
+                val ext = when (mimeType) {
+                    "image/gif" -> "gif"
+                    "image/webp" -> "webp"
+                    else -> "png"
+                }
+                val cleanTitle = title.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(28).ifEmpty { "clipmax_media" }
+                val fileName = "${cleanTitle}_${System.currentTimeMillis()}.$ext"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, mimeType)
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/ClipMax")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val resolver = contentResolver
+                    val outUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: return@runCatching false
+                    resolver.openOutputStream(outUri)?.use { out ->
+                        file.inputStream().use { inp -> inp.copyTo(out) }
+                    } ?: return@runCatching false
+                    values.clear()
+                    values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(outUri, values, null, null)
+                    true
+                } else {
+                    false
+                }
+            }.getOrDefault(false)
+            main.post {
+                if (serviceDestroyed) return@post
+                if (savedOk) {
+                    showMediaStatusBanner(AppUiStrings.mediaSavedSuccessStatus(keyboardLanguage))
+                } else {
+                    shareMediaViaChooser(file, mimeType, title)
+                }
+            }
+        }
+    }
+
+    private fun showRichMediaFallbackBanner(msg: String, file: File, mimeType: String, title: String) {
+        val root = emojiPickerRoot
+        if (root == null) {
+            setStatus(msg)
+            return
+        }
+        dismissMediaStatusBanners(root)
+
+        val card = LinearLayout(this).apply {
+            tag = "media_status_banner"
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = roundedDrawable(
+                if (isClassicTheme) colorAltDeepBg else colorChipBg,
+                dp(14f),
+                colorAccent
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(8f)
+            }
+            isClickable = true
+        }
+
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        topRow.addView(TextView(this).apply {
+            text = msg
+            textSize = 11.5f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(colorKeyText)
+            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(8)
+        })
+        val closeBtn = FrameLayout(this).apply {
+            background = roundedRipple(colorModBg, dp(11f), 0)
+            isClickable = true
+            isFocusable = true
+            addView(createIconView(IconDrawable(IconType.CLOSE, colorModText, 10f)), FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener { root.removeView(card) }
+        }
+        topRow.addView(closeBtn, LinearLayout.LayoutParams(dp(22), dp(22)))
+        card.addView(topRow)
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.END
+            setPadding(0, dp(8), 0, 0)
+        }
+        val shareBtn = TextView(this).apply {
+            text = AppUiStrings.mediaShareLabel(keyboardLanguage)
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorAccentText)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            background = roundedRipple(colorAccent, dp(8f), 0)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                root.removeView(card)
+                shareMediaViaChooser(file, mimeType, title)
+            }
+        }
+        val saveBtn = TextView(this).apply {
+            text = AppUiStrings.mediaSaveLabel(keyboardLanguage)
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(6), dp(14), dp(6))
+            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                root.removeView(card)
+                saveMediaToPictures(file, mimeType, title)
+            }
+        }
+        actions.addView(saveBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginEnd = dp(8)
+        })
+        actions.addView(shareBtn)
+        card.addView(actions)
+
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply {
+            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val barH = if (isLandscape) MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_LANDSCAPE_DP else MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_PORTRAIT_DP
+            bottomMargin = dp(barH + 8f).toInt()
+            marginStart = dp(10)
+            marginEnd = dp(10)
+        }
+        root.addView(card, lp)
+        card.bringToFront()
+        val task = Runnable {
+            if (!serviceDestroyed && card.parent === root) {
+                root.removeView(card)
+            }
+        }
+        mediaStatusBannerRunnable = task
+        main.postDelayed(task, 8000L)
+    }
+
     private fun startMediaSearchTyping() {
         dismissPasteUndoCapsule()
         dismissEmojiRemoveOverlay()
+        isStickerPackManagerOpen = false
         isMediaSearchTyping = true
-        isTenorKeyTyping = false
         modeController.toAlpha()
         renderFullImeView()
     }
@@ -4593,7 +4640,10 @@ class ClipMaxImeService : InputMethodService() {
             setOnClickListener {
                 dismissPasteUndoCapsule()
                 dismissEmojiRemoveOverlay()
-                if (mediaSearchQuery.isNotBlank()) {
+                if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.STICKERS && isStickerPackManagerOpen) {
+                    isStickerPackManagerOpen = false
+                    renderFullImeView()
+                } else if (mediaSearchQuery.isNotBlank()) {
                     mediaSearchQuery = ""
                     if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
                         loadGifsForCurrentState()
@@ -4602,7 +4652,7 @@ class ClipMaxImeService : InputMethodService() {
                 } else {
                     isEmojiPickerOpen = false
                     isMediaSearchTyping = false
-                    isTenorKeyTyping = false
+                    isStickerPackManagerOpen = false
                     renderFullImeView()
                 }
             }
@@ -4611,95 +4661,121 @@ class ClipMaxImeService : InputMethodService() {
             marginEnd = dp(6)
         })
 
-        // Search pill/button inside top bar
-        val isSearching = mediaSearchQuery.isNotBlank()
-        val showSearchLabel = isSearching ||
+        // Search pill/button inside top bar (hidden while browsing in-keyboard Pack Store)
+        val inPackStore = currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.STICKERS && isStickerPackManagerOpen
+        val isSearching = !inPackStore && mediaSearchQuery.isNotBlank()
+        val showSearchLabel = !inPackStore && (isSearching ||
             currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.EMOJI ||
-            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS
+            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS)
 
-        val searchControl = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            val pillRadius = dp(navCtrlH / 2f)
-            background = roundedRipple(
-                if (isSearching) colorActiveTabBg else colorModBg,
-                pillRadius,
-                if (isSearching) colorAccent else colorKeyBorder
-            )
-            if (showSearchLabel) {
-                setPadding(dp(10), 0, if (isSearching) dp(6) else dp(12), 0)
+        if (inPackStore) {
+            val installedCount = stickerPackManager.installedPacks().size
+            val totalBytes = stickerPackManager.totalDiskBytes()
+            val storeTitleTv = TextView(this@ClipMaxImeService).apply {
+                text = AppUiStrings.stickerPackStoreTitle(keyboardLanguage)
+                textSize = 13.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
             }
-            contentDescription = when (currentMediaSubMode) {
-                MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
-                MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
-                MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
-                MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
+            val storageTv = TextView(this@ClipMaxImeService).apply {
+                text = "$installedCount/${StickerCatalog.PACKS.size} · ${MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(totalBytes)}"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorAccentText)
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = roundedDrawable(colorAccent, dp(10f))
             }
-            val iconColor = if (isSearching) colorActiveTabText else colorModText
-            val iconIv = createIconView(IconDrawable(IconType.SEARCH, iconColor, 14f))
-            addView(iconIv, if (showSearchLabel) {
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            } else {
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            header.addView(storeTitleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(6)
             })
-
-            if (showSearchLabel) {
-                val queryLabel = TextView(this@ClipMaxImeService).apply {
-                    text = if (isSearching) mediaSearchQuery else AppUiStrings.searchMediaPlaceholder(keyboardLanguage).trimEnd('…', '.')
-                    textSize = 12f
-                    typeface = if (isSearching) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                    setTextColor(if (isSearching) colorActiveTabText else colorHintText)
-                    setSingleLine(true)
-                    ellipsize = TextUtils.TruncateAt.END
-                    includeFontPadding = false
+            header.addView(storageTv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        } else {
+            val searchControl = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                val pillRadius = dp(navCtrlH / 2f)
+                background = roundedRipple(
+                    if (isSearching) colorActiveTabBg else colorModBg,
+                    pillRadius,
+                    if (isSearching) colorAccent else colorKeyBorder
+                )
+                if (showSearchLabel) {
+                    setPadding(dp(10), 0, if (isSearching) dp(6) else dp(12), 0)
                 }
-                addView(queryLabel, LinearLayout.LayoutParams(
-                    if (isSearching) 0 else ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    if (isSearching) 1f else 0f
-                ).apply {
-                    marginStart = dp(5)
+                contentDescription = when (currentMediaSubMode) {
+                    MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
+                    MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
+                    MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
+                    MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
+                }
+                val iconColor = if (isSearching) colorActiveTabText else colorModText
+                val iconIv = createIconView(IconDrawable(IconType.SEARCH, iconColor, 14f))
+                addView(iconIv, if (showSearchLabel) {
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                } else {
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 })
+
+                if (showSearchLabel) {
+                    val queryLabel = TextView(this@ClipMaxImeService).apply {
+                        text = if (isSearching) mediaSearchQuery else AppUiStrings.searchMediaPlaceholder(keyboardLanguage).trimEnd('…', '.')
+                        textSize = 12f
+                        typeface = if (isSearching) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                        setTextColor(if (isSearching) colorActiveTabText else colorHintText)
+                        setSingleLine(true)
+                        ellipsize = TextUtils.TruncateAt.END
+                        includeFontPadding = false
+                    }
+                    addView(queryLabel, LinearLayout.LayoutParams(
+                        if (isSearching) 0 else ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        if (isSearching) 1f else 0f
+                    ).apply {
+                        marginStart = dp(5)
+                    })
+                }
+
+                if (isSearching) {
+                    val clearSearchBtn = FrameLayout(this@ClipMaxImeService).apply {
+                        contentDescription = AppUiStrings.clearSearchQueryA11y(keyboardLanguage)
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(0, dp(10f), 0)
+                        val iv = createIconView(IconDrawable(IconType.CLOSE, colorActiveTabText, 11f))
+                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                        setOnClickListener {
+                            mediaSearchQuery = ""
+                            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+                                loadGifsForCurrentState()
+                            }
+                            renderFullImeView()
+                        }
+                    }
+                    addView(clearSearchBtn, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                        marginStart = dp(4)
+                    })
+                }
+
+                setOnClickListener { startMediaSearchTyping() }
             }
 
             if (isSearching) {
-                val clearSearchBtn = FrameLayout(this@ClipMaxImeService).apply {
-                    contentDescription = AppUiStrings.clearSearchQueryA11y(keyboardLanguage)
-                    isClickable = true
-                    isFocusable = true
-                    background = roundedRipple(0, dp(10f), 0)
-                    val iv = createIconView(IconDrawable(IconType.CLOSE, colorActiveTabText, 11f))
-                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-                    setOnClickListener {
-                        mediaSearchQuery = ""
-                        if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-                            loadGifsForCurrentState()
-                        }
-                        renderFullImeView()
-                    }
-                }
-                addView(clearSearchBtn, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                    marginStart = dp(4)
+                header.addView(searchControl, LinearLayout.LayoutParams(0, navCtrlH, 1f))
+            } else {
+                val ctrlW = if (showSearchLabel) ViewGroup.LayoutParams.WRAP_CONTENT else navCtrlH
+                header.addView(searchControl, LinearLayout.LayoutParams(ctrlW, navCtrlH).apply {
+                    marginEnd = dp(6)
                 })
             }
-
-            setOnClickListener { startMediaSearchTyping() }
         }
 
-        if (isSearching) {
-            header.addView(searchControl, LinearLayout.LayoutParams(0, navCtrlH, 1f))
-        } else {
-            val ctrlW = if (showSearchLabel) ViewGroup.LayoutParams.WRAP_CONTENT else navCtrlH
-            header.addView(searchControl, LinearLayout.LayoutParams(ctrlW, navCtrlH).apply {
-                marginEnd = dp(6)
-            })
-        }
-
-        // Mode-specific Category Strip (shown when not showing expanded search pill)
-        if (!isSearching) {
+        // Mode-specific Category Strip (shown when not searching and not inside Pack Store)
+        if (!isSearching && !inPackStore) {
             when (currentMediaSubMode) {
                 MediaKeyboardSpec.MediaSubMode.EMOJI -> {
                     val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
@@ -4755,6 +4831,21 @@ class ClipMaxImeService : InputMethodService() {
                 }
 
                 MediaKeyboardSpec.MediaSubMode.STICKERS -> {
+                    val addPackBtn = FrameLayout(this@ClipMaxImeService).apply {
+                        contentDescription = AppUiStrings.stickerPackStoreTitle(keyboardLanguage)
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(colorModBg, dp(navCtrlH / 2f), colorKeyBorder)
+                        addView(createIconView(IconDrawable(IconType.PLUS, colorKeyText, 14f)), FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                        setOnClickListener {
+                            isStickerPackManagerOpen = true
+                            renderFullImeView()
+                        }
+                    }
+                    header.addView(addPackBtn, LinearLayout.LayoutParams(navCtrlH, navCtrlH).apply {
+                        marginEnd = dp(6)
+                    })
+
                     val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
                         isHorizontalScrollBarEnabled = false
                         layoutDirection = uiLayoutDirection
@@ -4767,35 +4858,54 @@ class ClipMaxImeService : InputMethodService() {
                         gravity = Gravity.CENTER_VERTICAL
                     }
                     stickerTabViews.clear()
-                    val defaultStickerTab = if (recentStickerHistory.items().isEmpty() && selectedStickerSectionIdx == 0) 1 else selectedStickerSectionIdx.coerceIn(0, StickerCatalog.PACKS.size)
+                    val installedPacks = stickerPackManager.installedPacks()
+                    val maxTabIdx = 1 + installedPacks.size
+                    val defaultStickerTab = if (selectedStickerSectionIdx == 0 && recentStickerHistory.items().isEmpty()) {
+                        if (favoriteStickers.items().isNotEmpty()) 1 else if (installedPacks.isNotEmpty()) 2 else 0
+                    } else if (selectedStickerSectionIdx == 1 && favoriteStickers.items().isEmpty() && installedPacks.isNotEmpty()) {
+                        selectedStickerSectionIdx
+                    } else {
+                        selectedStickerSectionIdx.coerceIn(0, maxTabIdx)
+                    }
                     selectedStickerSectionIdx = defaultStickerTab
                     stickerScrollTabController.reset(defaultStickerTab)
                     val tabSize = navCtrlH
-                    val tabGap = dp(6)
-                    val totalStickerTabs = 1 + StickerCatalog.PACKS.size
+                    val tabGap = dp(5)
+                    val totalStickerTabs = 2 + installedPacks.size
                     val gen = mediaViewportGen
                     for (tabIdx in 0 until totalStickerTabs) {
                         val tab = FrameLayout(this@ClipMaxImeService).apply {
-                            contentDescription = if (tabIdx == 0) {
-                                AppUiStrings.emojiRecentLabel(keyboardLanguage)
-                            } else {
-                                val pack = StickerCatalog.PACKS[tabIdx - 1]
-                                if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+                            contentDescription = when (tabIdx) {
+                                0 -> AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                                1 -> AppUiStrings.stickerFavoritesLabel(keyboardLanguage)
+                                else -> {
+                                    val pack = installedPacks[tabIdx - 2]
+                                    if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+                                }
                             }
                             isClickable = true
                             isFocusable = true
-                            if (tabIdx == 0) {
-                                val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, colorModText, 17f))
-                                tag = iv
-                                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-                            } else {
-                                val pack = StickerCatalog.PACKS[tabIdx - 1]
-                                val iv = ImageView(this@ClipMaxImeService).apply {
-                                    scaleType = ImageView.ScaleType.FIT_CENTER
-                                    setPadding(dp(4), dp(4), dp(4), dp(4))
+                            when (tabIdx) {
+                                0 -> {
+                                    val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, colorModText, 16.5f))
+                                    tag = iv
+                                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                                 }
-                                loadStickerBitmapAsync(pack.iconAssetPath, iv, gen)
-                                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                                1 -> {
+                                    val iv = createIconView(IconDrawable(IconType.STAR, colorModText, 16f))
+                                    tag = iv
+                                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                                }
+                                else -> {
+                                    val pack = installedPacks[tabIdx - 2]
+                                    val repItem = pack.items.firstOrNull()
+                                    val iv = ImageView(this@ClipMaxImeService).apply {
+                                        scaleType = ImageView.ScaleType.FIT_CENTER
+                                        setPadding(dp(3), dp(3), dp(3), dp(3))
+                                    }
+                                    loadStickerBitmapAsync(pack.iconAssetPath, iv, gen, repItem)
+                                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                                }
                             }
                             setOnClickListener {
                                 val targetView = stickerSectionViews.getOrNull(tabIdx)
@@ -4931,7 +5041,7 @@ class ClipMaxImeService : InputMethodService() {
                         marginEnd = dp(5)
                     })
 
-                    TenorV2GifProvider.FEATURED_CATEGORIES.filter { it.first != "recent" }.forEachIndexed { idx, (tag, label) ->
+                    KlipyGifProvider.FEATURED_CATEGORIES.filter { it.first != "recent" }.forEachIndexed { idx, (tag, label) ->
                         val active = selectedGifCategoryTag == tag
                         val pill = TextView(this@ClipMaxImeService).apply {
                             text = localizeGifCategoryLabel(tag, label)
@@ -4952,12 +5062,14 @@ class ClipMaxImeService : InputMethodService() {
                             setOnClickListener {
                                 selectedGifCategoryTag = tag
                                 mediaSearchQuery = ""
-                                loadGifsForCurrentState()
+                                if (tag != "offline") {
+                                    loadGifsForCurrentState(append = false)
+                                }
                                 renderFullImeView()
                             }
                         }
                         tabsRow.addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
-                            if (idx < TenorV2GifProvider.FEATURED_CATEGORIES.size - 2) marginEnd = dp(5)
+                            if (idx < KlipyGifProvider.FEATURED_CATEGORIES.size - 2) marginEnd = dp(5)
                         })
                     }
                     tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -4977,7 +5089,10 @@ class ClipMaxImeService : InputMethodService() {
         // 2. CONTENT BODY (switches cleanly per active sub-mode)
         when (currentMediaSubMode) {
             MediaKeyboardSpec.MediaSubMode.EMOJI -> column.addView(buildEmojiBrowserBody())
-            MediaKeyboardSpec.MediaSubMode.STICKERS -> column.addView(buildStickersBrowserBody())
+            MediaKeyboardSpec.MediaSubMode.STICKERS -> {
+                if (isStickerPackManagerOpen) column.addView(buildStickersPackManagerBody())
+                else column.addView(buildStickersBrowserBody())
+            }
             MediaKeyboardSpec.MediaSubMode.KAOMOJI -> column.addView(buildKaomojiBrowserBody())
             MediaKeyboardSpec.MediaSubMode.GIFS -> column.addView(buildGifBrowserBody())
         }
@@ -5017,7 +5132,7 @@ class ClipMaxImeService : InputMethodService() {
                 dismissEmojiRemoveOverlay()
                 isEmojiPickerOpen = false
                 isMediaSearchTyping = false
-                isTenorKeyTyping = false
+                isStickerPackManagerOpen = false
                 modeController.toAlpha()
                 renderFullImeView()
             }
@@ -5070,7 +5185,7 @@ class ClipMaxImeService : InputMethodService() {
                         currentMediaSubMode = mode
                         mediaSearchQuery = ""
                         isMediaSearchTyping = false
-                        isTenorKeyTyping = false
+                        isStickerPackManagerOpen = false
                         if (mode == MediaKeyboardSpec.MediaSubMode.GIFS && gifFetchResult == null && !gifIsLoading) {
                             loadGifsForCurrentState()
                         }
@@ -5114,6 +5229,8 @@ class ClipMaxImeService : InputMethodService() {
         if (!AppUiStrings.isArabic(keyboardLanguage)) return defaultEn
         return when (tag) {
             "featured" -> "مميز"
+            "offline" -> "بدون نت"
+            "recent" -> "الأخيرة"
             "happy" -> "سعيد"
             "love" -> "حب"
             "haha" -> "ضحك"
@@ -5422,10 +5539,11 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     // -------------------------------------------------------------------------
-    // STICKERS BROWSER (3 Packs: Reactions, Daily, Notes — 24 Bundled PNGs)
+    // STICKERS BROWSER (10 Coherent Packs, 330+ Unique Stickers, Recent, Favourites, Local Pack Store)
     // -------------------------------------------------------------------------
     private fun updateStickerCategoryTabsUI() {
-        val activeIdx = selectedStickerSectionIdx.coerceIn(0, StickerCatalog.PACKS.size)
+        val maxIdx = (stickerTabViews.maxOfOrNull { it.first } ?: 1).coerceAtLeast(1)
+        val activeIdx = selectedStickerSectionIdx.coerceIn(0, maxIdx)
         var activeView: FrameLayout? = null
         for ((tabIdx, tab) in stickerTabViews) {
             val active = (tabIdx == activeIdx)
@@ -5433,9 +5551,15 @@ class ClipMaxImeService : InputMethodService() {
             val bg = if (active) colorActiveTabBg else 0
             val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
             tab.background = roundedRipple(bg, dp(16f), stroke)
-            if (tabIdx == 0) {
-                val fg = if (active) colorActiveTabText else colorModText
-                (tab.tag as? ImageView)?.setImageDrawable(IconDrawable(IconType.EMOJI_RECENT, fg, 17f))
+            when (tabIdx) {
+                0 -> {
+                    val fg = if (active) colorActiveTabText else colorModText
+                    (tab.tag as? ImageView)?.setImageDrawable(IconDrawable(IconType.EMOJI_RECENT, fg, 16.5f))
+                }
+                1 -> {
+                    val fg = if (active) colorActiveTabText else colorModText
+                    (tab.tag as? ImageView)?.setImageDrawable(IconDrawable(IconType.STAR, fg, 16f))
+                }
             }
         }
         val tabsScroll = stickerTabsScrollView
@@ -5445,7 +5569,12 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
-    private fun loadStickerBitmapAsync(assetPath: String, imageView: ImageView, expectedGen: Int) {
+    private fun loadStickerBitmapAsync(
+        assetPath: String,
+        imageView: ImageView,
+        expectedGen: Int,
+        item: StickerCatalog.StickerItem? = null
+    ) {
         val cached = stickerBitmapCache.get(assetPath)
         if (cached != null && !cached.isRecycled) {
             imageView.setImageBitmap(cached)
@@ -5454,9 +5583,8 @@ class ClipMaxImeService : InputMethodService() {
         imageView.tag = assetPath
         submitSafely(mediaIoExecutor) {
             val bmp = runCatching {
-                assets.open(assetPath).use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
+                val stream = if (item != null) stickerPackManager.resolveStickerStream(item) else assets.open(assetPath)
+                stream.use { BitmapFactory.decodeStream(it) }
             }.getOrNull()
             if (bmp != null) {
                 stickerBitmapCache.put(assetPath, bmp)
@@ -5471,20 +5599,40 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun createStickerTileView(item: StickerCatalog.StickerItem, heightPx: Int, gen: Int): FrameLayout {
         val tileBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        val isFav = favoriteStickers.isFavorite(item.id)
         return FrameLayout(this).apply {
             contentDescription = item.title
             isClickable = true
             isFocusable = true
-            background = roundedRipple(tileBg, dp(12f), colorKeyBorder)
+            isLongClickable = true
+            background = roundedRipple(tileBg, dp(10f), colorKeyBorder)
             val iv = ImageView(this@ClipMaxImeService).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER
-                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setPadding(dp(4), dp(4), dp(4), dp(4))
             }
-            loadStickerBitmapAsync(item.assetPath, iv, gen)
+            loadStickerBitmapAsync(item.assetPath, iv, gen, item)
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+            if (isFav) {
+                val starBadge = createIconView(IconDrawable(IconType.STAR, colorAccent, 11f))
+                addView(
+                    starBadge,
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+                        topMargin = dp(3)
+                        marginEnd = dp(3)
+                    }
+                )
+            }
             setOnClickListener {
                 performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 handleStickerPress(item)
+            }
+            setOnLongClickListener {
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                val nowFav = favoriteStickers.toggle(item.id)
+                persistFavoriteStickers()
+                showMediaStatusBanner(AppUiStrings.stickerAddedFavoriteStatus(keyboardLanguage, nowFav))
+                renderFullImeView()
+                true
             }
         }
     }
@@ -5527,8 +5675,8 @@ class ClipMaxImeService : InputMethodService() {
     private fun buildStickersBrowserBody(): View {
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val cols = if (isLandscape) MediaKeyboardSpec.STICKER_COLS_LANDSCAPE else MediaKeyboardSpec.STICKER_COLS_PORTRAIT
-        val tileHeightPx = dp(if (isLandscape) 66 else 76)
-        val gapPx = dp(6)
+        val tileHeightPx = dp(if (isLandscape) 68 else 82)
+        val gapPx = dp(5)
         val gen = mediaViewportGen
 
         val scroll = android.widget.ScrollView(this).apply {
@@ -5570,8 +5718,11 @@ class ClipMaxImeService : InputMethodService() {
         }
         stickerSectionViews.clear()
 
+        val installedIds = stickerPackManager.installedPackIds()
+        val installedPacks = stickerPackManager.installedPacks()
+
         if (mediaSearchQuery.isNotBlank()) {
-            val matches = StickerCatalog.search(mediaSearchQuery)
+            val matches = StickerCatalog.search(mediaSearchQuery, installedIds.takeIf { it.isNotEmpty() })
             if (matches.isEmpty()) {
                 body.addView(TextView(this).apply {
                     text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
@@ -5588,10 +5739,10 @@ class ClipMaxImeService : InputMethodService() {
             val recentSec = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = dp(10)
+                    bottomMargin = dp(8)
                 }
             }
-            val recentItems = recentStickerHistory.items()
+            val recentItems = recentStickerHistory.items().filter { it.packId in installedIds }
             if (recentItems.isNotEmpty()) {
                 recentSec.addView(TextView(this).apply {
                     text = AppUiStrings.emojiRecentLabel(keyboardLanguage)
@@ -5606,25 +5757,87 @@ class ClipMaxImeService : InputMethodService() {
             stickerSectionViews.add(recentSec)
             body.addView(recentSec)
 
-            // Sections 1..3: All 3 sticker packs (Reactions, Daily, Notes — all 24 PNGs)
-            for (pack in StickerCatalog.PACKS) {
-                val packSec = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = dp(10)
-                    }
+            // Section 1: Favourites (long-press any sticker to save)
+            val favSec = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
                 }
-                packSec.addView(TextView(this).apply {
-                    text = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
-                    textSize = 12f
-                    typeface = Typeface.DEFAULT_BOLD
+            }
+            val favItems = favoriteStickers.items().filter { it.packId in installedIds }
+            favSec.addView(TextView(this).apply {
+                text = AppUiStrings.stickerFavoritesLabel(keyboardLanguage)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                setPadding(dp(4), dp(4), dp(4), dp(6))
+            })
+            if (favItems.isEmpty()) {
+                favSec.addView(TextView(this).apply {
+                    text = AppUiStrings.stickerFavoritesEmpty(keyboardLanguage)
+                    textSize = 11.5f
                     setTextColor(colorHintText)
                     textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                    setPadding(dp(6), dp(2), dp(6), dp(6))
                 })
-                addStickerGridRows(packSec, pack.items, cols, tileHeightPx, gapPx, gen)
-                stickerSectionViews.add(packSec)
-                body.addView(packSec)
+            } else {
+                addStickerGridRows(favSec, favItems, cols, tileHeightPx, gapPx, gen)
+            }
+            stickerSectionViews.add(favSec)
+            body.addView(favSec)
+
+            // Sections 2..: Installed Sticker Packs
+            if (installedPacks.isEmpty()) {
+                val emptyCard = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(dp(14), dp(18), dp(14), dp(18))
+                    background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
+                }
+                emptyCard.addView(TextView(this).apply {
+                    text = AppUiStrings.stickerPacksNoneInstalled(keyboardLanguage)
+                    textSize = 12.5f
+                    setTextColor(colorKeyText)
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, dp(10))
+                })
+                emptyCard.addView(TextView(this).apply {
+                    text = AppUiStrings.stickerPackInstallAllLabel(keyboardLanguage)
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorAccentText)
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                    background = roundedRipple(colorAccent, dp(8f), 0)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        isStickerPackManagerOpen = true
+                        renderFullImeView()
+                    }
+                })
+                body.addView(emptyCard)
+            } else {
+                for (pack in installedPacks) {
+                    val packSec = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = dp(10)
+                        }
+                    }
+                    packSec.addView(TextView(this).apply {
+                        val title = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+                        text = "$title (${pack.items.size})"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(colorHintText)
+                        textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                        setPadding(dp(4), dp(6), dp(4), dp(6))
+                    })
+                    addStickerGridRows(packSec, pack.items, cols, tileHeightPx, gapPx, gen)
+                    stickerSectionViews.add(packSec)
+                    body.addView(packSec)
+                }
             }
             updateStickerCategoryTabsUI()
         }
@@ -5633,68 +5846,341 @@ class ClipMaxImeService : InputMethodService() {
         return scroll
     }
 
+    private fun buildStickersPackManagerBody(): View {
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        val host = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            setPadding(dp(8), dp(8), dp(8), dp(12))
+        }
+        stickerStoreHost = host
+        populateStickerPackStoreContent(host)
+        scroll.addView(host, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return scroll
+    }
+
+    private fun populateStickerPackStoreContent(container: LinearLayout) {
+        container.removeAllViews()
+        val gen = mediaViewportGen
+        val cardBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        val allInstalled = StickerCatalog.PACKS.all { stickerPackManager.isPackInstalled(it.packId) }
+
+        if (!allInstalled) {
+            val summaryRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = roundedDrawable(cardBg, dp(12f), colorKeyBorder)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
+                }
+            }
+            summaryRow.addView(TextView(this).apply {
+                val installedCount = stickerPackManager.installedPacks().size
+                text = "$installedCount/${StickerCatalog.PACKS.size} · ${MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(stickerPackManager.totalDiskBytes())}"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val installAllBtn = TextView(this).apply {
+                text = AppUiStrings.stickerPackInstallAllLabel(keyboardLanguage)
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorAccentText)
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                background = roundedRipple(colorAccent, dp(8f), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    stickerPackManager.installAllPacksAsync(
+                        onEachUpdate = {
+                            if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                stickerStoreHost?.let(::populateStickerPackStoreContent)
+                            }
+                        },
+                        onComplete = {
+                            if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                stickerStoreHost?.let(::populateStickerPackStoreContent)
+                            }
+                        }
+                    )
+                }
+            }
+            summaryRow.addView(installAllBtn)
+            container.addView(summaryRow)
+        }
+
+        for (pack in StickerCatalog.PACKS) {
+            val installed = stickerPackManager.isPackInstalled(pack.packId)
+            val progress = stickerPackManager.activeProgress(pack.packId)
+            val err = stickerPackManager.lastError(pack.packId)
+            val sizeBytes = if (installed) stickerPackManager.packDiskBytes(pack.packId) else pack.estimatedSizeBytes
+            val sizeLabel = MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(sizeBytes)
+            val title = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+            val desc = if (AppUiStrings.isArabic(keyboardLanguage)) pack.descAr else pack.descEn
+
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = uiLayoutDirection
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = roundedDrawable(cardBg, dp(12f), if (installed) colorAccent else colorKeyBorder)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
+                }
+            }
+
+            val topRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val iconIv = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            loadStickerBitmapAsync(pack.iconAssetPath, iconIv, gen, pack.items.firstOrNull())
+            topRow.addView(iconIv, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(8) })
+
+            val infoCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            infoCol.addView(TextView(this).apply {
+                text = "$title · ${pack.items.size} · $sizeLabel"
+                textSize = 12.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            })
+            infoCol.addView(TextView(this).apply {
+                text = desc
+                textSize = 11f
+                setTextColor(colorHintText)
+                setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            })
+            topRow.addView(infoCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(8)
+            })
+
+            if (progress != null) {
+                topRow.addView(TextView(this).apply {
+                    text = "$progress%"
+                    textSize = 11.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorAccent)
+                })
+            } else {
+                val actionBtn = TextView(this).apply {
+                    text = if (installed) AppUiStrings.stickerPackRemoveLabel(keyboardLanguage)
+                    else AppUiStrings.stickerPackInstallLabel(keyboardLanguage)
+                    textSize = 11.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(if (installed) colorModText else colorAccentText)
+                    setPadding(dp(12), dp(6), dp(12), dp(6))
+                    background = roundedRipple(if (installed) colorModBg else colorAccent, dp(8f), if (installed) colorKeyBorder else 0)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        if (installed) {
+                            stickerPackManager.uninstallPack(pack.packId)
+                            populateStickerPackStoreContent(container)
+                        } else {
+                            stickerPackManager.installPackAsync(
+                                packId = pack.packId,
+                                onProgress = {
+                                    if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                        populateStickerPackStoreContent(container)
+                                    }
+                                },
+                                onComplete = { _, _ ->
+                                    if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                        populateStickerPackStoreContent(container)
+                                    }
+                                }
+                            )
+                            populateStickerPackStoreContent(container)
+                        }
+                    }
+                }
+                topRow.addView(actionBtn)
+            }
+            card.addView(topRow)
+
+            // Sample preview strip of 4 stickers from the pack
+            val stripRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                setPadding(0, dp(8), 0, 0)
+            }
+            for (sample in pack.items.take(4)) {
+                val thumb = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setPadding(dp(3), dp(3), dp(3), dp(3))
+                    background = roundedDrawable(if (isClassicTheme) colorAltDeepBg else colorModBg, dp(8f))
+                }
+                loadStickerBitmapAsync(sample.assetPath, thumb, gen, sample)
+                stripRow.addView(thumb, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(6) })
+            }
+            card.addView(stripRow)
+
+            if (progress != null) {
+                val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    this.progress = progress
+                }
+                card.addView(pb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)).apply {
+                    topMargin = dp(6)
+                })
+            } else if (err != null) {
+                val errRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutDirection = uiLayoutDirection
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(6), 0, 0)
+                }
+                errRow.addView(TextView(this).apply {
+                    text = err
+                    textSize = 11f
+                    setTextColor(colorDangerText)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                errRow.addView(TextView(this).apply {
+                    text = AppUiStrings.retryLabel(keyboardLanguage)
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorAccentText)
+                    setPadding(dp(10), dp(4), dp(10), dp(4))
+                    background = roundedRipple(colorAccent, dp(6f), 0)
+                    setOnClickListener {
+                        stickerPackManager.clearError(pack.packId)
+                        stickerPackManager.installPackAsync(pack.packId) {
+                            if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                populateStickerPackStoreContent(container)
+                            }
+                        }
+                    }
+                })
+                card.addView(errRow)
+            }
+
+            container.addView(card)
+        }
+    }
+
     private fun commitRichMediaFile(
         file: File,
         mimeType: String,
         description: String,
-        linkUri: android.net.Uri? = null
+        linkUri: android.net.Uri? = null,
+        showFailureFallback: Boolean = true
     ): Boolean {
         val conn = currentInputConnection
         if (conn == null) {
-            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+            if (showFailureFallback) {
+                showRichMediaFallbackBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage), file, mimeType, description)
+            } else {
+                showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+            }
             return false
         }
         val info = currentInputEditorInfo
         val mimeSupported = MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, mimeType)
-        if (!mimeSupported) {
-            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+        if (!mimeSupported || !file.isFile || file.length() <= 0L) {
+            if (showFailureFallback) {
+                showRichMediaFallbackBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage), file, mimeType, description)
+            } else {
+                showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+            }
             return false
         }
         val contentUri = MediaContentProvider.uriForFile(file.name)
+        info?.packageName?.takeIf { it.isNotBlank() }?.let { pkg ->
+            runCatching { grantUriPermission(pkg, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
         val clipDesc = ClipDescription(description, arrayOf(mimeType))
         val inputContentInfo = InputContentInfo(contentUri, clipDesc, linkUri)
         val committed = runCatching {
             conn.commitContent(inputContentInfo, InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null)
         }.getOrDefault(false)
-        if (!committed) {
-            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+        if (!committed && showFailureFallback) {
+            showRichMediaFallbackBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage), file, mimeType, description)
         }
         return committed
     }
 
     private fun handleStickerPress(item: StickerCatalog.StickerItem) {
         dismissPasteUndoCapsule()
-        val conn = currentInputConnection
-        if (conn == null) {
-            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
-            return
-        }
         val info = currentInputEditorInfo
-        if (!MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, "image/png")) {
-            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
-            return
+        val outcome = MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+            hasActiveConnection = currentInputConnection != null,
+            inputType = info?.inputType ?: 0,
+            isPasswordTarget = isPasswordTarget,
+            acceptedMimeTypes = info?.contentMimeTypes,
+            isSticker = true
+        )
+        val bestMime = if (outcome == MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE) {
+            MediaKeyboardSpec.MediaRichContentPolicy.resolveBestStickerMime(info?.contentMimeTypes) ?: "image/png"
+        } else {
+            "image/png"
         }
-        val cacheName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item)
-        val cached = mediaCacheManager.getCachedFile(cacheName)
-        if (cached != null) {
-            if (commitRichMediaFile(cached, "image/png", item.title)) {
-                recentStickerHistory.record(item.id)
-                persistRecentStickers()
-            }
-            return
-        }
-        submitSafely(mediaIoExecutor) {
-            val file = mediaCacheManager.ensureAssetCached(assets, item.assetPath, cacheName)
-            main.post {
-                if (serviceDestroyed) return@post
-                if (file == null) {
-                    showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
-                    return@post
+        val pngCacheName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item, "image/png")
+        val cachedPng = mediaCacheManager.getCachedFile(pngCacheName)
+
+        fun executeWithPng(pngFile: File) {
+            if (outcome != MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE) {
+                val msg = if (outcome == MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.NO_ACTIVE_FIELD) {
+                    AppUiStrings.noActiveTextFieldStatus(keyboardLanguage)
+                } else {
+                    AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage)
                 }
-                if (commitRichMediaFile(file, "image/png", item.title)) {
+                showRichMediaFallbackBanner(msg, pngFile, "image/png", item.title)
+                return
+            }
+            if (bestMime == "image/webp") {
+                val webpName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item, "image/webp")
+                val cachedWebp = mediaCacheManager.getCachedFile(webpName)
+                if (cachedWebp != null) {
+                    if (commitRichMediaFile(cachedWebp, "image/webp", item.title)) {
+                        recentStickerHistory.record(item.id)
+                        persistRecentStickers()
+                    }
+                    return
+                }
+                submitSafely(mediaIoExecutor) {
+                    val webpFile = mediaCacheManager.ensureWebpFromPngCached(pngFile, webpName) ?: pngFile
+                    val finalMime = if (webpFile.name.endsWith(".webp")) "image/webp" else "image/png"
+                    main.post {
+                        if (serviceDestroyed) return@post
+                        if (commitRichMediaFile(webpFile, finalMime, item.title)) {
+                            recentStickerHistory.record(item.id)
+                            persistRecentStickers()
+                        }
+                    }
+                }
+            } else {
+                if (commitRichMediaFile(pngFile, "image/png", item.title)) {
                     recentStickerHistory.record(item.id)
                     persistRecentStickers()
                 }
+            }
+        }
+
+        if (cachedPng != null) {
+            executeWithPng(cachedPng)
+            return
+        }
+        submitSafely(mediaIoExecutor) {
+            val file = stickerPackManager.ensureStickerCachedForCommit(item, mediaCacheManager)
+            main.post {
+                if (serviceDestroyed) return@post
+                if (file == null) {
+                    showMediaStatusBanner(AppUiStrings.mediaSaveFailedStatus(keyboardLanguage))
+                    return@post
+                }
+                executeWithPng(file)
             }
         }
     }
@@ -5924,39 +6410,67 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     // -------------------------------------------------------------------------
-    // GIFS BROWSER (Tenor API v2 Featured & Search + Offline Recent GIFs)
+    // GIFS BROWSER (Project-Managed KLIPY Proxy + Offline Bundled Animated GIFs)
     // -------------------------------------------------------------------------
-    private fun loadGifsForCurrentState() {
-        val effectiveKey = resolveEffectiveTenorApiKey()
-        gifProvider.updateApiKey(effectiveKey)
-        if (!MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)) {
+    private fun loadGifsForCurrentState(append: Boolean = false) {
+        val tag = selectedGifCategoryTag
+        val query = mediaSearchQuery.trim()
+        if (tag == "offline" || tag == "recent") {
             gifIsLoading = false
-            gifFetchResult = GifProvider.GifFetchResult.Unconfigured(AppUiStrings.tenorApiKeyRequiredDesc(keyboardLanguage))
-            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
-                renderGifContentInPlace()
-            }
+            gifIsLoadingMore = false
             return
         }
+        if (append && (gifIsLoading || gifIsLoadingMore || !gifHasNext)) return
+
+        val targetPage = if (append) gifCurrentPage + 1 else 1
+        if (!append) {
+            gifCurrentPage = 1
+            gifHasNext = false
+            gifAccumulatedItems = emptyList()
+            gifIsLoading = true
+            gifIsLoadingMore = false
+        } else {
+            gifIsLoadingMore = true
+        }
         val gen = ++gifRequestGen
-        gifIsLoading = true
         if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
             renderGifContentInPlace()
         }
-        val query = mediaSearchQuery.trim()
-        val tag = selectedGifCategoryTag
         val callback: (GifProvider.GifFetchResult) -> Unit = { result ->
             if (!serviceDestroyed && gen == gifRequestGen) {
                 gifIsLoading = false
-                gifFetchResult = result
+                gifIsLoadingMore = false
+                when (result) {
+                    is GifProvider.GifFetchResult.Success -> {
+                        gifFetchResult = result
+                        gifCurrentPage = result.page
+                        gifHasNext = result.hasNext
+                        gifAccumulatedItems = if (append) {
+                            (gifAccumulatedItems + result.items).distinctBy { it.id }
+                        } else {
+                            result.items
+                        }
+                    }
+                    else -> {
+                        if (!append) {
+                            gifFetchResult = result
+                            gifAccumulatedItems = emptyList()
+                            gifHasNext = false
+                        } else {
+                            gifHasNext = false
+                            showMediaStatusBanner(AppUiStrings.networkErrorGifsMessage(keyboardLanguage))
+                        }
+                    }
+                }
                 if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
                     renderGifContentInPlace()
                 }
             }
         }
         when {
-            query.isNotEmpty() -> gifProvider.search(query, callback)
-            tag == "featured" || tag == "recent" -> gifProvider.fetchFeatured(callback)
-            else -> gifProvider.search(tag, callback)
+            query.isNotEmpty() -> gifProvider.search(query, targetPage, callback)
+            tag == "featured" -> gifProvider.fetchFeatured(targetPage, callback)
+            else -> gifProvider.search(tag, targetPage, callback)
         }
     }
 
@@ -5969,6 +6483,16 @@ class ClipMaxImeService : InputMethodService() {
         val scroll = android.widget.ScrollView(this).apply {
             isVerticalScrollBarEnabled = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                setOnScrollChangeListener { v, _, scrollY, _, _ ->
+                    if (scrollY > 0 && !v.canScrollVertically(1) && gifHasNext && !gifIsLoadingMore && !gifIsLoading) {
+                        val tag = selectedGifCategoryTag
+                        if (tag != "offline" && tag != "recent") {
+                            loadGifsForCurrentState(append = true)
+                        }
+                    }
+                }
+            }
         }
         val host = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -5986,7 +6510,11 @@ class ClipMaxImeService : InputMethodService() {
         imageView.tag = cacheName
         submitSafely(mediaIoExecutor) {
             val file = mediaCacheManager.getCachedFile(cacheName)
-                ?: mediaCacheManager.downloadAndCache(item.previewUrl, cacheName)
+                ?: if (item.isBundledAsset && !item.assetPath.isNullOrBlank()) {
+                    mediaCacheManager.ensureAssetCached(assets, item.assetPath, cacheName)
+                } else {
+                    mediaCacheManager.downloadAndCache(item.previewUrl, cacheName)
+                }
                 ?: return@submitSafely
             val decodedDrawable: Drawable? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 runCatching {
@@ -6067,6 +6595,85 @@ class ClipMaxImeService : InputMethodService() {
         }
     }
 
+    private fun addGifStatusCard(
+        container: LinearLayout,
+        title: String,
+        subtitle: String,
+        showRetry: Boolean = true
+    ) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(8)
+            }
+        }
+        card.addView(TextView(this).apply {
+            text = title
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+        })
+        card.addView(TextView(this).apply {
+            text = subtitle
+            textSize = 11.5f
+            setTextColor(colorHintText)
+            gravity = Gravity.CENTER
+            setPadding(dp(4), dp(4), dp(4), if (showRetry) dp(10) else 0)
+        })
+        if (showRetry) {
+            card.addView(TextView(this).apply {
+                text = AppUiStrings.retryLabel(keyboardLanguage)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(colorAccentText)
+                setPadding(dp(16), dp(7), dp(16), dp(7))
+                background = roundedRipple(colorAccent, dp(8f), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { loadGifsForCurrentState(append = false) }
+            })
+        }
+        container.addView(card)
+    }
+
+    private fun appendOfflineAndRecentGifFallback(
+        container: LinearLayout,
+        recentGifs: List<GifProvider.GifItem>,
+        cols: Int,
+        tileH: Int,
+        gapPx: Int,
+        gen: Int
+    ) {
+        if (recentGifs.isNotEmpty()) {
+            container.addView(TextView(this).apply {
+                text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+            })
+            addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
+        }
+        val bundled = OfflineGifCatalog.search(mediaSearchQuery)
+        if (bundled.isNotEmpty()) {
+            container.addView(TextView(this).apply {
+                text = AppUiStrings.gifsOfflinePackHeading(keyboardLanguage)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+            })
+            addGifGridRows(container, bundled, cols, tileH, gapPx, gen)
+        }
+    }
+
     private fun populateGifBrowserContent(container: LinearLayout) {
         container.removeAllViews()
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -6076,8 +6683,7 @@ class ClipMaxImeService : InputMethodService() {
         val gen = mediaViewportGen
 
         val recentGifs = recentGifHistory.items()
-        val showingRecentOnly = mediaSearchQuery.isBlank() && selectedGifCategoryTag == "recent"
-        if (showingRecentOnly) {
+        if (mediaSearchQuery.isBlank() && selectedGifCategoryTag == "recent") {
             if (recentGifs.isEmpty()) {
                 container.addView(TextView(this).apply {
                     text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد صور GIF مستخدمة مؤخراً."
@@ -6085,28 +6691,25 @@ class ClipMaxImeService : InputMethodService() {
                     textSize = 13f
                     setTextColor(colorHintText)
                     gravity = Gravity.CENTER
-                    setPadding(dp(16), dp(36), dp(16), dp(16))
+                    setPadding(dp(16), dp(28), dp(16), dp(12))
                 })
+                appendOfflineAndRecentGifFallback(container, emptyList(), cols, tileH, gapPx, gen)
             } else {
                 addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
             }
             return
         }
 
-        val effectiveKey = resolveEffectiveTenorApiKey()
-        if (!MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)) {
-            container.addView(buildTenorUnconfiguredCard())
-            if (recentGifs.isNotEmpty()) {
-                container.addView(TextView(this).apply {
-                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
-                    textSize = 12f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorHintText)
-                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                    setPadding(dp(4), dp(10), dp(4), dp(6))
-                })
-                addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
-            }
+        if (mediaSearchQuery.isBlank() && selectedGifCategoryTag == "offline") {
+            container.addView(TextView(this).apply {
+                text = AppUiStrings.gifsOfflinePackHeading(keyboardLanguage)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorHintText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                setPadding(dp(4), dp(2), dp(4), dp(6))
+            })
+            addGifGridRows(container, OfflineGifCatalog.ITEMS, cols, tileH, gapPx, gen)
             return
         }
 
@@ -6128,187 +6731,165 @@ class ClipMaxImeService : InputMethodService() {
         }
 
         when (val res = gifFetchResult) {
-            null -> loadGifsForCurrentState()
+            null -> loadGifsForCurrentState(append = false)
             is GifProvider.GifFetchResult.Unconfigured -> {
-                container.addView(buildTenorUnconfiguredCard())
-                if (recentGifs.isNotEmpty()) {
-                    addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
-                }
+                addGifStatusCard(
+                    container = container,
+                    title = AppUiStrings.gifsServiceUnconfiguredTitle(keyboardLanguage),
+                    subtitle = AppUiStrings.gifsServiceUnconfiguredDesc(keyboardLanguage),
+                    showRetry = true
+                )
+                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
+            }
+            is GifProvider.GifFetchResult.Offline -> {
+                addGifStatusCard(
+                    container = container,
+                    title = AppUiStrings.gifsOfflineTitle(keyboardLanguage),
+                    subtitle = AppUiStrings.gifsOfflineDesc(keyboardLanguage),
+                    showRetry = true
+                )
+                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
+            }
+            is GifProvider.GifFetchResult.RateLimited -> {
+                addGifStatusCard(
+                    container = container,
+                    title = AppUiStrings.gifsRateLimitedTitle(keyboardLanguage),
+                    subtitle = AppUiStrings.gifsRateLimitedDesc(keyboardLanguage),
+                    showRetry = true
+                )
+                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
+            }
+            is GifProvider.GifFetchResult.ServerError -> {
+                addGifStatusCard(
+                    container = container,
+                    title = AppUiStrings.gifsServerErrorTitle(keyboardLanguage),
+                    subtitle = res.message,
+                    showRetry = true
+                )
+                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
             }
             is GifProvider.GifFetchResult.NetworkError -> {
-                val errCard = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(dp(14), dp(14), dp(14), dp(14))
-                    background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
-                }
-                errCard.addView(TextView(this).apply {
-                    text = AppUiStrings.networkErrorGifsMessage(keyboardLanguage)
-                    textSize = 13f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorKeyText)
-                    gravity = Gravity.CENTER
-                })
-                errCard.addView(TextView(this).apply {
-                    text = res.error
-                    textSize = 11.5f
-                    setTextColor(colorHintText)
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(4), 0, dp(10))
-                })
-                val retryBtn = TextView(this).apply {
-                    text = AppUiStrings.retryLabel(keyboardLanguage)
-                    textSize = 12.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setTextColor(colorAccentText)
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                    background = roundedRipple(colorAccent, dp(8f), 0)
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener { loadGifsForCurrentState() }
-                }
-                errCard.addView(retryBtn)
-                container.addView(errCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-                if (recentGifs.isNotEmpty()) {
-                    container.addView(TextView(this).apply {
-                        text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
-                        textSize = 12f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(colorHintText)
-                        textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                        setPadding(dp(4), dp(12), dp(4), dp(6))
-                    })
-                    addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
-                }
+                addGifStatusCard(
+                    container = container,
+                    title = AppUiStrings.networkErrorGifsMessage(keyboardLanguage),
+                    subtitle = res.error,
+                    showRetry = true
+                )
+                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
             }
             is GifProvider.GifFetchResult.Success -> {
-                if (res.items.isEmpty()) {
+                val visibleItems = gifAccumulatedItems.ifEmpty { res.items }
+                if (visibleItems.isEmpty()) {
                     container.addView(TextView(this).apply {
                         text = AppUiStrings.emptyGifsMessage(keyboardLanguage)
                         textSize = 13f
                         setTextColor(colorHintText)
                         gravity = Gravity.CENTER
-                        setPadding(dp(16), dp(36), dp(16), dp(16))
+                        setPadding(dp(16), dp(24), dp(16), dp(12))
                     })
+                    val offlineMatches = OfflineGifCatalog.search(mediaSearchQuery)
+                    if (offlineMatches.isNotEmpty()) {
+                        appendOfflineAndRecentGifFallback(container, emptyList(), cols, tileH, gapPx, gen)
+                    }
                 } else {
-                    addGifGridRows(container, res.items, cols, tileH, gapPx, gen)
+                    addGifGridRows(container, visibleItems, cols, tileH, gapPx, gen)
+                    if (gifHasNext) {
+                        if (gifIsLoadingMore) {
+                            container.addView(ProgressBar(this), LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                                gravity = Gravity.CENTER_HORIZONTAL
+                                topMargin = dp(4)
+                                bottomMargin = dp(6)
+                            })
+                        } else {
+                            container.addView(TextView(this).apply {
+                                text = AppUiStrings.gifLoadMoreLabel(keyboardLanguage)
+                                textSize = 12f
+                                typeface = Typeface.DEFAULT_BOLD
+                                setTextColor(colorKeyText)
+                                gravity = Gravity.CENTER
+                                setPadding(dp(16), dp(8), dp(16), dp(8))
+                                background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
+                                isClickable = true
+                                isFocusable = true
+                                setOnClickListener { loadGifsForCurrentState(append = true) }
+                            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                                gravity = Gravity.CENTER_HORIZONTAL
+                                topMargin = dp(4)
+                                bottomMargin = dp(6)
+                            })
+                        }
+                    }
+                    container.addView(TextView(this).apply {
+                        text = AppUiStrings.gifAttributionLabel(keyboardLanguage)
+                        textSize = 10.5f
+                        setTextColor(colorHintText)
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(2), 0, dp(2))
+                    })
                 }
             }
         }
     }
 
-    private fun buildTenorUnconfiguredCard(): View {
-        val cardBg = if (isClassicTheme) colorKeyBg else colorChipBg
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-            background = roundedDrawable(cardBg, dp(12f), colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-
-            addView(TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage)
-                textSize = 13.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorKeyText)
-                gravity = Gravity.CENTER
-            })
-            addView(TextView(this@ClipMaxImeService).apply {
-                text = AppUiStrings.tenorApiKeyRequiredDesc(keyboardLanguage)
-                textSize = 12f
-                setTextColor(colorHintText)
-                gravity = Gravity.CENTER
-                setPadding(dp(6), dp(4), dp(6), dp(12))
-            })
-
-            val row = LinearLayout(this@ClipMaxImeService).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutDirection = uiLayoutDirection
-                gravity = Gravity.CENTER
-            }
-            val pasteBtn = TextView(this@ClipMaxImeService).apply {
-                text = if (AppUiStrings.isArabic(keyboardLanguage)) "لصق المفتاح" else "Paste Key"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(colorKeyText)
-                setPadding(dp(14), dp(8), dp(14), dp(8))
-                background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { pasteTenorApiKeyFromClipboard(openGifModeAfter = true) }
-            }
-            row.addView(pasteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(8)
-            })
-
-            val typeBtn = TextView(this@ClipMaxImeService).apply {
-                text = if (AppUiStrings.isArabic(keyboardLanguage)) "إدخال المفتاح" else "Enter Key"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(colorAccentText)
-                setPadding(dp(14), dp(8), dp(14), dp(8))
-                background = roundedRipple(colorAccent, dp(8f), 0)
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { startTenorKeyTypingSession() }
-            }
-            row.addView(typeBtn)
-            addView(row)
-        }
-    }
-
     private fun handleGifPress(item: GifProvider.GifItem) {
         dismissPasteUndoCapsule()
-        val conn = currentInputConnection
-        if (conn == null) {
-            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
-            return
-        }
         val info = currentInputEditorInfo
-        if (!MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, "image/gif")) {
-            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
-            return
-        }
+        val outcome = MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+            hasActiveConnection = currentInputConnection != null,
+            inputType = info?.inputType ?: 0,
+            isPasswordTarget = isPasswordTarget,
+            acceptedMimeTypes = info?.contentMimeTypes,
+            isSticker = false
+        )
         val fullName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = false)
         val previewName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = true)
-        val cachedFull = mediaCacheManager.getCachedFile(fullName)
-        if (cachedFull != null) {
-            val link = runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
-            if (commitRichMediaFile(cachedFull, "image/gif", item.title, link)) {
+        val safeLink = if (item.isBundledAsset) null else runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
+
+        fun executeWithGif(gifFile: File) {
+            if (outcome != MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE) {
+                val msg = if (outcome == MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.NO_ACTIVE_FIELD) {
+                    AppUiStrings.noActiveTextFieldStatus(keyboardLanguage)
+                } else {
+                    AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage)
+                }
+                showRichMediaFallbackBanner(msg, gifFile, "image/gif", item.title)
+                return
+            }
+            if (commitRichMediaFile(gifFile, "image/gif", item.title, safeLink)) {
                 recentGifHistory.record(item)
                 persistRecentGifs()
             }
+        }
+
+        val cachedFull = mediaCacheManager.getCachedFile(fullName) ?: mediaCacheManager.getCachedFile(previewName)
+        if (cachedFull != null) {
+            executeWithGif(cachedFull)
             return
         }
-        showMediaStatusBanner(
-            if (AppUiStrings.isArabic(keyboardLanguage)) "جارٍ تجهيز GIF..." else "Preparing GIF..."
-        )
+        if (!item.isBundledAsset) {
+            showMediaStatusBanner(if (AppUiStrings.isArabic(keyboardLanguage)) "جارٍ تجهيز GIF..." else "Preparing GIF...")
+        }
         submitSafely(mediaIoExecutor) {
-            val file = mediaCacheManager.downloadAndCache(item.gifUrl, fullName)
-                ?: mediaCacheManager.getCachedFile(previewName)
-                ?: mediaCacheManager.downloadAndCache(item.previewUrl, previewName)
+            val file = if (item.isBundledAsset && !item.assetPath.isNullOrBlank()) {
+                mediaCacheManager.ensureAssetCached(assets, item.assetPath, fullName)
+            } else {
+                mediaCacheManager.downloadAndCache(item.gifUrl, fullName)
+                    ?: mediaCacheManager.getCachedFile(previewName)
+                    ?: mediaCacheManager.downloadAndCache(item.previewUrl, previewName)
+            }
             main.post {
                 if (serviceDestroyed) return@post
                 if (file == null) {
                     showMediaStatusBanner(AppUiStrings.networkErrorGifsMessage(keyboardLanguage))
                     return@post
                 }
-                val link = runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
-                if (commitRichMediaFile(file, "image/gif", item.title, link)) {
-                    recentGifHistory.record(item)
-                    persistRecentGifs()
-                }
+                executeWithGif(file)
             }
         }
     }
 
     // -------------------------------------------------------------------------
-    // INLINE KEYBOARD INTERFACES FOR MEDIA SEARCH & TENOR API KEY ENTRY
+    // INLINE KEYBOARD INTERFACE FOR MEDIA SEARCH
     // -------------------------------------------------------------------------
     private fun buildMediaSearchInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -6530,7 +7111,7 @@ class ClipMaxImeService : InputMethodService() {
 
             MediaKeyboardSpec.MediaSubMode.GIFS -> {
                 val hintChip = TextView(this).apply {
-                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "اضغط تم أو Enter للبحث في Tenor" else "Tap Done or Enter to search GIFs"
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "اضغط تم أو Enter للبحث في GIFs" else "Tap Done or Enter to search GIFs"
                     textSize = 11.5f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(colorAccentText)
@@ -6546,136 +7127,6 @@ class ClipMaxImeService : InputMethodService() {
                 container.addView(hintChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
             }
         }
-    }
-
-    private fun buildTenorKeyEntryInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutDirection = uiLayoutDirection
-        setBackgroundColor(colorBg)
-        setPadding(dp(6), dp(viewport.searchTopPaddingDp).toInt(), dp(6), dp(viewport.searchBottomPaddingDp).toInt())
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(viewport.searchInterfaceHeightDp).toInt()
-        )
-
-        val barH = dp(viewport.searchBarHeightDp).toInt()
-        val pillH = (barH - dp(2)).coerceAtLeast(dp(20))
-
-        val barRow = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, barH)
-        }
-
-        val pill = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(6), 0)
-            background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
-            layoutParams = LinearLayout.LayoutParams(0, pillH, 1f).apply {
-                marginEnd = dp(6)
-            }
-        }
-
-        val tv = TextView(this@ClipMaxImeService).apply {
-            text = if (tenorKeyDraft.isEmpty()) AppUiStrings.tenorApiKeyHint(keyboardLanguage) else tenorKeyDraft
-            textSize = 11.5f
-            setTextColor(if (tenorKeyDraft.isEmpty()) colorHintText else colorKeyText)
-            setSingleLine(true)
-            ellipsize = TextUtils.TruncateAt.START
-            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-            setIcon(IconDrawable(IconType.LOCK, colorAccent, 12f), 5f)
-        }
-        mediaSearchInputText = tv
-        pill.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val clearBtn = FrameLayout(this@ClipMaxImeService).apply {
-            visibility = if (tenorKeyDraft.isEmpty()) View.GONE else View.VISIBLE
-            background = roundedRipple(colorModBg, dp(10f), 0)
-            val iv = createIconView(IconDrawable(IconType.CLOSE, colorModText, 10f))
-            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-            setOnClickListener {
-                tenorKeyDraft = ""
-                updateTenorKeyEntryUI()
-            }
-        }
-        mediaSearchClearBtn = clearBtn
-        pill.addView(clearBtn, LinearLayout.LayoutParams(dp(20), dp(20)))
-        barRow.addView(pill)
-
-        val saveBtn = Button(this@ClipMaxImeService).apply {
-            text = AppUiStrings.tenorApiKeySave(keyboardLanguage)
-            isAllCaps = false
-            textSize = 10.5f
-            typeface = Typeface.DEFAULT_BOLD
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(10), 0, dp(10), 0)
-            setTextColor(colorAccentText)
-            background = roundedRipple(colorAccent, dp(8f), 0)
-            setOnClickListener {
-                isTenorKeyTyping = false
-                saveTenorApiKey(tenorKeyDraft)
-                isEmojiPickerOpen = true
-                currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
-                renderFullImeView()
-            }
-        }
-        barRow.addView(saveBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, pillH))
-        addView(barRow)
-
-        // Row 2: Quick Paste + Cancel strip
-        val actionsRow = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(viewport.searchResultsHeightDp).toInt()).apply {
-                topMargin = dp(viewport.searchResultsTopMarginDp).toInt()
-            }
-        }
-        val chipH = (dp(viewport.searchResultsHeightDp).toInt() - dp(4)).coerceAtLeast(dp(26))
-
-        val pasteChip = TextView(this@ClipMaxImeService).apply {
-            text = if (AppUiStrings.isArabic(keyboardLanguage)) "لصق من الحافظة" else "Paste from Clipboard"
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorKeyText)
-            gravity = Gravity.CENTER
-            setPadding(dp(10), 0, dp(10), 0)
-            background = roundedRipple(colorChipBg, dp(10f), colorChipBorder)
-            setOnClickListener {
-                pasteTenorApiKeyFromClipboard(openGifModeAfter = true)
-            }
-        }
-        actionsRow.addView(pasteChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply {
-            marginEnd = dp(6)
-        })
-
-        val cancelChip = TextView(this@ClipMaxImeService).apply {
-            text = AppUiStrings.cancelLabel(keyboardLanguage)
-            textSize = 11.5f
-            setTextColor(colorModText)
-            gravity = Gravity.CENTER
-            setPadding(dp(10), 0, dp(10), 0)
-            background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
-            setOnClickListener {
-                isTenorKeyTyping = false
-                tenorKeyDraft = ""
-                renderFullImeView()
-            }
-        }
-        actionsRow.addView(cancelChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
-        addView(actionsRow)
-    }
-
-    private fun updateTenorKeyEntryUI() {
-        mediaSearchInputText?.text = if (tenorKeyDraft.isEmpty()) AppUiStrings.tenorApiKeyHint(keyboardLanguage) else tenorKeyDraft
-        mediaSearchInputText?.setTextColor(if (tenorKeyDraft.isEmpty()) colorHintText else colorKeyText)
-        mediaSearchClearBtn?.visibility = if (tenorKeyDraft.isEmpty()) View.GONE else View.VISIBLE
     }
 
     // =========================================================================
@@ -6959,7 +7410,7 @@ class ClipMaxImeService : InputMethodService() {
                             shiftStateMachine.resetDoubleTapTimer()
                             isEmojiPickerOpen = true
                             isMediaSearchTyping = false
-                            isTenorKeyTyping = false
+                            isStickerPackManagerOpen = false
                             isClipboardPanelOpen = false
                             isSettingsOpen = false
                             renderFullImeView()
@@ -7694,10 +8145,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleLetterPress(char: String) {
         dismissPasteUndoCapsule()
         val letter = if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT)
-        if (isTenorKeyTyping) {
-            tenorKeyDraft += letter
-            updateTenorKeyEntryUI()
-        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
             mediaSearchQuery += letter
             updateMediaSearchUI()
             renderMediaSearchStripResults()
@@ -7727,10 +8175,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleGenericCharPress(char: String) {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isTenorKeyTyping) {
-            tenorKeyDraft += char
-            updateTenorKeyEntryUI()
-        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
             mediaSearchQuery += char
             updateMediaSearchUI()
             renderMediaSearchStripResults()
@@ -7765,9 +8210,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleSpacePress() {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isTenorKeyTyping) {
-            // API keys don't contain spaces, ignore
-        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
             mediaSearchQuery += " "
             updateMediaSearchUI()
             renderMediaSearchStripResults()
@@ -7784,12 +8227,7 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleBackspace() {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isTenorKeyTyping) {
-            if (tenorKeyDraft.isNotEmpty()) {
-                tenorKeyDraft = EmojiInterfaceSpec.dropLastGrapheme(tenorKeyDraft)
-                updateTenorKeyEntryUI()
-            }
-        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
             if (mediaSearchQuery.isNotEmpty()) {
                 mediaSearchQuery = EmojiInterfaceSpec.dropLastGrapheme(mediaSearchQuery)
                 updateMediaSearchUI()
@@ -7851,13 +8289,7 @@ class ClipMaxImeService : InputMethodService() {
         dismissPasteUndoCapsule()
         val resolution = resolveCurrentActionKey()
         shiftStateMachine.onNonLetterInput()
-        if (isTenorKeyTyping) {
-            isTenorKeyTyping = false
-            saveTenorApiKey(tenorKeyDraft)
-            isEmojiPickerOpen = true
-            currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
-            renderFullImeView()
-        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
             isMediaSearchTyping = false
             if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
                 loadGifsForCurrentState()
@@ -8349,18 +8781,16 @@ class ClipMaxImeService : InputMethodService() {
         if (!restarting && !preserveSession) {
             isEmojiPickerOpen = false
             isMediaSearchTyping = false
-            isTenorKeyTyping = false
+            isStickerPackManagerOpen = false
             mediaSearchQuery = ""
-            tenorKeyDraft = ""
         }
         if (isPasswordTarget) {
             isFilterMode = false
             isClipboardPanelOpen = false
             isEmojiPickerOpen = false
             isMediaSearchTyping = false
-            isTenorKeyTyping = false
+            isStickerPackManagerOpen = false
             mediaSearchQuery = ""
-            tenorKeyDraft = ""
             pinnedOnly = false
         }
         val numericRequirementChanged =
@@ -8600,7 +9030,7 @@ class ClipMaxImeService : InputMethodService() {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (languagePopupHost != null || variantPopupHost != null ||
                 contextMenuHost != null || isMergeMode || undoRedoHost != null ||
-                isTenorKeyTyping || isMediaSearchTyping ||
+                isMediaSearchTyping || isStickerPackManagerOpen ||
                 isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
                 if (event.repeatCount == 0) {
                     event.startTracking()
@@ -8644,14 +9074,6 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 return true
             }
-            if (isTenorKeyTyping) {
-                if (!event.isCanceled) {
-                    isTenorKeyTyping = false
-                    tenorKeyDraft = ""
-                    renderFullImeView()
-                }
-                return true
-            }
             if (isEmojiPickerOpen && isMediaSearchTyping) {
                 if (!event.isCanceled) {
                     isMediaSearchTyping = false
@@ -8659,9 +9081,17 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 return true
             }
+            if (isEmojiPickerOpen && isStickerPackManagerOpen) {
+                if (!event.isCanceled) {
+                    isStickerPackManagerOpen = false
+                    renderFullImeView()
+                }
+                return true
+            }
             if (isEmojiPickerOpen) {
                 if (!event.isCanceled) {
                     isEmojiPickerOpen = false
+                    isStickerPackManagerOpen = false
                     mediaSearchQuery = ""
                     renderFullImeView()
                 }
@@ -8698,12 +9128,11 @@ class ClipMaxImeService : InputMethodService() {
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
         shiftStateMachine.resetDoubleTapTimer()
-        val needsReset = isEmojiPickerOpen || isMediaSearchTyping || isTenorKeyTyping || isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
+        val needsReset = isEmojiPickerOpen || isMediaSearchTyping || isStickerPackManagerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
         isEmojiPickerOpen = false
         isMediaSearchTyping = false
-        isTenorKeyTyping = false
+        isStickerPackManagerOpen = false
         mediaSearchQuery = ""
-        tenorKeyDraft = ""
         isSettingsOpen = false
         settingsSavedScrollY = 0
         isClipboardPanelOpen = false
@@ -9905,7 +10334,7 @@ class ClipMaxImeService : InputMethodService() {
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_LEFT, ARROW_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         SEND, GO, NEXT, DONE, SPACE,
         EMOJI_RECENT, EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
-        MEDIA_STICKER,
+        MEDIA_STICKER, STAR, PLUS,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -10446,6 +10875,27 @@ class ClipMaxImeService : InputMethodService() {
                         quadTo(8.0f, 10.2f, 10.0f, 8.8f)
                     }
                     canvas.drawPath(grin, strokePaint)
+                }
+                IconType.STAR -> {
+                    val star = Path().apply {
+                        val cx = 8f
+                        val cy = 8f
+                        val rOut = 6.0f
+                        val rIn = 2.65f
+                        for (i in 0 until 10) {
+                            val angle = -Math.PI / 2.0 + i * (Math.PI / 5.0)
+                            val r = if (i % 2 == 0) rOut else rIn
+                            val x = cx + (r * Math.cos(angle)).toFloat()
+                            val y = cy + (r * Math.sin(angle)).toFloat()
+                            if (i == 0) moveTo(x, y) else lineTo(x, y)
+                        }
+                        close()
+                    }
+                    canvas.drawPath(star, fillPaint)
+                }
+                IconType.PLUS -> {
+                    canvas.drawLine(8f, 3.2f, 8f, 12.8f, strokePaint)
+                    canvas.drawLine(3.2f, 8f, 12.8f, 8f, strokePaint)
                 }
             }
             canvas.restoreToCount(save)

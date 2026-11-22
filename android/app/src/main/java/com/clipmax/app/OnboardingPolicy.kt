@@ -4,7 +4,11 @@ import java.util.Locale
 
 /**
  * Pure JVM state machine and Android IME component-matching helpers for
- * ClipMax's first-launch onboarding and interactive keyboard activation flow.
+ * ClipMax's three-stage verified onboarding flow:
+ * 1. ENABLE_KEYBOARD -> verified against ENABLED_INPUT_METHODS
+ * 2. SELECT_KEYBOARD -> verified against DEFAULT_INPUT_METHOD
+ * 3. CONFIGURE_EXPIRY -> contextual onboarding guide inside Settings retention section
+ * -> COMPLETION
  */
 internal object OnboardingPolicy {
 
@@ -18,6 +22,7 @@ internal object OnboardingPolicy {
         INTRODUCTION("INTRODUCTION"),
         ENABLE_KEYBOARD("ENABLE_KEYBOARD"),
         SELECT_KEYBOARD("SELECT_KEYBOARD"),
+        CONFIGURE_EXPIRY("CONFIGURE_EXPIRY"),
         COMPLETION("COMPLETION");
 
         companion object {
@@ -90,13 +95,15 @@ internal object OnboardingPolicy {
      *
      * Rules:
      * - Once [completed] is true, onboarding stays completed regardless of later IME changes.
-     * - While on [Step.INTRODUCTION], does not auto-skip until the user leaves Introduction.
-     * - On [Step.ENABLE_KEYBOARD], advances to [Step.COMPLETION] if both enabled & selected, or
-     *   [Step.SELECT_KEYBOARD] once enabled is verified.
-     * - On [Step.SELECT_KEYBOARD], regresses to [Step.ENABLE_KEYBOARD] if the user disabled it,
-     *   or advances to [Step.COMPLETION] once selected as default IME is verified.
-     * - On [Step.COMPLETION], remains on [Step.COMPLETION] if enabled & selected, or falls back
-     *   to the missing step if disabled/unselected before clicking "Start using ClipMax".
+     * - While on [Step.INTRODUCTION], stays on Introduction until user taps Next.
+     * - On [Step.ENABLE_KEYBOARD], advances to [Step.SELECT_KEYBOARD] once enabled is verified,
+     *   or to [Step.CONFIGURE_EXPIRY] only when BOTH enabled and selected are verified.
+     *   (Enabling alone never skips Stage 2.)
+     * - On [Step.SELECT_KEYBOARD], regresses to [Step.ENABLE_KEYBOARD] if disabled,
+     *   or unlocks [Step.CONFIGURE_EXPIRY] once selected as default IME is strictly verified.
+     * - On [Step.CONFIGURE_EXPIRY], remains sticky across activity recreation, keyboard switching,
+     *   and process death until the user taps Finish Setup or Skip.
+     * - On [Step.COMPLETION], remains on [Step.COMPLETION].
      */
     fun reconcileState(
         completed: Boolean,
@@ -120,20 +127,17 @@ internal object OnboardingPolicy {
         val resolvedStep = when (persistedStep) {
             Step.INTRODUCTION -> Step.INTRODUCTION
             Step.ENABLE_KEYBOARD -> when {
-                imeEnabled && imeSelected -> Step.COMPLETION
+                imeEnabled && imeSelected -> Step.CONFIGURE_EXPIRY
                 imeEnabled -> Step.SELECT_KEYBOARD
                 else -> Step.ENABLE_KEYBOARD
             }
             Step.SELECT_KEYBOARD -> when {
                 !imeEnabled -> Step.ENABLE_KEYBOARD
-                imeSelected -> Step.COMPLETION
+                imeSelected -> Step.CONFIGURE_EXPIRY
                 else -> Step.SELECT_KEYBOARD
             }
-            Step.COMPLETION -> when {
-                !imeEnabled -> Step.ENABLE_KEYBOARD
-                !imeSelected -> Step.SELECT_KEYBOARD
-                else -> Step.COMPLETION
-            }
+            Step.CONFIGURE_EXPIRY -> Step.CONFIGURE_EXPIRY
+            Step.COMPLETION -> Step.COMPLETION
         }
 
         return State(

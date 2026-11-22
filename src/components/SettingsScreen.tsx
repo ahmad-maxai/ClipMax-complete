@@ -219,6 +219,7 @@ export function SettingsScreen({
   const keyboardSectionRef = useRef<HTMLDivElement>(null);
   const enableImeBtnRef = useRef<HTMLDivElement>(null);
   const selectImeBtnRef = useRef<HTMLDivElement>(null);
+  const expirySectionRef = useRef<HTMLDivElement>(null);
   const isOnboardingActive =
     Boolean(onboardingState) &&
     !onboardingState?.completed &&
@@ -589,7 +590,7 @@ export function SettingsScreen({
             </button>
           </div>
 
-          <div className="border-t border-border px-4 py-3">
+          <div ref={expirySectionRef} className="border-t border-border bg-surface px-4 py-3">
             <p className="text-sm font-semibold text-foreground">{t.retentionTitle}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {t.retentionDesc}
@@ -828,6 +829,7 @@ export function SettingsScreen({
           sectionRef={keyboardSectionRef}
           enableBtnRef={enableImeBtnRef}
           selectBtnRef={selectImeBtnRef}
+          expirySectionRef={expirySectionRef}
           reducedMotion={reducedMotion}
           onSkip={() => onSkipOnboarding?.()}
           onComplete={() => onCompleteOnboarding?.()}

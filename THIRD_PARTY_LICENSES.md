@@ -34,7 +34,7 @@ This document lists the third-party open-source libraries, assets, and component
 
 ## 2. Bundled Offline Web Interface Dependencies
 
-The following libraries are compiled into the static, offline single-page application bundled within the Android APK at `android/app/src/main/assets/web/`. ClipMax does not request `android.permission.INTERNET`, ensuring these assets run strictly in a local, offline sandbox.
+The following libraries are compiled into the static, offline single-page application bundled within the Android APK at `android/app/src/main/assets/web/`. ClipMax stores all clipboard data strictly locally on device and never uploads clipboard content; `android.permission.INTERNET` is declared solely for optional online GIF search/previews via KLIPY.
 
 ### React & React DOM
 - **Package**: `react` (^19.0.1), `react-dom` (^19.0.1)
@@ -71,21 +71,36 @@ The following libraries are compiled into the static, offline single-page applic
 
 ---
 
-## 3. Build & Development Tooling (Not Packaged in APK)
+## 3. Build Tooling & Optional GIF Proxy Server (Not Packaged in APK)
 
-The following development packages are declared in `package.json` for compilation and development server tooling. They are never packaged or shipped inside the Android APK:
+The following packages in `package.json` run the local build pipeline and the optional Node.js/Express KLIPY GIF proxy backend (`server.ts`). They are never packaged inside the Android APK:
 - `vite` (^8.3.0), `@vitejs/plugin-react` (^6.1.1), `@tailwindcss/vite` (^4.3.3) — MIT
 - `typescript` (^7.0.2), `tsx` (^4.21.0), `esbuild` (^0.25.0) — Apache-2.0 / MIT
-- Note: Environment boilerplate packages (`@google/genai`, `express`, `dotenv`) are present in `package.json` from the AI Studio environment template but are not imported, compiled, or referenced anywhere in ClipMax runtime code.
+- `express` (^4.21.2), `dotenv` (^17.2.3) — MIT / BSD-2-Clause (used in `server.ts` to keep `KLIPY_API_KEY` strictly server-side)
+- Note: `@google/genai` is present in `package.json` from the environment boilerplate and is not imported or called anywhere in ClipMax runtime code.
 
 ---
 
 ## 4. Typography, Wordlists & Artwork Resources
 
-### ClipMax Brand Artwork
-- **Files**: `public/logo.jpg`, `src/assets/logo.jpg`, `android/app/src/main/res/mipmap-*/ic_launcher.png`, `android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png`
-- **Origin**: ClipMax original project artwork
+### ClipMax Brand Artwork, Original Stickers & Offline Reaction GIFs
+- **Files**:
+  - `public/logo.jpg`, `src/assets/logo.jpg`, `android/app/src/main/res/mipmap-*/ic_launcher.png`, `android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png`
+  - Original 24 sticker PNGs across `reactions`, `daily`, and `notes`
+  - 10 bundled animated GIFs under `android/app/src/main/assets/gifs/*.gif`
+- **Origin**: ClipMax project artwork and composited animations
 - **License**: Distributed under GPL-3.0-or-later as confirmed by the project owner.
+
+### Microsoft Fluent Emoji (Sticker Packs Artwork)
+- **Files**: 325 studio-rendered 3D PNG stickers across 10 packs under `android/app/src/main/assets/stickers/<packId>/`
+- **Origin**: Microsoft Corporation (`microsoft/fluentui-emoji`)
+- **Upstream URL**: https://github.com/microsoft/fluentui-emoji
+- **Pinned Commit**: `1ffb34c752ecf5d402f04cfb4b392c77f57c54bc`
+- **License**: MIT License (compatible with `GPL-3.0-or-later`)
+- **Copyright Notice**:
+  > MIT License — Copyright (c) Microsoft Corporation.
+  > Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+- **Modifications**: Resized `3D/*.png` assets to 192×192 RGBA PNG with metadata stripped for mobile IME storage efficiency.
 
 ### English Suggestion Wordlist
 - **File**: `android/app/src/main/res/raw/en_words.txt` (10,001 lines, 82,398 bytes; SHA-256 `1185cfac9cad7ab4aa683a4645e5c93e650fdf7a6717f5624430bf03b6510dd1`)

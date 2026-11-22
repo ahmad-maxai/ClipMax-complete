@@ -18,6 +18,21 @@ android {
         versionCode = 12
         versionName = "0.5.1"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+
+        val gifProxyUrl = (System.getenv("CLIPMAX_GIF_PROXY_URL") ?: "")
+            .trim()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        val klipyApiKey = (System.getenv("KLIPY_API_KEY") ?: "")
+            .trim()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "GIF_PROXY_URL", "\"$gifProxyUrl\"")
+        buildConfigField("String", "KLIPY_API_KEY", "\"$klipyApiKey\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

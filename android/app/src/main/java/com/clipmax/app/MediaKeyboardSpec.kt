@@ -1,11 +1,12 @@
 package com.clipmax.app
 
+import android.text.InputType
 import java.util.Locale
 
 /**
  * Pure JVM specification for ClipMax's 4-mode native media keyboard (Emoji, GIFs, Stickers,
- * Kaomoji): mode selector state, search filtering, recent item history persistence, Tenor key
- * resolution, and rich-content MIME compatibility policy.
+ * Kaomoji): mode selector state, favorites/recents persistence, installed sticker pack policy,
+ * field eligibility checks, and rich-content MIME compatibility policy.
  */
 internal object MediaKeyboardSpec {
 
@@ -17,11 +18,14 @@ internal object MediaKeyboardSpec {
     }
 
     const val PREF_MEDIA_FILE = "clipmax_media_prefs"
-    const val PREF_TENOR_API_KEY = "tenor_api_key"
     const val PREF_RECENT_STICKERS = "recent_stickers"
+    const val PREF_FAVORITE_STICKERS = "favorite_stickers"
+    const val PREF_INSTALLED_STICKER_PACKS = "installed_sticker_packs"
+    const val PREF_STICKER_PACKS_INIT = "sticker_packs_v2_initialized"
     const val PREF_RECENT_KAOMOJI = "recent_kaomoji"
     const val PREF_RECENT_GIFS = "recent_gifs"
     const val MAX_RECENT_MEDIA = 24
+    const val MAX_FAVORITE_STICKERS = 64
 
     const val TOP_BAR_HEIGHT_PORTRAIT_DP = 44f
     const val TOP_BAR_HEIGHT_LANDSCAPE_DP = 38f
@@ -35,26 +39,65 @@ internal object MediaKeyboardSpec {
     const val GIF_COLS_PORTRAIT = 2
     const val GIF_COLS_LANDSCAPE = 3
 
-    object TenorApiKeyConfig {
-        fun resolveEffectiveKey(prefKey: String?, resourceKey: String?): String {
-            val fromPref = prefKey?.trim().orEmpty()
-            if (fromPref.isNotEmpty()) return fromPref
-            val fromRes = resourceKey?.trim().orEmpty()
-            if (fromRes.isNotEmpty()) return fromRes
-            return ""
+    object StickerPackStorePolicy {
+        fun encodeInstalledIds(ids: Collection<String>): String =
+            ids.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString(",")
+
+        fun decodeInstalledIds(raw: String?): List<String> {
+            if (raw.isNullOrBlank()) return emptyList()
+            val validIds = StickerCatalog.PACKS.map { it.packId }.toSet()
+            return raw.split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && it in validIds }
+                .distinct()
         }
 
-        fun isConfigured(effectiveKey: String?): Boolean = !effectiveKey.isNullOrBlank()
-
-        fun maskKey(key: String?): String {
-            val trimmed = key?.trim().orEmpty()
-            if (trimmed.isEmpty()) return ""
-            if (trimmed.length <= 8) return "••••" + trimmed.takeLast(2)
-            return trimmed.take(4) + "••••" + trimmed.takeLast(4)
+        fun formatStorageSize(bytes: Long): String {
+            if (bytes <= 0L) return "0 KB"
+            val kb = bytes / 1024.0
+            return if (kb < 1024.0) {
+                "${kotlin.math.round(kb).toLong().coerceAtLeast(1)} KB"
+            } else {
+                String.format(Locale.US, "%.1f MB", kb / 1024.0)
+            }
         }
     }
 
     object MediaRichContentPolicy {
+        enum class MediaFallbackOutcome {
+            ELIGIBLE,
+            NO_ACTIVE_FIELD,
+            UNSUPPORTED_FIELD,
+            UNSUPPORTED_MIME
+        }
+
+        fun isEligibleRichMediaEditor(
+            inputType: Int,
+            isPasswordTarget: Boolean
+        ): Boolean {
+            if (isPasswordTarget) return false
+            val clazz = inputType and InputType.TYPE_MASK_CLASS
+            if (clazz == InputType.TYPE_CLASS_NUMBER ||
+                clazz == InputType.TYPE_CLASS_PHONE ||
+                clazz == InputType.TYPE_CLASS_DATETIME
+            ) {
+                return false
+            }
+            if (clazz == InputType.TYPE_CLASS_TEXT) {
+                val variation = inputType and InputType.TYPE_MASK_VARIATION
+                if (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                    variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                    variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+                    variation == InputType.TYPE_TEXT_VARIATION_URI ||
+                    variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+                    variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS
+                ) {
+                    return false
+                }
+            }
+            return true
+        }
+
         fun supportsMimeType(acceptedMimeTypes: Array<out String>?, targetMime: String): Boolean {
             if (acceptedMimeTypes == null || acceptedMimeTypes.isEmpty()) return false
             val normTarget = targetMime.trim().lowercase(Locale.ROOT)
@@ -70,9 +113,42 @@ internal object MediaKeyboardSpec {
             return false
         }
 
-        fun cacheFileNameForSticker(item: StickerCatalog.StickerItem): String {
+        /**
+         * Resolves best sticker commit MIME type: prefers `image/png`, falls back to `image/webp`
+         * for hosts (such as WhatsApp sticker/media composers) that advertise WebP over PNG.
+         */
+        fun resolveBestStickerMime(acceptedMimeTypes: Array<out String>?): String? {
+            if (supportsMimeType(acceptedMimeTypes, "image/png")) return "image/png"
+            if (supportsMimeType(acceptedMimeTypes, "image/webp")) return "image/webp"
+            return null
+        }
+
+        fun resolveBestGifMime(acceptedMimeTypes: Array<out String>?): String? {
+            return if (supportsMimeType(acceptedMimeTypes, "image/gif")) "image/gif" else null
+        }
+
+        fun evaluateMediaEligibility(
+            hasActiveConnection: Boolean,
+            inputType: Int,
+            isPasswordTarget: Boolean,
+            acceptedMimeTypes: Array<out String>?,
+            isSticker: Boolean
+        ): MediaFallbackOutcome {
+            if (!hasActiveConnection) return MediaFallbackOutcome.NO_ACTIVE_FIELD
+            if (!isEligibleRichMediaEditor(inputType, isPasswordTarget)) {
+                return MediaFallbackOutcome.UNSUPPORTED_FIELD
+            }
+            val mime = if (isSticker) {
+                resolveBestStickerMime(acceptedMimeTypes)
+            } else {
+                resolveBestGifMime(acceptedMimeTypes)
+            }
+            return if (mime != null) MediaFallbackOutcome.ELIGIBLE else MediaFallbackOutcome.UNSUPPORTED_MIME
+        }
+
+        fun cacheFileNameForSticker(item: StickerCatalog.StickerItem, mimeType: String = "image/png"): String {
             val safeId = item.id.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            return "sticker_${safeId}.png"
+            return if (mimeType == "image/webp") "sticker_${safeId}.webp" else "sticker_${safeId}.png"
         }
 
         fun cacheFileNameForGif(item: GifProvider.GifItem, isPreview: Boolean): String {
@@ -90,12 +166,11 @@ internal object MediaKeyboardSpec {
         }
 
         fun items(): List<StickerCatalog.StickerItem> {
-            val allById = StickerCatalog.PACKS.flatMap { it.items }.associateBy { it.id }
-            return ids.mapNotNull { allById[it] }
+            return ids.mapNotNull { StickerCatalog.findById(it) }
         }
 
         fun record(stickerId: String) {
-            if (stickerId.isBlank()) return
+            if (stickerId.isBlank() || StickerCatalog.findById(stickerId) == null) return
             ids.remove(stickerId)
             ids.add(0, stickerId)
             while (ids.size > maxEntries) {
@@ -109,6 +184,45 @@ internal object MediaKeyboardSpec {
             fun decode(raw: String?): List<String> {
                 if (raw.isNullOrBlank()) return emptyList()
                 return raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_RECENT_MEDIA)
+            }
+        }
+    }
+
+    class StickerFavoritesHistory(
+        initialIds: List<String> = emptyList(),
+        private val maxEntries: Int = MAX_FAVORITE_STICKERS
+    ) {
+        private val ids = ArrayList<String>().apply {
+            initialIds
+                .filter { it.isNotBlank() && StickerCatalog.findById(it) != null }
+                .distinct()
+                .take(maxEntries)
+                .forEach { add(it) }
+        }
+
+        fun isFavorite(stickerId: String): Boolean = stickerId in ids
+
+        fun toggle(stickerId: String): Boolean {
+            if (stickerId.isBlank() || StickerCatalog.findById(stickerId) == null) return false
+            return if (ids.remove(stickerId)) {
+                false
+            } else {
+                ids.add(0, stickerId)
+                while (ids.size > maxEntries) {
+                    ids.removeAt(ids.lastIndex)
+                }
+                true
+            }
+        }
+
+        fun items(): List<StickerCatalog.StickerItem> = ids.mapNotNull { StickerCatalog.findById(it) }
+
+        fun encode(): String = ids.joinToString("\n")
+
+        companion object {
+            fun decode(raw: String?): List<String> {
+                if (raw.isNullOrBlank()) return emptyList()
+                return raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_FAVORITE_STICKERS)
             }
         }
     }
@@ -162,11 +276,15 @@ internal object MediaKeyboardSpec {
 
         fun encode(): String = entries.joinToString("\n") { item ->
             val safeTitle = item.title.replace("\t", " ").replace("\n", " ")
-            listOf(item.id, safeTitle, item.previewUrl, item.gifUrl, item.width.toString(), item.height.toString())
+            val asset = item.assetPath.orEmpty()
+            listOf(item.id, safeTitle, item.previewUrl, item.gifUrl, item.width.toString(), item.height.toString(), asset)
                 .joinToString("\t")
         }
 
         companion object {
+            private fun isSafeMediaRef(ref: String): Boolean =
+                ref.startsWith("https://") || ref.startsWith("asset:///gifs/")
+
             fun decode(raw: String?): List<GifProvider.GifItem> {
                 if (raw.isNullOrBlank()) return emptyList()
                 val out = ArrayList<GifProvider.GifItem>()
@@ -180,8 +298,9 @@ internal object MediaKeyboardSpec {
                     val full = parts[3].trim()
                     val w = parts[4].toIntOrNull()?.takeIf { it > 0 } ?: 320
                     val h = parts[5].toIntOrNull()?.takeIf { it > 0 } ?: 240
-                    if (id.isNotEmpty() && prev.startsWith("https://") && full.startsWith("https://")) {
-                        out.add(GifProvider.GifItem(id, title, prev, full, w, h))
+                    val assetPath = parts.getOrNull(6)?.trim()?.takeIf { it.startsWith("gifs/") }
+                    if (id.isNotEmpty() && isSafeMediaRef(prev) && isSafeMediaRef(full)) {
+                        out.add(GifProvider.GifItem(id, title, prev, full, w, h, assetPath = assetPath))
                     }
                 }
                 return out.distinctBy { it.id }.take(MAX_RECENT_MEDIA)

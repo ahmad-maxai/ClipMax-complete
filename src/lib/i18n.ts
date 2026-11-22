@@ -463,20 +463,27 @@ export function getUiText(locale: AppUiLocale) {
         ? "لوحة مفاتيح ClipMax جاهزة. أصبحت مقاطعك المحفوظة في متناول يدك كلما استخدمت لوحة المفاتيح."
         : "ClipMax is ready. Your saved clips are now within reach whenever you use your keyboard.",
       startUsingBtn: ar ? "ابدأ استخدام ClipMax" : "Start using ClipMax",
+      finishSetupBtn: ar ? "إنهاء الإعداد" : "Finish setup",
       step1ReturnTitle: ar ? "الخطوة ١: تفعيل لوحة مفاتيح ClipMax" : "Step 1: Enable ClipMax keyboard",
       step2ReturnTitle: ar ? "الخطوة ٢: اختيار لوحة المفاتيح النشطة" : "Step 2: Choose active keyboard",
+      step3ReturnTitle: ar ? "الخطوة ٣: ضبط انتهاء صلاحية الحافظة" : "Step 3: Configure clipboard expiry",
       scrollBackSubtitle: ar ? "مرّر للعودة لمتابعة الإعداد" : "Scroll back to continue setup",
       returnBtn: ar ? "عودة" : "Return",
-      step1Badge: ar ? "الخطوة ١ من ٢" : "Step 1 of 2",
-      step2Badge: ar ? "الخطوة ٢ من ٢" : "Step 2 of 2",
+      step1Badge: ar ? "الخطوة ١ من ٣" : "Step 1 of 3",
+      step2Badge: ar ? "الخطوة ٢ من ٣" : "Step 2 of 3",
+      step3Badge: ar ? "الخطوة ٣ من ٣" : "Step 3 of 3",
       step1Heading: ar ? "لنجعل ClipMax متاحة كلوحة مفاتيح." : "Let's make ClipMax available as your keyboard.",
-      step2Heading: ar ? "خطوة واحدة إضافية!" : "One more step!",
+      step2Heading: ar ? "الآن اختر ClipMax كلوحة مفاتيح نشطة!" : "Now switch to ClipMax!",
+      step3Heading: ar ? "تحكّم بمدة الاحتفاظ بالمقاطع المنسوخة." : "Choose how long your clips stay saved.",
       step1Body: ar
         ? "افتح إعدادات لوحة المفاتيح وفعّل ClipMax."
         : "Open your keyboard settings and switch on ClipMax.",
       step2Body: ar
         ? "اختر ClipMax متى أردت استخدام مقاطعك المحفوظة من لوحة المفاتيح."
         : "Choose ClipMax whenever you want to use your saved clips from your keyboard.",
+      step3Body: ar
+        ? "تُحذف المقاطع غير المثبتة تلقائياً بعد مدة الاحتفاظ المختارة للحفاظ على نظافة وخصوصية الحافظة. اختر المدة أدناه أو اضغط إنهاء الإعداد للمتابعة بالافتراضي."
+        : "Unpinned clips expire automatically after your selected retention duration to keep your clipboard tidy and private. Customize below or tap Finish setup to keep defaults.",
       retryEnableNotice: ar
         ? "لا تزال ClipMax غير مفعّلة. اضغط على الزر المميز أدناه، ثم فعّل ClipMax وارجع هنا."
         : "ClipMax is still switched off. Tap the highlighted button below, turn ClipMax on, then return here.",
@@ -484,6 +491,9 @@ export function getUiText(locale: AppUiLocale) {
         ? "لم يتم اختيار ClipMax بعد. اضغط على \"٢. تبديل أسلوب الإدخال\" أدناه واختر ClipMax."
         : "ClipMax isn't selected yet. Tap \"2. Switch Active Input Method\" below and choose ClipMax.",
       justEnabledAck: ar ? "رائع! أصبحت ClipMax متاحة الآن." : "Great! ClipMax is now available.",
+      justSelectedAck: ar
+        ? "تم التفعيل! لوحة مفاتيح ClipMax نشطة الآن."
+        : "Awesome! ClipMax is now your active keyboard.",
     },
     about: {
       title: ar ? "حول ClipMax" : "About ClipMax",

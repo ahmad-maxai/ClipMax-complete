@@ -357,24 +357,91 @@ internal object AppUiStrings {
         if (isArabic(locale)) "كاوماوجي" else "Kaomoji"
 
     fun richMediaUnsupportedStatus(locale: String?): String =
-        if (isArabic(locale)) "التطبيق المستهدف لا يدعم إدراج الصور والوسائط الغنية."
-        else "Target app does not support rich media insertion."
+        if (isArabic(locale)) "هذا الحقل لا يدعم إدراج الصور مباشرة — يمكنك المشاركة أو الحفظ."
+        else "This field doesn't allow direct image insert — share or save instead."
 
-    fun tenorApiKeyRequiredTitle(locale: String?): String =
-        if (isArabic(locale)) "مطلوب مفتاح Tenor API" else "Tenor API Key Required"
+    fun mediaShareLabel(locale: String?): String =
+        if (isArabic(locale)) "مشاركة" else "Share"
 
-    fun tenorApiKeyRequiredDesc(locale: String?): String =
-        if (isArabic(locale)) "أدخل مفتاح Tenor API لتمكين البحث عن صور GIF ومشاركتها."
-        else "Enter a Tenor API key to search and share animated GIFs."
+    fun mediaSaveLabel(locale: String?): String =
+        if (isArabic(locale)) "حفظ" else "Save"
 
-    fun tenorApiKeySave(locale: String?): String =
-        if (isArabic(locale)) "حفظ المفتاح" else "Save Key"
+    fun mediaSavedSuccessStatus(locale: String?): String =
+        if (isArabic(locale)) "تم الحفظ في المعرض (Pictures/ClipMax)."
+        else "Saved to Pictures/ClipMax."
 
-    fun tenorApiKeyClear(locale: String?): String =
-        if (isArabic(locale)) "مسح" else "Clear"
+    fun mediaSaveFailedStatus(locale: String?): String =
+        if (isArabic(locale)) "تعذر حفظ الملف." else "Could not save media."
 
-    fun tenorApiKeyHint(locale: String?): String =
-        if (isArabic(locale)) "أدخل مفتاح Tenor API..." else "Enter Tenor API key..."
+    fun stickerFavoritesLabel(locale: String?): String =
+        if (isArabic(locale)) "المفضلة" else "Favourites"
+
+    fun stickerFavoritesEmpty(locale: String?): String =
+        if (isArabic(locale)) "اضغط مطولاً على أي ملصق لإضافته للمفضلة."
+        else "Long-press any sticker to save it to Favourites."
+
+    fun stickerAddedFavoriteStatus(locale: String?, added: Boolean): String = if (isArabic(locale)) {
+        if (added) "تمت إضافة الملصق إلى المفضلة ★" else "تمت إزالة الملصق من المفضلة"
+    } else {
+        if (added) "Added sticker to Favourites ★" else "Removed sticker from Favourites"
+    }
+
+    fun stickerPackStoreTitle(locale: String?): String =
+        if (isArabic(locale)) "حزم الملصقات المحلية" else "Sticker Packs"
+
+    fun stickerPackInstallLabel(locale: String?): String =
+        if (isArabic(locale)) "تثبيت" else "Install"
+
+    fun stickerPackRemoveLabel(locale: String?): String =
+        if (isArabic(locale)) "إزالة" else "Remove"
+
+    fun stickerPackInstalledLabel(locale: String?): String =
+        if (isArabic(locale)) "مثبتة محلياً" else "Installed"
+
+    fun stickerPackInstallAllLabel(locale: String?): String =
+        if (isArabic(locale)) "تثبيت الكل" else "Install All"
+
+    fun stickerPacksNoneInstalled(locale: String?): String =
+        if (isArabic(locale)) "لا توجد حزم مثبتة حالياً. افتح إدارة الحزم (+) لتثبيتها محلياً."
+        else "No packs installed locally yet. Tap + to install packs."
+
+    fun gifsServiceUnconfiguredTitle(locale: String?): String =
+        if (isArabic(locale)) "البحث المباشر عن GIF غير مفعل في هذا البناء"
+        else "Online GIF Search Unavailable"
+
+    fun gifsServiceUnconfiguredDesc(locale: String?): String =
+        if (isArabic(locale)) "يتطلب البحث المباشر نشر خدمة KLIPY الآمنة. يمكنك استخدام صور GIF المتحركة المدمجة أدناه بدون اتصال."
+        else "Live KLIPY GIF search isn't active in this build. You can still browse and send our bundled animated GIFs below offline."
+
+    fun gifsOfflineTitle(locale: String?): String =
+        if (isArabic(locale)) "لا يوجد اتصال بالإنترنت"
+        else "You're Offline"
+
+    fun gifsOfflineDesc(locale: String?): String =
+        if (isArabic(locale)) "تحقق من الشبكة ثم أعد المحاولة، أو أرسل من صور GIF المدمجة أدناه."
+        else "Check your internet connection and retry, or send from bundled animated GIFs below."
+
+    fun gifsRateLimitedTitle(locale: String?): String =
+        if (isArabic(locale)) "تم بلوغ حد الطلبات المؤقت"
+        else "Too Many GIF Requests"
+
+    fun gifsRateLimitedDesc(locale: String?): String =
+        if (isArabic(locale)) "وصلت خدمة GIF للحد المؤقت. انتظر لحظة ثم اضغط إعادة المحاولة."
+        else "The GIF service is temporarily rate-limited. Wait a moment and tap Retry."
+
+    fun gifsServerErrorTitle(locale: String?): String =
+        if (isArabic(locale)) "خدمة GIF غير متاحة مؤقتاً"
+        else "GIF Service Error"
+
+    fun gifsOfflinePackHeading(locale: String?): String =
+        if (isArabic(locale)) "صور GIF متحركة مدمجة (تعمل بدون إنترنت)"
+        else "Bundled Animated GIFs (Offline)"
+
+    fun gifLoadMoreLabel(locale: String?): String =
+        if (isArabic(locale)) "تحميل المزيد من GIF" else "Load more GIFs"
+
+    fun gifAttributionLabel(locale: String?): String =
+        if (isArabic(locale)) "صور GIF عبر KLIPY" else "GIFs by KLIPY"
 
     fun searchGifsPlaceholder(locale: String?): String =
         if (isArabic(locale)) "بحث في صور GIF..." else "Search GIFs..."

@@ -28,6 +28,20 @@ internal class MediaCacheManager(context: Context) {
         }
     }
 
+    fun copyFileToCache(sourceFile: File, targetFileName: String): File? {
+        getCachedFile(targetFileName)?.let { return it }
+        enforceLruCap()
+        val target = File(cacheDir, targetFileName)
+        return runCatching {
+            sourceFile.inputStream().use { input ->
+                FileOutputStream(target).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (target.length() > 0L) target else null
+        }.getOrNull()
+    }
+
     fun ensureAssetCached(assetManager: android.content.res.AssetManager, assetPath: String, targetFileName: String): File? {
         getCachedFile(targetFileName)?.let { return it }
         enforceLruCap()
@@ -37,6 +51,29 @@ internal class MediaCacheManager(context: Context) {
                 FileOutputStream(target).use { output ->
                     input.copyTo(output)
                 }
+            }
+            if (target.length() > 0L) target else null
+        }.getOrNull()
+    }
+
+    fun ensureWebpFromPngCached(pngFile: File, targetWebpFileName: String): File? {
+        getCachedFile(targetWebpFileName)?.let { return it }
+        enforceLruCap()
+        val target = File(cacheDir, targetWebpFileName)
+        return runCatching {
+            val bmp = android.graphics.BitmapFactory.decodeFile(pngFile.absolutePath) ?: return@runCatching null
+            try {
+                val fmt = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    android.graphics.Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.graphics.Bitmap.CompressFormat.WEBP
+                }
+                FileOutputStream(target).use { out ->
+                    bmp.compress(fmt, 95, out)
+                }
+            } finally {
+                bmp.recycle()
             }
             if (target.length() > 0L) target else null
         }.getOrNull()

@@ -92,6 +92,12 @@ class MainActivity : Activity() {
         updateTranslatorButtonVisibility()
     }
 
+    private val imeSettingsObserver = object : android.database.ContentObserver(mainHandler) {
+        override fun onChange(selfChange: Boolean) {
+            dispatchImeOnboardingState()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         activityDestroyed = false
@@ -102,6 +108,18 @@ class MainActivity : Activity() {
             val prefs = CapturePreferences.preferences(this)
             CapturePreferences.cleanupExpired(store, prefs)
             CaptureExpiryReceiver.schedule(this)
+        }
+        runCatching {
+            contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Secure.ENABLED_INPUT_METHODS),
+                false,
+                imeSettingsObserver
+            )
+            contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Secure.DEFAULT_INPUT_METHOD),
+                false,
+                imeSettingsObserver
+            )
         }
 
         webView = WebView(this).apply {
@@ -864,6 +882,7 @@ class MainActivity : Activity() {
         activeTapAnimator = null
         viewportContainer?.removeOnLayoutChangeListener(translatorViewportLayoutListener)
         ClipStore.removeChangeListener(storeChangeListener)
+        runCatching { contentResolver.unregisterContentObserver(imeSettingsObserver) }
         if (::webView.isInitialized) {
             webView.destroy()
         }

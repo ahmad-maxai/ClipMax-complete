@@ -4,6 +4,7 @@ export type OnboardingStep =
   | "INTRODUCTION"
   | "ENABLE_KEYBOARD"
   | "SELECT_KEYBOARD"
+  | "CONFIGURE_EXPIRY"
   | "COMPLETION";
 
 export interface OnboardingState {
@@ -33,6 +34,7 @@ export function normalizeOnboardingStep(raw?: string | null): OnboardingStep {
     upper === "INTRODUCTION" ||
     upper === "ENABLE_KEYBOARD" ||
     upper === "SELECT_KEYBOARD" ||
+    upper === "CONFIGURE_EXPIRY" ||
     upper === "COMPLETION"
   ) {
     return upper;

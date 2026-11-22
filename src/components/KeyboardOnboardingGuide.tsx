@@ -11,6 +11,7 @@ interface KeyboardOnboardingGuideProps {
   sectionRef: React.RefObject<HTMLElement | null>;
   enableBtnRef: React.RefObject<HTMLElement | null>;
   selectBtnRef: React.RefObject<HTMLElement | null>;
+  expirySectionRef: React.RefObject<HTMLElement | null>;
   reducedMotion: boolean;
   onSkip: () => void;
   onComplete: () => void;
@@ -29,6 +30,7 @@ export function KeyboardOnboardingGuide({
   sectionRef,
   enableBtnRef,
   selectBtnRef,
+  expirySectionRef,
   reducedMotion,
   onSkip,
   onComplete,
@@ -46,16 +48,23 @@ export function KeyboardOnboardingGuide({
   const [scrolledAway, setScrolledAway] = useState(false);
   const [returnRequestCount, setReturnRequestCount] = useState(0);
   const [justEnabledAck, setJustEnabledAck] = useState(false);
+  const [justSelectedAck, setJustSelectedAck] = useState(false);
 
   const prevImeEnabledRef = useRef<boolean>(state.imeEnabled);
+  const prevImeSelectedRef = useRef<boolean>(state.imeSelected);
   const autoScrollingRef = useRef<boolean>(false);
   const userCanceledScrollRef = useRef<boolean>(false);
 
   const isCompletion = state.step === "COMPLETION";
+  const isConfigureExpiry = state.step === "CONFIGURE_EXPIRY";
   const activeBtnRef =
-    state.step === "SELECT_KEYBOARD" ? selectBtnRef : enableBtnRef;
+    state.step === "SELECT_KEYBOARD"
+      ? selectBtnRef
+      : isConfigureExpiry
+      ? expirySectionRef
+      : enableBtnRef;
 
-  // Detect Step A -> Step B confirmation transition to show subtle acknowledgement
+  // Detect Stage 1 -> Stage 2 and Stage 2 -> Stage 3 transitions for subtle acknowledgements
   useEffect(() => {
     const prevEnabled = prevImeEnabledRef.current;
     prevImeEnabledRef.current = state.imeEnabled;
@@ -64,7 +73,15 @@ export function KeyboardOnboardingGuide({
     } else if (state.step !== "SELECT_KEYBOARD") {
       setJustEnabledAck(false);
     }
-  }, [state.imeEnabled, state.step]);
+
+    const prevSelected = prevImeSelectedRef.current;
+    prevImeSelectedRef.current = state.imeSelected;
+    if (!prevSelected && state.imeSelected && state.step === "CONFIGURE_EXPIRY") {
+      setJustSelectedAck(true);
+    } else if (state.step !== "CONFIGURE_EXPIRY") {
+      setJustSelectedAck(false);
+    }
+  }, [state.imeEnabled, state.imeSelected, state.step]);
 
   const measureTarget = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -159,7 +176,9 @@ export function KeyboardOnboardingGuide({
 
     rafId = requestAnimationFrame(() => {
       if (userCanceledScrollRef.current) return;
-      const anchorEl = sectionRef.current ?? activeBtnRef.current;
+      const anchorEl = isConfigureExpiry
+        ? expirySectionRef.current ?? activeBtnRef.current
+        : sectionRef.current ?? activeBtnRef.current;
       const btnEl = activeBtnRef.current;
       if (!anchorEl || !btnEl) {
         measureTarget();
@@ -170,15 +189,15 @@ export function KeyboardOnboardingGuide({
       const anchorRect = anchorEl.getBoundingClientRect();
       const btnRect = btnEl.getBoundingClientRect();
 
-      // Leave comfortable clearance above section for TopBar + guidance card
-      const desiredTop =
-        containerRect.top +
-        Math.max(196, Math.min(270, containerRect.height * 0.42));
+      // Leave comfortable clearance above target for TopBar + guidance card
+      const desiredTop = isConfigureExpiry
+        ? containerRect.top + Math.max(248, Math.min(340, containerRect.height * 0.46))
+        : containerRect.top + Math.max(196, Math.min(270, containerRect.height * 0.42));
       let delta = anchorRect.top - desiredTop;
 
-      // Also ensure active target button itself sits cleanly inside visible bottom padding
+      // Also ensure active target sits cleanly inside visible bottom padding
       const projectedBtnBottom = btnRect.bottom - delta;
-      const maxBtnBottom = containerRect.bottom - 44;
+      const maxBtnBottom = containerRect.bottom - (isConfigureExpiry ? 18 : 44);
       if (projectedBtnBottom > maxBtnBottom) {
         delta += projectedBtnBottom - maxBtnBottom;
       }
@@ -219,9 +238,11 @@ export function KeyboardOnboardingGuide({
     state.step,
     returnRequestCount,
     isCompletion,
+    isConfigureExpiry,
     reducedMotion,
     scrollContainerRef,
     sectionRef,
+    expirySectionRef,
     activeBtnRef,
     measureTarget,
   ]);
@@ -272,7 +293,7 @@ export function KeyboardOnboardingGuide({
         role="dialog"
         aria-modal="true"
         aria-label={t.setupCompleteAria}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-[#B3000000] p-5"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-5"
       >
         <motion.div
           initial={reducedMotion ? false : { opacity: 0, scale: 0.94, y: 12 }}
@@ -317,6 +338,8 @@ export function KeyboardOnboardingGuide({
             <p className="text-xs font-bold text-foreground truncate">
               {state.step === "SELECT_KEYBOARD"
                 ? t.step2ReturnTitle
+                : isConfigureExpiry
+                ? t.step3ReturnTitle
                 : t.step1ReturnTitle}
             </p>
             <p className="text-[11px] text-muted-foreground truncate">
@@ -354,18 +377,33 @@ export function KeyboardOnboardingGuide({
     : 0;
   const cutH = targetRect ? targetRect.height + pad * 2 : 0;
 
-  // Decide whether guidance card sits above the keyboard section or below the cutout
-  const sectionTop =
-    sectionRef.current?.getBoundingClientRect().top ??
-    (targetRect ? targetRect.top - 96 : viewport.height * 0.45);
-  const placeCardAbove = sectionTop > 230;
+  // Decide whether guidance card sits above the target section or below the cutout
+  const sectionTop = isConfigureExpiry
+    ? cutY
+    : sectionRef.current?.getBoundingClientRect().top ??
+      (targetRect ? targetRect.top - 96 : viewport.height * 0.45);
+  const placeCardAbove = isConfigureExpiry
+    ? cutY > viewport.height - (cutY + cutH) && cutY > 210
+    : sectionTop > 230;
 
   const stepLabel =
-    state.step === "SELECT_KEYBOARD" ? t.step2Badge : t.step1Badge;
+    state.step === "SELECT_KEYBOARD"
+      ? t.step2Badge
+      : isConfigureExpiry
+      ? t.step3Badge
+      : t.step1Badge;
   const heading =
-    state.step === "SELECT_KEYBOARD" ? t.step2Heading : t.step1Heading;
+    state.step === "SELECT_KEYBOARD"
+      ? t.step2Heading
+      : isConfigureExpiry
+      ? t.step3Heading
+      : t.step1Heading;
   const bodyCopy =
-    state.step === "SELECT_KEYBOARD" ? t.step2Body : t.step1Body;
+    state.step === "SELECT_KEYBOARD"
+      ? t.step2Body
+      : isConfigureExpiry
+      ? t.step3Body
+      : t.step1Body;
 
   const retryNotice =
     state.step === "ENABLE_KEYBOARD" && state.attemptedEnable && !state.imeEnabled
@@ -423,7 +461,7 @@ export function KeyboardOnboardingGuide({
             y="0"
             width={viewport.width}
             height={viewport.height}
-            fill="#B3000000"
+            fill="rgba(0, 0, 0, 0.70)"
             mask={`url(#${maskId})`}
           />
         </svg>
@@ -455,7 +493,13 @@ export function KeyboardOnboardingGuide({
                   ),
                 }
               : {
-                  top: Math.max(12, Math.min(viewport.height - 185, cutY + cutH + 46)),
+                  top: Math.max(
+                    12,
+                    Math.min(
+                      viewport.height - (isConfigureExpiry ? 240 : 185),
+                      cutY + cutH + (isConfigureExpiry ? 14 : 46)
+                    )
+                  ),
                 }
           }
           className="pointer-events-auto fixed inset-x-4 mx-auto max-w-md rounded-2xl border border-border bg-surface p-4 shadow-2xl text-start"
@@ -480,6 +524,13 @@ export function KeyboardOnboardingGuide({
             </div>
           )}
 
+          {justSelectedAck && isConfigureExpiry && (
+            <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-mint-soft/75 px-3 py-2 text-xs font-semibold text-mint-foreground">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-mint" />
+              <span>{t.justSelectedAck}</span>
+            </div>
+          )}
+
           <h3 className="mt-2 text-sm font-bold leading-snug text-foreground">
             {heading}
           </h3>
@@ -493,11 +544,25 @@ export function KeyboardOnboardingGuide({
               <span>{retryNotice}</span>
             </div>
           )}
+
+          {isConfigureExpiry && (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Btn
+                size="sm"
+                variant="mint"
+                className="h-10 w-full rounded-xl text-xs font-bold shadow-sm"
+                onClick={onComplete}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>{t.finishSetupBtn}</span>
+              </Btn>
+            </div>
+          )}
         </div>
       )}
 
       {/* White hand pointer angled ~45° moving gently toward the highlighted button */}
-      {showSpotlight && (
+      {showSpotlight && !isConfigureExpiry && (
         <div
           aria-hidden
           style={{

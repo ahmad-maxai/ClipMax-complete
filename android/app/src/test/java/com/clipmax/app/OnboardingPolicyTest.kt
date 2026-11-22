@@ -73,12 +73,12 @@ class OnboardingPolicyTest {
         assertFalse(alreadyEnabled.completed)
 
         val alreadySelected = OnboardingPolicy.advanceFromIntroduction(imeEnabled = true, imeSelected = true)
-        assertEquals(OnboardingPolicy.Step.COMPLETION, alreadySelected.step)
+        assertEquals(OnboardingPolicy.Step.CONFIGURE_EXPIRY, alreadySelected.step)
         assertFalse(alreadySelected.completed)
     }
 
     @Test
-    fun testEnableAndSelectVerificationAndRetryPreservation() {
+    fun testThreeStageEnableSelectAndExpiryVerification() {
         // User returned from Settings without switching ClipMax on
         val notEnabledYet = OnboardingPolicy.reconcileState(
             completed = false,
@@ -92,7 +92,7 @@ class OnboardingPolicyTest {
         assertTrue(notEnabledYet.attemptedEnable)
         assertFalse(notEnabledYet.completed)
 
-        // User enabled ClipMax in Settings -> advances to SELECT_KEYBOARD
+        // Stage 1 -> Stage 2: User enabled ClipMax in Settings (must NOT skip Stage 2)
         val nowEnabled = OnboardingPolicy.reconcileState(
             completed = false,
             persistedStep = OnboardingPolicy.Step.ENABLE_KEYBOARD,
@@ -103,6 +103,7 @@ class OnboardingPolicyTest {
         )
         assertEquals(OnboardingPolicy.Step.SELECT_KEYBOARD, nowEnabled.step)
         assertFalse(nowEnabled.attemptedEnable)
+        assertFalse(nowEnabled.completed)
 
         // User dismissed IME picker without choosing ClipMax
         val notSelectedYet = OnboardingPolicy.reconcileState(
@@ -115,8 +116,9 @@ class OnboardingPolicyTest {
         )
         assertEquals(OnboardingPolicy.Step.SELECT_KEYBOARD, notSelectedYet.step)
         assertTrue(notSelectedYet.attemptedSelect)
+        assertFalse(notSelectedYet.completed)
 
-        // User selected ClipMax as active IME -> transitions to COMPLETION (still waiting for "Start using ClipMax")
+        // Stage 2 -> Stage 3: User selected ClipMax as active IME -> advances to CONFIGURE_EXPIRY
         val selected = OnboardingPolicy.reconcileState(
             completed = false,
             persistedStep = OnboardingPolicy.Step.SELECT_KEYBOARD,
@@ -125,14 +127,26 @@ class OnboardingPolicyTest {
             attemptedEnable = false,
             attemptedSelect = true
         )
-        assertEquals(OnboardingPolicy.Step.COMPLETION, selected.step)
+        assertEquals(OnboardingPolicy.Step.CONFIGURE_EXPIRY, selected.step)
         assertFalse(selected.completed)
         assertFalse(selected.attemptedSelect)
+
+        // Stage 3 persists across activity recreation, keyboard switches, and process death until Finish Setup/Skip
+        val stickyOnRestart = OnboardingPolicy.reconcileState(
+            completed = false,
+            persistedStep = OnboardingPolicy.Step.CONFIGURE_EXPIRY,
+            imeEnabled = true,
+            imeSelected = false,
+            attemptedEnable = false,
+            attemptedSelect = false
+        )
+        assertEquals(OnboardingPolicy.Step.CONFIGURE_EXPIRY, stickyOnRestart.step)
+        assertFalse(stickyOnRestart.completed)
     }
 
     @Test
     fun testDisabledRegressionAndCompletedIdempotency() {
-        // If user disables ClipMax before completing setup, revert cleanly to ENABLE_KEYBOARD
+        // If user disables ClipMax during Stage 2 before completing setup, revert cleanly to ENABLE_KEYBOARD
         val reverted = OnboardingPolicy.reconcileState(
             completed = false,
             persistedStep = OnboardingPolicy.Step.SELECT_KEYBOARD,
@@ -143,7 +157,7 @@ class OnboardingPolicyTest {
         )
         assertEquals(OnboardingPolicy.Step.ENABLE_KEYBOARD, reverted.step)
 
-        // Once completed (via Start or Skip), never re-enter onboarding even if IME is toggled off later
+        // Once completed (via Finish Setup or Skip), never re-enter onboarding even if IME is toggled off later
         val finished = OnboardingPolicy.reconcileState(
             completed = true,
             persistedStep = OnboardingPolicy.Step.COMPLETION,
@@ -162,6 +176,7 @@ class OnboardingPolicyTest {
         assertEquals(OnboardingPolicy.Step.INTRODUCTION, OnboardingPolicy.Step.fromWire("unknown"))
         assertEquals(OnboardingPolicy.Step.ENABLE_KEYBOARD, OnboardingPolicy.Step.fromWire("enable_keyboard"))
         assertEquals(OnboardingPolicy.Step.SELECT_KEYBOARD, OnboardingPolicy.Step.fromWire("SELECT_KEYBOARD"))
+        assertEquals(OnboardingPolicy.Step.CONFIGURE_EXPIRY, OnboardingPolicy.Step.fromWire("configure_expiry"))
         assertEquals(OnboardingPolicy.Step.COMPLETION, OnboardingPolicy.Step.fromWire("COMPLETION"))
     }
 }

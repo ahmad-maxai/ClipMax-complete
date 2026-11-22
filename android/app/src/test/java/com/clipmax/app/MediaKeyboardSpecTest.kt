@@ -1,5 +1,6 @@
 package com.clipmax.app
 
+import android.text.InputType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -7,8 +8,19 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.security.MessageDigest
 
 class MediaKeyboardSpecTest {
+
+    private fun findAssetsRoot(): File {
+        val root = listOf(
+            File("src/main/assets"),
+            File("app/src/main/assets"),
+            File("android/app/src/main/assets")
+        ).firstOrNull { it.isDirectory }
+        assertNotNull("Expected Android assets directory in workspace", root)
+        return root!!
+    }
 
     @Test
     fun testAllFourMediaModesExistAndHaveGridMetrics() {
@@ -46,40 +58,97 @@ class MediaKeyboardSpecTest {
     }
 
     @Test
-    fun testStickerCatalogHasThreePacks24ItemsAndAllAssetsExistOnDisk() {
-        assertEquals(3, StickerCatalog.PACKS.size)
-        assertEquals(listOf("reactions", "daily", "notes"), StickerCatalog.PACKS.map { it.packId })
+    fun testStickerCatalogHasAtLeast8Packs300UniqueStickersAndUniquePngFiles() {
+        assertTrue("Expected at least 8 packs, found ${StickerCatalog.PACKS.size}", StickerCatalog.PACKS.size >= 8)
+        assertEquals(StickerCatalog.PACKS.size, StickerCatalog.PACKS.map { it.packId }.toSet().size)
 
         val allItems = StickerCatalog.PACKS.flatMap { it.items }
-        assertEquals(24, allItems.size)
-        assertEquals(24, allItems.map { it.id }.toSet().size)
+        assertTrue("Expected at least 300 stickers, found ${allItems.size}", allItems.size >= 300)
+        assertEquals(allItems.size, StickerCatalog.totalStickerCount())
+        assertEquals("Sticker IDs must be unique", allItems.size, allItems.map { it.id }.toSet().size)
+        assertEquals("Sticker asset paths must be unique", allItems.size, allItems.map { it.assetPath }.toSet().size)
 
-        val assetsRoot = listOf(
-            File("src/main/assets"),
-            File("app/src/main/assets"),
-            File("android/app/src/main/assets")
-        ).firstOrNull { it.isDirectory }
-        assertNotNull("Expected Android assets directory in workspace", assetsRoot)
+        val assetsRoot = findAssetsRoot()
+        val seenHashes = HashSet<String>(allItems.size)
 
         for (pack in StickerCatalog.PACKS) {
-            assertEquals(8, pack.items.size)
+            assertTrue(pack.items.size >= 20)
             assertTrue(pack.titleEn.isNotBlank())
             assertTrue(pack.titleAr.isNotBlank())
+            assertTrue(pack.descEn.isNotBlank())
+            assertTrue(pack.descAr.isNotBlank())
+            assertTrue(pack.estimatedSizeBytes > 0L)
             assertTrue(File(assetsRoot, pack.iconAssetPath).isFile)
+
             for (item in pack.items) {
                 val assetFile = File(assetsRoot, item.assetPath)
                 assertTrue("Missing bundled sticker PNG: ${assetFile.path}", assetFile.isFile)
-                assertTrue("Sticker PNG must not be empty: ${assetFile.path}", assetFile.length() > 0L)
+                val bytes = assetFile.readBytes()
+                assertTrue("Sticker PNG must not be empty: ${assetFile.path}", bytes.isNotEmpty())
+
+                val sha256 = MessageDigest.getInstance("SHA-256")
+                    .digest(bytes)
+                    .joinToString("") { "%02x".format(it) }
+                assertTrue("Duplicate sticker artwork content hash detected at ${item.assetPath}", seenHashes.add(sha256))
             }
         }
 
-        // Empty search returns all 24 stickers; targeted EN/AR queries filter accurately
-        assertEquals(24, StickerCatalog.search("").size)
-        val coffeeMatches = StickerCatalog.search("coffee")
-        assertTrue(coffeeMatches.any { it.id == "react_coffee" })
-        val arabicMatches = StickerCatalog.search("شكراً")
-        assertTrue(arabicMatches.any { it.id == "daily_thanks" })
+        // Empty search returns full catalog; EN/AR queries and pack scoping filter accurately
+        assertEquals(allItems.size, StickerCatalog.search("").size)
+        assertTrue(StickerCatalog.search("coffee").any { it.id == "react_coffee" })
+        assertTrue(StickerCatalog.search("شكراً").any { it.id == "daily_thanks" })
+        assertTrue(StickerCatalog.search("", allowedPackIds = setOf("reactions")).all { it.packId == "reactions" })
         assertTrue(StickerCatalog.search("nonexistent_sticker_xyz").isEmpty())
+    }
+
+    @Test
+    fun testOfflineAnimatedGifCatalogAssetsExistAndAnimate() {
+        assertTrue(OfflineGifCatalog.ITEMS.size >= 10)
+        assertEquals(OfflineGifCatalog.ITEMS.size, OfflineGifCatalog.ITEMS.map { it.id }.toSet().size)
+
+        val assetsRoot = findAssetsRoot()
+        for (item in OfflineGifCatalog.ITEMS) {
+            assertTrue(item.isBundledAsset)
+            val gifFile = File(assetsRoot, item.assetPath!!)
+            assertTrue("Missing bundled offline GIF: ${gifFile.path}", gifFile.isFile)
+            val bytes = gifFile.readBytes()
+            assertTrue("Offline GIF must not be empty", bytes.size > 64)
+            val header = String(bytes, 0, 6, Charsets.US_ASCII)
+            assertEquals("Offline GIF must be valid GIF89a: ${gifFile.path}", "GIF89a", header)
+        }
+
+        assertEquals(OfflineGifCatalog.ITEMS.size, OfflineGifCatalog.search("").size)
+        assertTrue(OfflineGifCatalog.search("coffee").any { it.id == "offline_gif_coffee" })
+        assertTrue(OfflineGifCatalog.search("احتفال").any { it.id == "offline_gif_party" })
+        assertTrue(OfflineGifCatalog.search("zzzz_no_gif_999").isEmpty())
+    }
+
+    @Test
+    fun testStickerPackStorePolicyAndFavorites() {
+        val encoded = MediaKeyboardSpec.StickerPackStorePolicy.encodeInstalledIds(
+            listOf("reactions", "daily", "reactions", "  party_celebrate  ")
+        )
+        assertEquals("reactions,daily,party_celebrate", encoded)
+
+        val decoded = MediaKeyboardSpec.StickerPackStorePolicy.decodeInstalledIds("reactions, unknown_pack, daily, notes")
+        assertEquals(listOf("reactions", "daily", "notes"), decoded)
+
+        assertEquals("0 KB", MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(0))
+        assertEquals("500 KB", MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(500 * 1024L))
+        assertEquals("1.5 MB", MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize((1.5 * 1024 * 1024).toLong()))
+
+        val favs = MediaKeyboardSpec.StickerFavoritesHistory(maxEntries = 3)
+        assertTrue(favs.toggle("react_love"))
+        assertTrue(favs.isFavorite("react_love"))
+        assertTrue(favs.toggle("daily_hi"))
+        assertFalse(favs.toggle("react_love"))
+        assertFalse(favs.isFavorite("react_love"))
+        assertEquals(listOf("daily_hi"), favs.items().map { it.id })
+
+        val restoredFavs = MediaKeyboardSpec.StickerFavoritesHistory(
+            MediaKeyboardSpec.StickerFavoritesHistory.decode(favs.encode())
+        )
+        assertEquals(listOf("daily_hi"), restoredFavs.items().map { it.id })
     }
 
     @Test
@@ -121,68 +190,83 @@ class MediaKeyboardSpecTest {
     }
 
     @Test
-    fun testTenorV2JsonParsingAndUrlValidationSecurity() {
-        assertTrue(TenorV2GifProvider.FEATURED_CATEGORIES.any { it.first == "featured" })
-        assertTrue(TenorV2GifProvider.FEATURED_CATEGORIES.any { it.first == "recent" })
+    fun testKlipyJsonParsingAndUrlValidationSecurity() {
+        assertTrue(KlipyGifProvider.FEATURED_CATEGORIES.any { it.first == "featured" })
+        assertTrue(KlipyGifProvider.FEATURED_CATEGORIES.any { it.first == "offline" })
+        assertTrue(KlipyGifProvider.FEATURED_CATEGORIES.any { it.first == "recent" })
 
-        assertNotNull(TenorV2GifProvider.validateUrl("https://tenor.googleapis.com/v2/featured?key=abc"))
-        assertNotNull(TenorV2GifProvider.validateUrl("https://media.tenor.com/sample/funny.gif"))
-        assertNull(TenorV2GifProvider.validateUrl("http://media.tenor.com/sample/funny.gif"))
-        assertNull(TenorV2GifProvider.validateUrl("https://evil.example.com/payload.gif"))
+        assertNotNull(KlipyGifProvider.validateUrl("https://api.klipy.com/api/v1/key/gifs/trending"))
+        assertNotNull(KlipyGifProvider.validateUrl("https://media.klipy.com/sample/funny.gif"))
+        assertNotNull(KlipyGifProvider.validateUrl("https://proxy.clipmax.example/api/gifs/trending", extraAllowedHost = "proxy.clipmax.example"))
+        assertNull(KlipyGifProvider.validateUrl("http://media.klipy.com/sample/funny.gif"))
+        assertNull(KlipyGifProvider.validateUrl("https://evil.example.com/payload.gif"))
 
-        val sampleJson = """
+        val proxyJson = """
             {
-              "results": [
+              "items": [
                 {
-                  "id": "12345",
-                  "title": "",
-                  "content_description": "Happy Cat Dance",
-                  "media_formats": {
-                    "tinygif": {
-                      "url": "https://media.tenor.com/abc/cat-tiny.gif",
-                      "dims": [220, 165]
-                    },
-                    "gif": {
-                      "url": "https://media.tenor.com/abc/cat-full.gif",
-                      "dims": [480, 360]
-                    }
-                  }
+                  "id": "k101",
+                  "title": "Happy Dance",
+                  "previewUrl": "https://media.klipy.com/abc/dance-sm.gif",
+                  "gifUrl": "https://media.klipy.com/abc/dance-md.gif",
+                  "width": 240,
+                  "height": 180
                 },
                 {
                   "id": "bad_host",
                   "title": "Blocked",
-                  "media_formats": {
-                    "tinygif": { "url": "https://untrusted.example.org/x.gif" },
-                    "gif": { "url": "https://untrusted.example.org/x-full.gif" }
-                  }
+                  "previewUrl": "https://untrusted.example.org/x.gif",
+                  "gifUrl": "https://untrusted.example.org/x-full.gif"
                 }
-              ]
+              ],
+              "page": 2,
+              "hasNext": true,
+              "attribution": "KLIPY"
             }
         """.trimIndent()
 
-        val parsed = TenorV2GifProvider.parseTenorJsonResponse(sampleJson)
-        assertEquals(1, parsed.size)
-        val item = parsed[0]
-        assertEquals("12345", item.id)
-        assertEquals("Happy Cat Dance", item.title)
-        assertEquals("https://media.tenor.com/abc/cat-tiny.gif", item.previewUrl)
-        assertEquals("https://media.tenor.com/abc/cat-full.gif", item.gifUrl)
-        assertEquals(220, item.width)
-        assertEquals(165, item.height)
+        val parsedProxy = KlipyGifProvider.parseResponsePayload(proxyJson, fallbackPage = 1)
+        assertEquals(1, parsedProxy.items.size)
+        assertEquals(2, parsedProxy.page)
+        assertTrue(parsedProxy.hasNext)
+        assertEquals("KLIPY", parsedProxy.attribution)
+        val item = parsedProxy.items[0]
+        assertEquals("k101", item.id)
+        assertEquals("Happy Dance", item.title)
+        assertEquals("https://media.klipy.com/abc/dance-sm.gif", item.previewUrl)
+        assertEquals("https://media.klipy.com/abc/dance-md.gif", item.gifUrl)
+        assertEquals(240, item.width)
+        assertEquals(180, item.height)
+
+        val directKlipyJson = """
+            {
+              "result": true,
+              "data": {
+                "current_page": 1,
+                "has_next": true,
+                "data": [
+                  {
+                    "id": 987,
+                    "title": "Cat Clap",
+                    "file": {
+                      "sm": { "gif": { "url": "https://static.klipy.com/cat/sm.gif", "width": 220, "height": 165 } },
+                      "md": { "gif": { "url": "https://static.klipy.com/cat/md.gif", "width": 480, "height": 360 } }
+                    }
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+        val parsedDirect = KlipyGifProvider.parseResponsePayload(directKlipyJson)
+        assertEquals(1, parsedDirect.items.size)
+        assertTrue(parsedDirect.hasNext)
+        assertEquals("987", parsedDirect.items[0].id)
+        assertEquals("https://static.klipy.com/cat/sm.gif", parsedDirect.items[0].previewUrl)
+        assertEquals("https://static.klipy.com/cat/md.gif", parsedDirect.items[0].gifUrl)
     }
 
     @Test
-    fun testTenorApiKeyResolutionAndMasking() {
-        assertEquals("", MediaKeyboardSpec.TenorApiKeyConfig.resolveEffectiveKey(null, ""))
-        assertFalse(MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(""))
-        assertEquals("res_key_1234", MediaKeyboardSpec.TenorApiKeyConfig.resolveEffectiveKey("   ", " res_key_1234 "))
-        assertEquals("pref_key_9999", MediaKeyboardSpec.TenorApiKeyConfig.resolveEffectiveKey(" pref_key_9999 ", "res_key_1234"))
-        assertTrue(MediaKeyboardSpec.TenorApiKeyConfig.isConfigured("AIzaSyDummyTestValue"))
-        assertEquals("AIza••••alue", MediaKeyboardSpec.TenorApiKeyConfig.maskKey("AIzaSyDummyTestValue"))
-    }
-
-    @Test
-    fun testRichContentMimeCompatibilityAndCacheNaming() {
+    fun testRichContentEligibilityWebpFallbackAndCacheNaming() {
         assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(null, "image/png"))
         assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(emptyArray(), "image/gif"))
         assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("text/plain"), "image/png"))
@@ -190,9 +274,65 @@ class MediaKeyboardSpecTest {
         assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("image/*"), "image/gif"))
         assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("*/*"), "image/png"))
 
+        // Sticker WebP fallback for hosts that accept WebP over PNG
+        assertEquals("image/png", MediaKeyboardSpec.MediaRichContentPolicy.resolveBestStickerMime(arrayOf("image/png", "image/webp")))
+        assertEquals("image/webp", MediaKeyboardSpec.MediaRichContentPolicy.resolveBestStickerMime(arrayOf("image/webp")))
+        assertNull(MediaKeyboardSpec.MediaRichContentPolicy.resolveBestStickerMime(arrayOf("text/plain")))
+
+        // Field eligibility checks
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_TEXT, isPasswordTarget = true))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_NUMBER, isPasswordTarget = false))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_PHONE, isPasswordTarget = false))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD, isPasswordTarget = false))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI, isPasswordTarget = false))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS, isPasswordTarget = false))
+        assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.isEligibleRichMediaEditor(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE, isPasswordTarget = false))
+
+        assertEquals(
+            MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.NO_ACTIVE_FIELD,
+            MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+                hasActiveConnection = false,
+                inputType = InputType.TYPE_CLASS_TEXT,
+                isPasswordTarget = false,
+                acceptedMimeTypes = arrayOf("image/png"),
+                isSticker = true
+            )
+        )
+        assertEquals(
+            MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.UNSUPPORTED_FIELD,
+            MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+                hasActiveConnection = true,
+                inputType = InputType.TYPE_CLASS_NUMBER,
+                isPasswordTarget = false,
+                acceptedMimeTypes = arrayOf("image/png"),
+                isSticker = true
+            )
+        )
+        assertEquals(
+            MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.UNSUPPORTED_MIME,
+            MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+                hasActiveConnection = true,
+                inputType = InputType.TYPE_CLASS_TEXT,
+                isPasswordTarget = false,
+                acceptedMimeTypes = null,
+                isSticker = false
+            )
+        )
+        assertEquals(
+            MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE,
+            MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
+                hasActiveConnection = true,
+                inputType = InputType.TYPE_CLASS_TEXT,
+                isPasswordTarget = false,
+                acceptedMimeTypes = arrayOf("image/webp"),
+                isSticker = true
+            )
+        )
+
         val sticker = StickerCatalog.PACKS.first().items.first()
-        assertEquals("sticker_${sticker.id}.png", MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(sticker))
-        val gif = GifProvider.GifItem("id/unsafe:1", "Demo", "https://media.tenor.com/a.gif", "https://media.tenor.com/b.gif", 200, 150)
+        assertEquals("sticker_${sticker.id}.png", MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(sticker, "image/png"))
+        assertEquals("sticker_${sticker.id}.webp", MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(sticker, "image/webp"))
+        val gif = GifProvider.GifItem("id/unsafe:1", "Demo", "https://media.klipy.com/a.gif", "https://media.klipy.com/b.gif", 200, 150)
         assertEquals("gif_prev_id_unsafe_1.gif", MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(gif, isPreview = true))
         assertEquals("gif_full_id_unsafe_1.gif", MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(gif, isPreview = false))
     }
@@ -202,14 +342,14 @@ class MediaKeyboardSpecTest {
         val stickerHist = MediaKeyboardSpec.RecentStickerHistory(maxEntries = 3)
         stickerHist.record("react_great")
         stickerHist.record("daily_hi")
-        stickerHist.record("notes_done")
+        stickerHist.record("party_celebrate_party_popper")
         stickerHist.record("react_love")
         stickerHist.record("daily_hi")
-        assertEquals(listOf("daily_hi", "react_love", "notes_done"), stickerHist.items().map { it.id })
+        assertEquals(listOf("daily_hi", "react_love", "party_celebrate_party_popper"), stickerHist.items().map { it.id })
         val restoredStickers = MediaKeyboardSpec.RecentStickerHistory(
             MediaKeyboardSpec.RecentStickerHistory.decode(stickerHist.encode())
         )
-        assertEquals(listOf("daily_hi", "react_love", "notes_done"), restoredStickers.items().map { it.id })
+        assertEquals(listOf("daily_hi", "react_love", "party_celebrate_party_popper"), restoredStickers.items().map { it.id })
 
         val kaomojiHist = MediaKeyboardSpec.RecentKaomojiHistory(maxEntries = 3)
         kaomojiHist.record(":-)")
@@ -222,13 +362,13 @@ class MediaKeyboardSpecTest {
         )
         assertEquals(kaomojiHist.items(), restoredKaomoji.items())
 
-        val gif1 = GifProvider.GifItem("g1", "One", "https://media.tenor.com/1p.gif", "https://media.tenor.com/1f.gif", 200, 150)
-        val gif2 = GifProvider.GifItem("g2", "Two", "https://media.tenor.com/2p.gif", "https://media.tenor.com/2f.gif", 320, 240)
+        val gif1 = GifProvider.GifItem("g1", "One", "https://media.klipy.com/1p.gif", "https://media.klipy.com/1f.gif", 200, 150)
+        val gif2 = OfflineGifCatalog.ITEMS.first()
         val gifHist = MediaKeyboardSpec.RecentGifHistory(maxEntries = 4)
         gifHist.record(gif1)
         gifHist.record(gif2)
         gifHist.record(gif1)
-        assertEquals(listOf("g1", "g2"), gifHist.items().map { it.id })
+        assertEquals(listOf("g1", gif2.id), gifHist.items().map { it.id })
         val restoredGifs = MediaKeyboardSpec.RecentGifHistory(
             MediaKeyboardSpec.RecentGifHistory.decode(gifHist.encode())
         )
@@ -243,8 +383,29 @@ class MediaKeyboardSpecTest {
             assertTrue(AppUiStrings.mediaStickersTabA11y(locale).isNotBlank())
             assertTrue(AppUiStrings.mediaKaomojiTabA11y(locale).isNotBlank())
             assertTrue(AppUiStrings.richMediaUnsupportedStatus(locale).isNotBlank())
-            assertTrue(AppUiStrings.tenorApiKeyRequiredTitle(locale).isNotBlank())
-            assertTrue(AppUiStrings.tenorApiKeyRequiredDesc(locale).isNotBlank())
+            assertTrue(AppUiStrings.mediaShareLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.mediaSaveLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.mediaSavedSuccessStatus(locale).isNotBlank())
+            assertTrue(AppUiStrings.mediaSaveFailedStatus(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerFavoritesLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerFavoritesEmpty(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerAddedFavoriteStatus(locale, true).isNotBlank())
+            assertTrue(AppUiStrings.stickerPackStoreTitle(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerPackInstallLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerPackRemoveLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerPackInstalledLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerPackInstallAllLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerPacksNoneInstalled(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsServiceUnconfiguredTitle(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsServiceUnconfiguredDesc(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsOfflineTitle(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsOfflineDesc(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsRateLimitedTitle(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsRateLimitedDesc(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsServerErrorTitle(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifsOfflinePackHeading(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifLoadMoreLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.gifAttributionLabel(locale).isNotBlank())
             assertTrue(AppUiStrings.loadingGifsMessage(locale).isNotBlank())
             assertTrue(AppUiStrings.networkErrorGifsMessage(locale).isNotBlank())
             assertTrue(AppUiStrings.retryLabel(locale).isNotBlank())

@@ -30,10 +30,12 @@ class MediaContentProvider : ContentProvider() {
         val cols = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         val cursor = MatrixCursor(cols, 1)
         val row = arrayOfNulls<Any>(cols.size)
+        val resolvedMime = getType(uri)
         for (i in cols.indices) {
             row[i] = when (cols[i]) {
                 OpenableColumns.DISPLAY_NAME -> file.name
                 OpenableColumns.SIZE -> file.length()
+                "mime_type" -> resolvedMime
                 else -> null
             }
         }
