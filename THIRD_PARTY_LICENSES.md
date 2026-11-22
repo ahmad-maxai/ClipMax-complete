@@ -34,7 +34,7 @@ This document lists the third-party open-source libraries, assets, and component
 
 ## 2. Bundled Offline Web Interface Dependencies
 
-The following libraries are compiled into the static, offline single-page application bundled within the Android APK at `android/app/src/main/assets/web/`. ClipMax stores all clipboard data strictly locally on device and never uploads clipboard content; `android.permission.INTERNET` is declared solely for optional online GIF search/previews via KLIPY.
+The following libraries are compiled into the static, offline single-page application bundled within the Android APK at `android/app/src/main/assets/web/`. ClipMax stores all clipboard data strictly locally on device and never uploads clipboard content. ClipMax operates 100% offline without remote network dependencies.
 
 ### React & React DOM
 - **Package**: `react` (^19.0.1), `react-dom` (^19.0.1)
@@ -71,24 +71,23 @@ The following libraries are compiled into the static, offline single-page applic
 
 ---
 
-## 3. Build Tooling & Optional GIF Proxy Server (Not Packaged in APK)
+## 3. Build Tooling & Local Development Server (Not Packaged in APK)
 
-The following packages in `package.json` run the local build pipeline and the optional Node.js/Express KLIPY GIF proxy backend (`server.ts`). They are never packaged inside the Android APK:
+The following packages in `package.json` run the local build pipeline and development preview. They are never packaged inside the Android APK:
 - `vite` (^8.3.0), `@vitejs/plugin-react` (^6.1.1), `@tailwindcss/vite` (^4.3.3) — MIT
 - `typescript` (^7.0.2), `tsx` (^4.21.0), `esbuild` (^0.25.0) — Apache-2.0 / MIT
-- `express` (^4.21.2), `dotenv` (^17.2.3) — MIT / BSD-2-Clause (used in `server.ts` to keep `KLIPY_API_KEY` strictly server-side)
+- `express` (^4.21.2), `dotenv` (^17.2.3) — MIT / BSD-2-Clause
 - Note: `@google/genai` is present in `package.json` from the environment boilerplate and is not imported or called anywhere in ClipMax runtime code.
 
 ---
 
 ## 4. Typography, Wordlists & Artwork Resources
 
-### ClipMax Brand Artwork, Original Stickers & Offline Reaction GIFs
+### ClipMax Brand Artwork & Original Stickers
 - **Files**:
   - `public/logo.jpg`, `src/assets/logo.jpg`, `android/app/src/main/res/mipmap-*/ic_launcher.png`, `android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png`
   - Original 24 sticker PNGs across `reactions`, `daily`, and `notes`
-  - 10 bundled animated GIFs under `android/app/src/main/assets/gifs/*.gif`
-- **Origin**: ClipMax project artwork and composited animations
+- **Origin**: ClipMax project artwork
 - **License**: Distributed under GPL-3.0-or-later as confirmed by the project owner.
 
 ### Microsoft Fluent Emoji (Sticker Packs Artwork)

@@ -252,7 +252,7 @@ def main():
     print("    - License: GPL-3.0-or-later (root LICENSE file verified)")
     print("    - Fastlane Metadata: title, short_description, full_description, changelogs/12.txt, icon.png, 4 phoneScreenshots")
     print("    - F-Droid Recipe Draft: com.clipmax.app.yml commit pinned to full 40-char SHA")
-    print("    - Manifest Check: android.permission.INTERNET and MediaContentProvider verified in AndroidManifest.xml")
+    print("    - Manifest Check: MediaContentProvider verified in AndroidManifest.xml (100% offline local-first IME)")
     print("    - Web Asset Tree: public/ and android/app/src/main/assets/web/ free of .pdf, .zip, .apk, aistudio/")
     if inspected_apks:
         for path, size, sha in inspected_apks:

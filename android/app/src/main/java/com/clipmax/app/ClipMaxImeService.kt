@@ -279,15 +279,6 @@ class ClipMaxImeService : InputMethodService() {
     private val kaomojiTabViews = mutableListOf<Pair<Int, TextView>>()
     private val kaomojiScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController(1)
 
-    private var selectedGifCategoryTag = "featured"
-    private var gifFetchResult: GifProvider.GifFetchResult? = null
-    private var gifCurrentPage = 1
-    private var gifHasNext = false
-    private var gifAccumulatedItems: List<GifProvider.GifItem> = emptyList()
-    private var gifIsLoading = false
-    private var gifIsLoadingMore = false
-    private var gifRequestGen = 0
-    private var gifGridHost: LinearLayout? = null
     private var mediaViewportGen = 0
     private val mediaIoExecutor: ExecutorService = Executors.newFixedThreadPool(2, daemonThreadFactory("ClipMax-Media"))
     private val stickerBitmapCache = LruCache<String, Bitmap>(64)
@@ -297,9 +288,6 @@ class ClipMaxImeService : InputMethodService() {
     }
     private val stickerPackManager: StickerPackManager by lazy {
         StickerPackManager(this, mediaPreferences)
-    }
-    private val gifProvider: KlipyGifProvider by lazy {
-        KlipyGifProvider(this)
     }
     private val recentStickerHistory: MediaKeyboardSpec.RecentStickerHistory by lazy {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_STICKERS, null) }.getOrNull()
@@ -312,10 +300,6 @@ class ClipMaxImeService : InputMethodService() {
     private val recentKaomojiHistory: MediaKeyboardSpec.RecentKaomojiHistory by lazy {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, null) }.getOrNull()
         MediaKeyboardSpec.RecentKaomojiHistory(MediaKeyboardSpec.RecentKaomojiHistory.decode(raw))
-    }
-    private val recentGifHistory: MediaKeyboardSpec.RecentGifHistory by lazy {
-        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_GIFS, null) }.getOrNull()
-        MediaKeyboardSpec.RecentGifHistory(MediaKeyboardSpec.RecentGifHistory.decode(raw))
     }
 
     private val emojiPreferences: SharedPreferences by lazy {
@@ -836,7 +820,6 @@ class ClipMaxImeService : InputMethodService() {
         kaomojiRecentTabView = null
         kaomojiSectionViews.clear()
         kaomojiTabViews.clear()
-        gifGridHost = null
         mediaSearchInputText = null
         mediaSearchClearBtn = null
         mediaSearchResultsStrip = null
@@ -901,7 +884,7 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             if (isEmojiPickerOpen && !isMediaSearchTyping) {
-                // 3D. Unified 4-Mode Native Media Keyboard (Emoji | GIF | Stickers | Kaomoji)
+                // Unified 3-Mode Native Media Keyboard (Emoji | Stickers | Kaomoji)
                 viewportContainer.addView(buildMediaPickerPanel())
                 if (isFilterMode) {
                     renderSearchResults()
@@ -4347,12 +4330,6 @@ class ClipMaxImeService : InputMethodService() {
             .apply()
     }
 
-    private fun persistRecentGifs() {
-        mediaPreferences.edit()
-            .putString(MediaKeyboardSpec.PREF_RECENT_GIFS, recentGifHistory.encode())
-            .apply()
-    }
-
     private fun dismissMediaStatusBanners(root: FrameLayout) {
         mediaStatusBannerRunnable?.let(main::removeCallbacks)
         for (i in root.childCount - 1 downTo 0) {
@@ -4645,9 +4622,6 @@ class ClipMaxImeService : InputMethodService() {
                     renderFullImeView()
                 } else if (mediaSearchQuery.isNotBlank()) {
                     mediaSearchQuery = ""
-                    if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-                        loadGifsForCurrentState()
-                    }
                     renderFullImeView()
                 } else {
                     isEmojiPickerOpen = false
@@ -4665,8 +4639,7 @@ class ClipMaxImeService : InputMethodService() {
         val inPackStore = currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.STICKERS && isStickerPackManagerOpen
         val isSearching = !inPackStore && mediaSearchQuery.isNotBlank()
         val showSearchLabel = !inPackStore && (isSearching ||
-            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.EMOJI ||
-            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS)
+            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.EMOJI)
 
         if (inPackStore) {
             val installedCount = stickerPackManager.installedPacks().size
@@ -4709,7 +4682,6 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 contentDescription = when (currentMediaSubMode) {
                     MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
-                    MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
                     MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
                     MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
                 }
@@ -4750,9 +4722,6 @@ class ClipMaxImeService : InputMethodService() {
                         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                         setOnClickListener {
                             mediaSearchQuery = ""
-                            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-                                loadGifsForCurrentState()
-                            }
                             renderFullImeView()
                         }
                     }
@@ -5005,76 +4974,6 @@ class ClipMaxImeService : InputMethodService() {
                         })
                     }
                     tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                    header.addView(tabsScroll)
-                }
-
-                MediaKeyboardSpec.MediaSubMode.GIFS -> {
-                    val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
-                        isHorizontalScrollBarEnabled = false
-                        layoutDirection = uiLayoutDirection
-                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-                    }
-                    val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        layoutDirection = uiLayoutDirection
-                        gravity = Gravity.CENTER_VERTICAL
-                    }
-                    val recentSelected = selectedGifCategoryTag == "recent"
-                    val recentBtn = FrameLayout(this@ClipMaxImeService).apply {
-                        contentDescription = AppUiStrings.emojiRecentLabel(keyboardLanguage)
-                        isClickable = true
-                        isFocusable = true
-                        background = roundedRipple(
-                            if (recentSelected) colorActiveTabBg else 0,
-                            dp(navCtrlH / 2f),
-                            if (recentSelected) colorAccent else 0
-                        )
-                        val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, if (recentSelected) colorActiveTabText else colorModText, 16.5f))
-                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-                        setOnClickListener {
-                            selectedGifCategoryTag = "recent"
-                            mediaSearchQuery = ""
-                            renderFullImeView()
-                        }
-                    }
-                    tabsRow.addView(recentBtn, LinearLayout.LayoutParams(navCtrlH, navCtrlH).apply {
-                        marginEnd = dp(5)
-                    })
-
-                    KlipyGifProvider.FEATURED_CATEGORIES.filter { it.first != "recent" }.forEachIndexed { idx, (tag, label) ->
-                        val active = selectedGifCategoryTag == tag
-                        val pill = TextView(this@ClipMaxImeService).apply {
-                            text = localizeGifCategoryLabel(tag, label)
-                            textSize = 12f
-                            typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                            gravity = Gravity.CENTER
-                            includeFontPadding = false
-                            setSingleLine(true)
-                            isClickable = true
-                            isFocusable = true
-                            setTextColor(if (active) colorActiveTabText else colorModText)
-                            background = roundedRipple(
-                                if (active) colorActiveTabBg else 0,
-                                dp(navCtrlH / 2f),
-                                if (active) colorAccent else 0
-                            )
-                            setPadding(dp(11), 0, dp(11), 0)
-                            setOnClickListener {
-                                selectedGifCategoryTag = tag
-                                mediaSearchQuery = ""
-                                if (tag != "offline") {
-                                    loadGifsForCurrentState(append = false)
-                                }
-                                renderFullImeView()
-                            }
-                        }
-                        tabsRow.addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
-                            if (idx < KlipyGifProvider.FEATURED_CATEGORIES.size - 2) marginEnd = dp(5)
-                        })
-                    }
-                    tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                    header.addView(tabsScroll)
-                }
             }
         }
 
@@ -5086,7 +4985,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         column.addView(topDivider)
 
-        // 2. CONTENT BODY (switches cleanly per active sub-mode)
+        // 2. CONTENT BODY (switches cleanly per active sub-mode: Emoji, Stickers, Kaomoji)
         when (currentMediaSubMode) {
             MediaKeyboardSpec.MediaSubMode.EMOJI -> column.addView(buildEmojiBrowserBody())
             MediaKeyboardSpec.MediaSubMode.STICKERS -> {
@@ -5094,7 +4993,6 @@ class ClipMaxImeService : InputMethodService() {
                 else column.addView(buildStickersBrowserBody())
             }
             MediaKeyboardSpec.MediaSubMode.KAOMOJI -> column.addView(buildKaomojiBrowserBody())
-            MediaKeyboardSpec.MediaSubMode.GIFS -> column.addView(buildGifBrowserBody())
         }
 
         val bottomDivider = View(this@ClipMaxImeService).apply {
@@ -5103,7 +5001,7 @@ class ClipMaxImeService : InputMethodService() {
         }
         column.addView(bottomDivider)
 
-        // 3. SHARED BOTTOM SELECTOR BAR: [ABC] | [ 😊 | GIF | Sticker | :-) ] | [⌫]
+        // 3. SHARED BOTTOM SELECTOR BAR: [ABC] | [ 😊 | Sticker | :-) ] | [⌫]
         val bottomBar = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = uiLayoutDirection
@@ -5141,7 +5039,7 @@ class ClipMaxImeService : InputMethodService() {
             marginEnd = dp(6)
         })
 
-        // Centered 4-Mode Selector Group
+        // Centered 3-Mode Selector Group: [ 😊 | Sticker | :-) ]
         val modeGroup = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
@@ -5170,7 +5068,7 @@ class ClipMaxImeService : InputMethodService() {
                 } else {
                     val tv = TextView(this@ClipMaxImeService).apply {
                         text = textLabel
-                        textSize = if (textLabel == "GIF") 12.5f else 14f
+                        textSize = 14f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(fg)
                         includeFontPadding = false
@@ -5186,24 +5084,19 @@ class ClipMaxImeService : InputMethodService() {
                         mediaSearchQuery = ""
                         isMediaSearchTyping = false
                         isStickerPackManagerOpen = false
-                        if (mode == MediaKeyboardSpec.MediaSubMode.GIFS && gifFetchResult == null && !gifIsLoading) {
-                            loadGifsForCurrentState()
-                        }
                         renderFullImeView()
                     }
                 }
             }
         }
 
-        val pillW = dp(44)
-        val pillGap = dp(6)
+        val pillW = dp(52)
+        val pillGap = dp(10)
         val emojiPill = makeModePill(MediaKeyboardSpec.MediaSubMode.EMOJI, AppUiStrings.mediaEmojiTabA11y(keyboardLanguage), iconType = IconType.EMOJI)
-        val gifPill = makeModePill(MediaKeyboardSpec.MediaSubMode.GIFS, AppUiStrings.mediaGifTabA11y(keyboardLanguage), textLabel = "GIF")
         val stickerPill = makeModePill(MediaKeyboardSpec.MediaSubMode.STICKERS, AppUiStrings.mediaStickersTabA11y(keyboardLanguage), iconType = IconType.MEDIA_STICKER)
         val kaomojiPill = makeModePill(MediaKeyboardSpec.MediaSubMode.KAOMOJI, AppUiStrings.mediaKaomojiTabA11y(keyboardLanguage), textLabel = ":-)")
 
         modeGroup.addView(emojiPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
-        modeGroup.addView(gifPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
         modeGroup.addView(stickerPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
         modeGroup.addView(kaomojiPill, LinearLayout.LayoutParams(pillW, ctrlH))
         bottomBar.addView(modeGroup)
@@ -5223,23 +5116,6 @@ class ClipMaxImeService : InputMethodService() {
 
         column.addView(bottomBar)
         addView(column)
-    }
-
-    private fun localizeGifCategoryLabel(tag: String, defaultEn: String): String {
-        if (!AppUiStrings.isArabic(keyboardLanguage)) return defaultEn
-        return when (tag) {
-            "featured" -> "مميز"
-            "offline" -> "بدون نت"
-            "recent" -> "الأخيرة"
-            "happy" -> "سعيد"
-            "love" -> "حب"
-            "haha" -> "ضحك"
-            "wow" -> "مذهل"
-            "thumbs up" -> "موافق"
-            "party" -> "احتفال"
-            "sad" -> "حزين"
-            else -> defaultEn
-        }
     }
 
     private fun buildEmojiBrowserBody(): View {
@@ -6410,485 +6286,6 @@ class ClipMaxImeService : InputMethodService() {
     }
 
     // -------------------------------------------------------------------------
-    // GIFS BROWSER (Project-Managed KLIPY Proxy + Offline Bundled Animated GIFs)
-    // -------------------------------------------------------------------------
-    private fun loadGifsForCurrentState(append: Boolean = false) {
-        val tag = selectedGifCategoryTag
-        val query = mediaSearchQuery.trim()
-        if (tag == "offline" || tag == "recent") {
-            gifIsLoading = false
-            gifIsLoadingMore = false
-            return
-        }
-        if (append && (gifIsLoading || gifIsLoadingMore || !gifHasNext)) return
-
-        val targetPage = if (append) gifCurrentPage + 1 else 1
-        if (!append) {
-            gifCurrentPage = 1
-            gifHasNext = false
-            gifAccumulatedItems = emptyList()
-            gifIsLoading = true
-            gifIsLoadingMore = false
-        } else {
-            gifIsLoadingMore = true
-        }
-        val gen = ++gifRequestGen
-        if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
-            renderGifContentInPlace()
-        }
-        val callback: (GifProvider.GifFetchResult) -> Unit = { result ->
-            if (!serviceDestroyed && gen == gifRequestGen) {
-                gifIsLoading = false
-                gifIsLoadingMore = false
-                when (result) {
-                    is GifProvider.GifFetchResult.Success -> {
-                        gifFetchResult = result
-                        gifCurrentPage = result.page
-                        gifHasNext = result.hasNext
-                        gifAccumulatedItems = if (append) {
-                            (gifAccumulatedItems + result.items).distinctBy { it.id }
-                        } else {
-                            result.items
-                        }
-                    }
-                    else -> {
-                        if (!append) {
-                            gifFetchResult = result
-                            gifAccumulatedItems = emptyList()
-                            gifHasNext = false
-                        } else {
-                            gifHasNext = false
-                            showMediaStatusBanner(AppUiStrings.networkErrorGifsMessage(keyboardLanguage))
-                        }
-                    }
-                }
-                if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
-                    renderGifContentInPlace()
-                }
-            }
-        }
-        when {
-            query.isNotEmpty() -> gifProvider.search(query, targetPage, callback)
-            tag == "featured" -> gifProvider.fetchFeatured(targetPage, callback)
-            else -> gifProvider.search(tag, targetPage, callback)
-        }
-    }
-
-    private fun renderGifContentInPlace() {
-        val host = gifGridHost ?: return
-        populateGifBrowserContent(host)
-    }
-
-    private fun buildGifBrowserBody(): View {
-        val scroll = android.widget.ScrollView(this).apply {
-            isVerticalScrollBarEnabled = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                setOnScrollChangeListener { v, _, scrollY, _, _ ->
-                    if (scrollY > 0 && !v.canScrollVertically(1) && gifHasNext && !gifIsLoadingMore && !gifIsLoading) {
-                        val tag = selectedGifCategoryTag
-                        if (tag != "offline" && tag != "recent") {
-                            loadGifsForCurrentState(append = true)
-                        }
-                    }
-                }
-            }
-        }
-        val host = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutDirection = uiLayoutDirection
-            setPadding(dp(8), dp(8), dp(8), dp(10))
-        }
-        gifGridHost = host
-        populateGifBrowserContent(host)
-        scroll.addView(host, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return scroll
-    }
-
-    private fun loadGifPreviewAsync(item: GifProvider.GifItem, imageView: ImageView, expectedGen: Int) {
-        val cacheName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = true)
-        imageView.tag = cacheName
-        submitSafely(mediaIoExecutor) {
-            val file = mediaCacheManager.getCachedFile(cacheName)
-                ?: if (item.isBundledAsset && !item.assetPath.isNullOrBlank()) {
-                    mediaCacheManager.ensureAssetCached(assets, item.assetPath, cacheName)
-                } else {
-                    mediaCacheManager.downloadAndCache(item.previewUrl, cacheName)
-                }
-                ?: return@submitSafely
-            val decodedDrawable: Drawable? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                runCatching {
-                    val src = ImageDecoder.createSource(file)
-                    ImageDecoder.decodeDrawable(src)
-                }.getOrNull()
-            } else {
-                null
-            }
-            val fallbackBitmap: Bitmap? = if (decodedDrawable == null) {
-                runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
-            } else null
-
-            main.post {
-                if (serviceDestroyed || expectedGen != mediaViewportGen || imageView.tag != cacheName) return@post
-                if (decodedDrawable != null) {
-                    imageView.setImageDrawable(decodedDrawable)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && decodedDrawable is AnimatedImageDrawable) {
-                        decodedDrawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-                        decodedDrawable.start()
-                    }
-                } else if (fallbackBitmap != null) {
-                    imageView.setImageBitmap(fallbackBitmap)
-                }
-            }
-        }
-    }
-
-    private fun addGifGridRows(
-        container: LinearLayout,
-        items: List<GifProvider.GifItem>,
-        cols: Int,
-        tileH: Int,
-        gapPx: Int,
-        gen: Int
-    ) {
-        val tileBg = if (isClassicTheme) colorAltDeepBg else colorChipBg
-        var i = 0
-        while (i < items.size) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutDirection = uiLayoutDirection
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, tileH).apply {
-                    bottomMargin = gapPx
-                }
-            }
-            for (c in 0 until cols) {
-                val idx = i + c
-                if (idx < items.size) {
-                    val gif = items[idx]
-                    val card = FrameLayout(this).apply {
-                        contentDescription = gif.title
-                        isClickable = true
-                        isFocusable = true
-                        clipToOutline = true
-                        background = roundedRipple(tileBg, dp(10f), colorKeyBorder)
-                        val iv = ImageView(this@ClipMaxImeService).apply {
-                            scaleType = ImageView.ScaleType.CENTER_CROP
-                        }
-                        loadGifPreviewAsync(gif, iv, gen)
-                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-                        setOnClickListener {
-                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            handleGifPress(gif)
-                        }
-                    }
-                    row.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                        if (c < cols - 1) marginEnd = gapPx
-                    })
-                } else {
-                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                        if (c < cols - 1) marginEnd = gapPx
-                    })
-                }
-            }
-            container.addView(row)
-            i += cols
-        }
-    }
-
-    private fun addGifStatusCard(
-        container: LinearLayout,
-        title: String,
-        subtitle: String,
-        showRetry: Boolean = true
-    ) {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(8)
-            }
-        }
-        card.addView(TextView(this).apply {
-            text = title
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(colorKeyText)
-            gravity = Gravity.CENTER
-        })
-        card.addView(TextView(this).apply {
-            text = subtitle
-            textSize = 11.5f
-            setTextColor(colorHintText)
-            gravity = Gravity.CENTER
-            setPadding(dp(4), dp(4), dp(4), if (showRetry) dp(10) else 0)
-        })
-        if (showRetry) {
-            card.addView(TextView(this).apply {
-                text = AppUiStrings.retryLabel(keyboardLanguage)
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(colorAccentText)
-                setPadding(dp(16), dp(7), dp(16), dp(7))
-                background = roundedRipple(colorAccent, dp(8f), 0)
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { loadGifsForCurrentState(append = false) }
-            })
-        }
-        container.addView(card)
-    }
-
-    private fun appendOfflineAndRecentGifFallback(
-        container: LinearLayout,
-        recentGifs: List<GifProvider.GifItem>,
-        cols: Int,
-        tileH: Int,
-        gapPx: Int,
-        gen: Int
-    ) {
-        if (recentGifs.isNotEmpty()) {
-            container.addView(TextView(this).apply {
-                text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorHintText)
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                setPadding(dp(4), dp(6), dp(4), dp(6))
-            })
-            addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
-        }
-        val bundled = OfflineGifCatalog.search(mediaSearchQuery)
-        if (bundled.isNotEmpty()) {
-            container.addView(TextView(this).apply {
-                text = AppUiStrings.gifsOfflinePackHeading(keyboardLanguage)
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorHintText)
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                setPadding(dp(4), dp(6), dp(4), dp(6))
-            })
-            addGifGridRows(container, bundled, cols, tileH, gapPx, gen)
-        }
-    }
-
-    private fun populateGifBrowserContent(container: LinearLayout) {
-        container.removeAllViews()
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val cols = if (isLandscape) MediaKeyboardSpec.GIF_COLS_LANDSCAPE else MediaKeyboardSpec.GIF_COLS_PORTRAIT
-        val tileH = dp(if (isLandscape) 94 else 112)
-        val gapPx = dp(6)
-        val gen = mediaViewportGen
-
-        val recentGifs = recentGifHistory.items()
-        if (mediaSearchQuery.isBlank() && selectedGifCategoryTag == "recent") {
-            if (recentGifs.isEmpty()) {
-                container.addView(TextView(this).apply {
-                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد صور GIF مستخدمة مؤخراً."
-                    else "No recently used GIFs yet."
-                    textSize = 13f
-                    setTextColor(colorHintText)
-                    gravity = Gravity.CENTER
-                    setPadding(dp(16), dp(28), dp(16), dp(12))
-                })
-                appendOfflineAndRecentGifFallback(container, emptyList(), cols, tileH, gapPx, gen)
-            } else {
-                addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            return
-        }
-
-        if (mediaSearchQuery.isBlank() && selectedGifCategoryTag == "offline") {
-            container.addView(TextView(this).apply {
-                text = AppUiStrings.gifsOfflinePackHeading(keyboardLanguage)
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorHintText)
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                setPadding(dp(4), dp(2), dp(4), dp(6))
-            })
-            addGifGridRows(container, OfflineGifCatalog.ITEMS, cols, tileH, gapPx, gen)
-            return
-        }
-
-        if (gifIsLoading) {
-            val loadingCol = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(16), dp(36), dp(16), dp(24))
-            }
-            loadingCol.addView(ProgressBar(this), LinearLayout.LayoutParams(dp(28), dp(28)))
-            loadingCol.addView(TextView(this).apply {
-                text = AppUiStrings.loadingGifsMessage(keyboardLanguage)
-                textSize = 12.5f
-                setTextColor(colorHintText)
-                setPadding(0, dp(10), 0, 0)
-            })
-            container.addView(loadingCol, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            return
-        }
-
-        when (val res = gifFetchResult) {
-            null -> loadGifsForCurrentState(append = false)
-            is GifProvider.GifFetchResult.Unconfigured -> {
-                addGifStatusCard(
-                    container = container,
-                    title = AppUiStrings.gifsServiceUnconfiguredTitle(keyboardLanguage),
-                    subtitle = AppUiStrings.gifsServiceUnconfiguredDesc(keyboardLanguage),
-                    showRetry = true
-                )
-                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            is GifProvider.GifFetchResult.Offline -> {
-                addGifStatusCard(
-                    container = container,
-                    title = AppUiStrings.gifsOfflineTitle(keyboardLanguage),
-                    subtitle = AppUiStrings.gifsOfflineDesc(keyboardLanguage),
-                    showRetry = true
-                )
-                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            is GifProvider.GifFetchResult.RateLimited -> {
-                addGifStatusCard(
-                    container = container,
-                    title = AppUiStrings.gifsRateLimitedTitle(keyboardLanguage),
-                    subtitle = AppUiStrings.gifsRateLimitedDesc(keyboardLanguage),
-                    showRetry = true
-                )
-                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            is GifProvider.GifFetchResult.ServerError -> {
-                addGifStatusCard(
-                    container = container,
-                    title = AppUiStrings.gifsServerErrorTitle(keyboardLanguage),
-                    subtitle = res.message,
-                    showRetry = true
-                )
-                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            is GifProvider.GifFetchResult.NetworkError -> {
-                addGifStatusCard(
-                    container = container,
-                    title = AppUiStrings.networkErrorGifsMessage(keyboardLanguage),
-                    subtitle = res.error,
-                    showRetry = true
-                )
-                appendOfflineAndRecentGifFallback(container, recentGifs, cols, tileH, gapPx, gen)
-            }
-            is GifProvider.GifFetchResult.Success -> {
-                val visibleItems = gifAccumulatedItems.ifEmpty { res.items }
-                if (visibleItems.isEmpty()) {
-                    container.addView(TextView(this).apply {
-                        text = AppUiStrings.emptyGifsMessage(keyboardLanguage)
-                        textSize = 13f
-                        setTextColor(colorHintText)
-                        gravity = Gravity.CENTER
-                        setPadding(dp(16), dp(24), dp(16), dp(12))
-                    })
-                    val offlineMatches = OfflineGifCatalog.search(mediaSearchQuery)
-                    if (offlineMatches.isNotEmpty()) {
-                        appendOfflineAndRecentGifFallback(container, emptyList(), cols, tileH, gapPx, gen)
-                    }
-                } else {
-                    addGifGridRows(container, visibleItems, cols, tileH, gapPx, gen)
-                    if (gifHasNext) {
-                        if (gifIsLoadingMore) {
-                            container.addView(ProgressBar(this), LinearLayout.LayoutParams(dp(24), dp(24)).apply {
-                                gravity = Gravity.CENTER_HORIZONTAL
-                                topMargin = dp(4)
-                                bottomMargin = dp(6)
-                            })
-                        } else {
-                            container.addView(TextView(this).apply {
-                                text = AppUiStrings.gifLoadMoreLabel(keyboardLanguage)
-                                textSize = 12f
-                                typeface = Typeface.DEFAULT_BOLD
-                                setTextColor(colorKeyText)
-                                gravity = Gravity.CENTER
-                                setPadding(dp(16), dp(8), dp(16), dp(8))
-                                background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
-                                isClickable = true
-                                isFocusable = true
-                                setOnClickListener { loadGifsForCurrentState(append = true) }
-                            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                                gravity = Gravity.CENTER_HORIZONTAL
-                                topMargin = dp(4)
-                                bottomMargin = dp(6)
-                            })
-                        }
-                    }
-                    container.addView(TextView(this).apply {
-                        text = AppUiStrings.gifAttributionLabel(keyboardLanguage)
-                        textSize = 10.5f
-                        setTextColor(colorHintText)
-                        gravity = Gravity.CENTER
-                        setPadding(0, dp(2), 0, dp(2))
-                    })
-                }
-            }
-        }
-    }
-
-    private fun handleGifPress(item: GifProvider.GifItem) {
-        dismissPasteUndoCapsule()
-        val info = currentInputEditorInfo
-        val outcome = MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
-            hasActiveConnection = currentInputConnection != null,
-            inputType = info?.inputType ?: 0,
-            isPasswordTarget = isPasswordTarget,
-            acceptedMimeTypes = info?.contentMimeTypes,
-            isSticker = false
-        )
-        val fullName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = false)
-        val previewName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = true)
-        val safeLink = if (item.isBundledAsset) null else runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
-
-        fun executeWithGif(gifFile: File) {
-            if (outcome != MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE) {
-                val msg = if (outcome == MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.NO_ACTIVE_FIELD) {
-                    AppUiStrings.noActiveTextFieldStatus(keyboardLanguage)
-                } else {
-                    AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage)
-                }
-                showRichMediaFallbackBanner(msg, gifFile, "image/gif", item.title)
-                return
-            }
-            if (commitRichMediaFile(gifFile, "image/gif", item.title, safeLink)) {
-                recentGifHistory.record(item)
-                persistRecentGifs()
-            }
-        }
-
-        val cachedFull = mediaCacheManager.getCachedFile(fullName) ?: mediaCacheManager.getCachedFile(previewName)
-        if (cachedFull != null) {
-            executeWithGif(cachedFull)
-            return
-        }
-        if (!item.isBundledAsset) {
-            showMediaStatusBanner(if (AppUiStrings.isArabic(keyboardLanguage)) "جارٍ تجهيز GIF..." else "Preparing GIF...")
-        }
-        submitSafely(mediaIoExecutor) {
-            val file = if (item.isBundledAsset && !item.assetPath.isNullOrBlank()) {
-                mediaCacheManager.ensureAssetCached(assets, item.assetPath, fullName)
-            } else {
-                mediaCacheManager.downloadAndCache(item.gifUrl, fullName)
-                    ?: mediaCacheManager.getCachedFile(previewName)
-                    ?: mediaCacheManager.downloadAndCache(item.previewUrl, previewName)
-            }
-            main.post {
-                if (serviceDestroyed) return@post
-                if (file == null) {
-                    showMediaStatusBanner(AppUiStrings.networkErrorGifsMessage(keyboardLanguage))
-                    return@post
-                }
-                executeWithGif(file)
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // INLINE KEYBOARD INTERFACE FOR MEDIA SEARCH
     // -------------------------------------------------------------------------
     private fun buildMediaSearchInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
@@ -6924,7 +6321,6 @@ class ClipMaxImeService : InputMethodService() {
 
         val placeholder = when (currentMediaSubMode) {
             MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
-            MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
             MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
             MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
         }
@@ -6972,9 +6368,6 @@ class ClipMaxImeService : InputMethodService() {
             background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
             setOnClickListener {
                 isMediaSearchTyping = false
-                if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-                    loadGifsForCurrentState()
-                }
                 renderFullImeView()
             }
         }
@@ -7002,7 +6395,6 @@ class ClipMaxImeService : InputMethodService() {
     private fun updateMediaSearchUI() {
         val placeholder = when (currentMediaSubMode) {
             MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
-            MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
             MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
             MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
         }
@@ -7107,24 +6499,6 @@ class ClipMaxImeService : InputMethodService() {
                     }
                     container.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply { marginEnd = dp(6) })
                 }
-            }
-
-            MediaKeyboardSpec.MediaSubMode.GIFS -> {
-                val hintChip = TextView(this).apply {
-                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "اضغط تم أو Enter للبحث في GIFs" else "Tap Done or Enter to search GIFs"
-                    textSize = 11.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorAccentText)
-                    gravity = Gravity.CENTER
-                    setPadding(dp(12), 0, dp(12), 0)
-                    background = roundedRipple(colorAccent, dp(10f), 0)
-                    setOnClickListener {
-                        isMediaSearchTyping = false
-                        loadGifsForCurrentState()
-                        renderFullImeView()
-                    }
-                }
-                container.addView(hintChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
             }
         }
     }
@@ -8291,9 +7665,6 @@ class ClipMaxImeService : InputMethodService() {
         shiftStateMachine.onNonLetterInput()
         if (isEmojiPickerOpen && isMediaSearchTyping) {
             isMediaSearchTyping = false
-            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
-                loadGifsForCurrentState()
-            }
             renderFullImeView()
         } else if (resolution.isFilterDismiss || isFilterMode) {
             isFilterMode = false

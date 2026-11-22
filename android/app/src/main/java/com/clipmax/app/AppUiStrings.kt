@@ -665,9 +665,6 @@ internal object AppUiStrings {
     fun stickerTabLabel(locale: String?): String =
         if (isArabic(locale)) "الملصقات" else "Stickers"
 
-    fun gifTabLabel(locale: String?): String =
-        if (isArabic(locale)) "صور GIF" else "GIFs"
-
     fun kaomojiTabLabel(locale: String?): String =
         if (isArabic(locale)) "الرموز التعبيرية النصية" else "Kaomoji"
 
