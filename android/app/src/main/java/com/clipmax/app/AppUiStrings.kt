@@ -347,9 +347,6 @@ internal object AppUiStrings {
     fun mediaEmojiTabA11y(locale: String?): String =
         if (isArabic(locale)) "الرموز التعبيرية" else "Emoji"
 
-    fun mediaGifTabA11y(locale: String?): String =
-        if (isArabic(locale)) "صور متحركة" else "GIF"
-
     fun mediaStickersTabA11y(locale: String?): String =
         if (isArabic(locale)) "ملصقات" else "Stickers"
 
@@ -405,47 +402,6 @@ internal object AppUiStrings {
         if (isArabic(locale)) "لا توجد حزم مثبتة حالياً. افتح إدارة الحزم (+) لتثبيتها محلياً."
         else "No packs installed locally yet. Tap + to install packs."
 
-    fun gifsServiceUnconfiguredTitle(locale: String?): String =
-        if (isArabic(locale)) "البحث المباشر عن GIF غير مفعل في هذا البناء"
-        else "Online GIF Search Unavailable"
-
-    fun gifsServiceUnconfiguredDesc(locale: String?): String =
-        if (isArabic(locale)) "يتطلب البحث المباشر نشر خدمة KLIPY الآمنة. يمكنك استخدام صور GIF المتحركة المدمجة أدناه بدون اتصال."
-        else "Live KLIPY GIF search isn't active in this build. You can still browse and send our bundled animated GIFs below offline."
-
-    fun gifsOfflineTitle(locale: String?): String =
-        if (isArabic(locale)) "لا يوجد اتصال بالإنترنت"
-        else "You're Offline"
-
-    fun gifsOfflineDesc(locale: String?): String =
-        if (isArabic(locale)) "تحقق من الشبكة ثم أعد المحاولة، أو أرسل من صور GIF المدمجة أدناه."
-        else "Check your internet connection and retry, or send from bundled animated GIFs below."
-
-    fun gifsRateLimitedTitle(locale: String?): String =
-        if (isArabic(locale)) "تم بلوغ حد الطلبات المؤقت"
-        else "Too Many GIF Requests"
-
-    fun gifsRateLimitedDesc(locale: String?): String =
-        if (isArabic(locale)) "وصلت خدمة GIF للحد المؤقت. انتظر لحظة ثم اضغط إعادة المحاولة."
-        else "The GIF service is temporarily rate-limited. Wait a moment and tap Retry."
-
-    fun gifsServerErrorTitle(locale: String?): String =
-        if (isArabic(locale)) "خدمة GIF غير متاحة مؤقتاً"
-        else "GIF Service Error"
-
-    fun gifsOfflinePackHeading(locale: String?): String =
-        if (isArabic(locale)) "صور GIF متحركة مدمجة (تعمل بدون إنترنت)"
-        else "Bundled Animated GIFs (Offline)"
-
-    fun gifLoadMoreLabel(locale: String?): String =
-        if (isArabic(locale)) "تحميل المزيد من GIF" else "Load more GIFs"
-
-    fun gifAttributionLabel(locale: String?): String =
-        if (isArabic(locale)) "صور GIF عبر KLIPY" else "GIFs by KLIPY"
-
-    fun searchGifsPlaceholder(locale: String?): String =
-        if (isArabic(locale)) "بحث في صور GIF..." else "Search GIFs..."
-
     fun searchStickersPlaceholder(locale: String?): String =
         if (isArabic(locale)) "بحث في الملصقات..." else "Search stickers..."
 
@@ -457,15 +413,6 @@ internal object AppUiStrings {
 
     fun emptyStickersMessage(locale: String?): String =
         if (isArabic(locale)) "لا توجد ملصقات مطابقة" else "No stickers found"
-
-    fun emptyGifsMessage(locale: String?): String =
-        if (isArabic(locale)) "لم يتم العثور على صور GIF" else "No GIFs found"
-
-    fun loadingGifsMessage(locale: String?): String =
-        if (isArabic(locale)) "جارٍ تحميل صور GIF..." else "Loading GIFs..."
-
-    fun networkErrorGifsMessage(locale: String?): String =
-        if (isArabic(locale)) "خطأ في الشبكة أثناء جلب صور GIF" else "Network error fetching GIFs"
 
     fun retryLabel(locale: String?): String =
         if (isArabic(locale)) "إعادة المحاولة" else "Retry"

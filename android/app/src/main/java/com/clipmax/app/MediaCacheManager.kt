@@ -3,11 +3,9 @@ package com.clipmax.app
 import android.content.Context
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URL
-import javax.net.ssl.HttpsURLConnection
 
 /**
- * App-private media cache manager for stickers and GIFs stored under filesDir/ime_media_cache/.
+ * App-private media cache manager for stickers stored under filesDir/ime_media_cache/.
  * Enforces a 24 MB LRU byte cap and provides size inspection and clearing.
  */
 internal class MediaCacheManager(context: Context) {
@@ -89,33 +87,6 @@ internal class MediaCacheManager(context: Context) {
         runCatching {
             cacheDir.listFiles()?.forEach { it.deleteRecursively() }
         }
-    }
-
-    fun downloadAndCache(urlString: String, targetFileName: String): File? {
-        val target = File(cacheDir, targetFileName)
-        if (target.exists() && target.length() > 0L) {
-            target.setLastModified(System.currentTimeMillis())
-            return target
-        }
-        enforceLruCap()
-        return runCatching {
-            val url = URL(urlString)
-            if (url.protocol.lowercase() != "https") return@runCatching null
-            val conn = (url.openConnection() as HttpsURLConnection).apply {
-                connectTimeout = 10_000
-                readTimeout = 10_000
-            }
-            if (conn.responseCode == 200) {
-                conn.inputStream.use { input ->
-                    FileOutputStream(target).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                if (target.length() > 0L) target else null
-            } else {
-                null
-            }
-        }.getOrNull()
     }
 
     private fun enforceLruCap() {

@@ -1,4 +1,3 @@
 <resources>
     <string name="clipmax_ime_subtype">English (ClipMax)</string>
-    <string name="clipmax_gif_proxy_url" translatable="false"></string>
 </resources>

@@ -211,8 +211,6 @@ def main():
     else:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = f.read()
-        if "android.permission.INTERNET" not in manifest:
-            errors.append("Required android.permission.INTERNET missing from AndroidManifest.xml for GIF features")
         if "MediaContentProvider" not in manifest:
             errors.append("Required MediaContentProvider declaration missing from AndroidManifest.xml")
 
