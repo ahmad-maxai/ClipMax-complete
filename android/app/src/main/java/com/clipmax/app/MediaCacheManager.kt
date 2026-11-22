@@ -18,6 +18,30 @@ internal class MediaCacheManager(context: Context) {
 
     fun getCacheDir(): File = cacheDir
 
+    fun getCachedFile(targetFileName: String): File? {
+        val target = File(cacheDir, targetFileName)
+        return if (target.isFile && target.exists() && target.length() > 0L) {
+            target.setLastModified(System.currentTimeMillis())
+            target
+        } else {
+            null
+        }
+    }
+
+    fun ensureAssetCached(assetManager: android.content.res.AssetManager, assetPath: String, targetFileName: String): File? {
+        getCachedFile(targetFileName)?.let { return it }
+        enforceLruCap()
+        val target = File(cacheDir, targetFileName)
+        return runCatching {
+            assetManager.open(assetPath).use { input ->
+                FileOutputStream(target).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (target.length() > 0L) target else null
+        }.getOrNull()
+    }
+
     fun cacheSizeBytes(): Long {
         return runCatching {
             cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }

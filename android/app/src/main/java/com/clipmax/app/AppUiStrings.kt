@@ -344,6 +344,65 @@ internal object AppUiStrings {
     fun deleteKeyA11y(locale: String?): String =
         if (isArabic(locale)) "حذف" else "Delete"
 
+    fun mediaEmojiTabA11y(locale: String?): String =
+        if (isArabic(locale)) "الرموز التعبيرية" else "Emoji"
+
+    fun mediaGifTabA11y(locale: String?): String =
+        if (isArabic(locale)) "صور متحركة" else "GIF"
+
+    fun mediaStickersTabA11y(locale: String?): String =
+        if (isArabic(locale)) "ملصقات" else "Stickers"
+
+    fun mediaKaomojiTabA11y(locale: String?): String =
+        if (isArabic(locale)) "كاوماوجي" else "Kaomoji"
+
+    fun richMediaUnsupportedStatus(locale: String?): String =
+        if (isArabic(locale)) "التطبيق المستهدف لا يدعم إدراج الصور والوسائط الغنية."
+        else "Target app does not support rich media insertion."
+
+    fun tenorApiKeyRequiredTitle(locale: String?): String =
+        if (isArabic(locale)) "مطلوب مفتاح Tenor API" else "Tenor API Key Required"
+
+    fun tenorApiKeyRequiredDesc(locale: String?): String =
+        if (isArabic(locale)) "أدخل مفتاح Tenor API لتمكين البحث عن صور GIF ومشاركتها."
+        else "Enter a Tenor API key to search and share animated GIFs."
+
+    fun tenorApiKeySave(locale: String?): String =
+        if (isArabic(locale)) "حفظ المفتاح" else "Save Key"
+
+    fun tenorApiKeyClear(locale: String?): String =
+        if (isArabic(locale)) "مسح" else "Clear"
+
+    fun tenorApiKeyHint(locale: String?): String =
+        if (isArabic(locale)) "أدخل مفتاح Tenor API..." else "Enter Tenor API key..."
+
+    fun searchGifsPlaceholder(locale: String?): String =
+        if (isArabic(locale)) "بحث في صور GIF..." else "Search GIFs..."
+
+    fun searchStickersPlaceholder(locale: String?): String =
+        if (isArabic(locale)) "بحث في الملصقات..." else "Search stickers..."
+
+    fun searchEmojisPlaceholder(locale: String?): String =
+        if (isArabic(locale)) "بحث في الرموز التعبيرية..." else "Search emojis..."
+
+    fun searchKaomojiPlaceholder(locale: String?): String =
+        if (isArabic(locale)) "بحث في كاوماوجي..." else "Search kaomoji..."
+
+    fun emptyStickersMessage(locale: String?): String =
+        if (isArabic(locale)) "لا توجد ملصقات مطابقة" else "No stickers found"
+
+    fun emptyGifsMessage(locale: String?): String =
+        if (isArabic(locale)) "لم يتم العثور على صور GIF" else "No GIFs found"
+
+    fun loadingGifsMessage(locale: String?): String =
+        if (isArabic(locale)) "جارٍ تحميل صور GIF..." else "Loading GIFs..."
+
+    fun networkErrorGifsMessage(locale: String?): String =
+        if (isArabic(locale)) "خطأ في الشبكة أثناء جلب صور GIF" else "Network error fetching GIFs"
+
+    fun retryLabel(locale: String?): String =
+        if (isArabic(locale)) "إعادة المحاولة" else "Retry"
+
     // -------------------------------------------------------------------------
     // Paste Undo / Redo Capsule & Floating Undo/Redo
     // -------------------------------------------------------------------------

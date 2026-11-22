@@ -112,26 +112,34 @@ internal object KaomojiCatalog {
         )
     )
 
+    private val CATEGORY_ALIASES: Map<CategoryId, List<String>> = mapOf(
+        CategoryId.CLASSIC to listOf("classic", "smile", "wink", "face", "كلاسيكي"),
+        CategoryId.HAPPY to listOf("happy", "joy", "glad", "cheerful", "سعيد", "فرح"),
+        CategoryId.EXCITED to listOf("excited", "yay", "hype", "thrilled", "متحمس"),
+        CategoryId.SAD to listOf("sad", "unhappy", "down", "blue", "حزين"),
+        CategoryId.CRYING to listOf("cry", "crying", "tears", "sob", "بكاء", "دموع"),
+        CategoryId.ANGRY to listOf("angry", "mad", "furious", "annoyed", "غاضب"),
+        CategoryId.SURPRISED to listOf("surprised", "shock", "wow", "omg", "متفاجئ"),
+        CategoryId.CONFUSED to listOf("confused", "huh", "sleep", "tired", "مرتبك"),
+        CategoryId.EMBARRASSED to listOf("embarrassed", "shy", "blush", "sweat", "محرج", "خجل"),
+        CategoryId.AFFECTIONATE to listOf("love", "heart", "hug", "kiss", "affection", "حب", "ودي"),
+        CategoryId.PLAYFUL to listOf("playful", "cute", "wink", "smirk", "مرح"),
+        CategoryId.SHRUGGING to listOf("shrug", "shrugging", "dunno", "idk", "لا أعلم"),
+        CategoryId.CELEBRATORY to listOf("celebrate", "party", "cheer", "yay", "hug", "احتفال", "تهنئة")
+    )
+
     fun search(query: String): List<String> {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return emptyList()
         val results = mutableListOf<String>()
         val seen = mutableSetOf<String>()
         for (cat in CATEGORIES) {
+            val catMatch = cat.labelEn.lowercase().contains(q) ||
+                cat.labelAr.contains(q) ||
+                (CATEGORY_ALIASES[cat.id]?.any { it.contains(q) || q.contains(it) } == true)
             for (item in cat.items) {
-                if (item.lowercase().contains(q) || cat.labelEn.lowercase().contains(q) || cat.labelAr.contains(q)) {
-                    if (item !in seen) {
-                        seen.add(item)
-                        results.add(item)
-                    }
-                }
-            }
-        }
-        if (results.isEmpty()) {
-            for (cat in CATEGORIES) {
-                for (item in cat.items) {
-                    if (item !in seen) {
-                        seen.add(item)
+                if (catMatch || item.lowercase().contains(q)) {
+                    if (seen.add(item)) {
                         results.add(item)
                     }
                 }
@@ -140,3 +148,4 @@ internal object KaomojiCatalog {
         return results.take(80)
     }
 }
+

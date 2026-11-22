@@ -1,18 +1,24 @@
 package com.clipmax.app
 
+import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.ColorFilter
+import android.graphics.ImageDecoder
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -23,6 +29,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.text.TextUtils
+import android.util.LruCache
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -34,13 +41,16 @@ import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputContentInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
+import java.io.File
 import java.io.IOException
 import java.io.Reader
 import java.util.Locale
@@ -235,6 +245,14 @@ class ClipMaxImeService : InputMethodService() {
     private var toolbarStateBView: View? = null
     private var isFilterMode = false // false = Typing: Host, true = Typing: Filter
     private var isEmojiPickerOpen = false
+    private var currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.EMOJI
+    private var isMediaSearchTyping = false
+    private var mediaSearchQuery = ""
+    private var isTenorKeyTyping = false
+    private var tenorKeyDraft = ""
+    private var mediaSearchInputText: TextView? = null
+    private var mediaSearchClearBtn: View? = null
+    private var mediaSearchResultsStrip: LinearLayout? = null
     private var selectedEmojiCategoryIdx = -1
     private var emojiPickerRoot: FrameLayout? = null
     private var emojiRemoveOverlay: View? = null
@@ -245,6 +263,50 @@ class ClipMaxImeService : InputMethodService() {
     private val emojiSectionViews = mutableListOf<View>()
     private val emojiTabViews = mutableListOf<Pair<Int, FrameLayout>>()
     private val emojiScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController()
+
+    private var selectedStickerSectionIdx = 1
+    private var stickerScrollView: android.widget.ScrollView? = null
+    private var stickerTabsScrollView: HorizontalScrollView? = null
+    private val stickerSectionViews = mutableListOf<View>()
+    private val stickerTabViews = mutableListOf<Pair<Int, FrameLayout>>()
+    private val stickerScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController(1)
+
+    private var selectedKaomojiCategoryIdx = 1
+    private var kaomojiScrollView: android.widget.ScrollView? = null
+    private var kaomojiTabsScrollView: HorizontalScrollView? = null
+    private var kaomojiRecentTabView: FrameLayout? = null
+    private val kaomojiSectionViews = mutableListOf<View>()
+    private val kaomojiTabViews = mutableListOf<Pair<Int, TextView>>()
+    private val kaomojiScrollTabController = EmojiInterfaceSpec.ContinuousScrollTabController(1)
+
+    private var selectedGifCategoryTag = "featured"
+    private var gifFetchResult: GifProvider.GifFetchResult? = null
+    private var gifIsLoading = false
+    private var gifRequestGen = 0
+    private var gifGridHost: LinearLayout? = null
+    private var mediaViewportGen = 0
+    private val mediaIoExecutor: ExecutorService = Executors.newFixedThreadPool(2, daemonThreadFactory("ClipMax-Media"))
+    private val stickerBitmapCache = LruCache<String, Bitmap>(32)
+    private val mediaCacheManager: MediaCacheManager by lazy { MediaCacheManager(this) }
+    private val mediaPreferences: SharedPreferences by lazy {
+        getSharedPreferences(MediaKeyboardSpec.PREF_MEDIA_FILE, Context.MODE_PRIVATE)
+    }
+    private val gifProvider: TenorV2GifProvider by lazy {
+        TenorV2GifProvider(this, resolveEffectiveTenorApiKey())
+    }
+    private val recentStickerHistory: MediaKeyboardSpec.RecentStickerHistory by lazy {
+        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_STICKERS, null) }.getOrNull()
+        MediaKeyboardSpec.RecentStickerHistory(MediaKeyboardSpec.RecentStickerHistory.decode(raw))
+    }
+    private val recentKaomojiHistory: MediaKeyboardSpec.RecentKaomojiHistory by lazy {
+        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, null) }.getOrNull()
+        MediaKeyboardSpec.RecentKaomojiHistory(MediaKeyboardSpec.RecentKaomojiHistory.decode(raw))
+    }
+    private val recentGifHistory: MediaKeyboardSpec.RecentGifHistory by lazy {
+        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_GIFS, null) }.getOrNull()
+        MediaKeyboardSpec.RecentGifHistory(MediaKeyboardSpec.RecentGifHistory.decode(raw))
+    }
+
     private val emojiPreferences: SharedPreferences by lazy {
         getSharedPreferences(EmojiInterfaceSpec.PREF_FILE, Context.MODE_PRIVATE)
     }
@@ -745,6 +807,7 @@ class ClipMaxImeService : InputMethodService() {
         pasteUndoCapsuleIcon = null
         pasteUndoCapsuleText = null
         settingsScrollView = null
+        mediaViewportGen++
         emojiRemoveOverlay = null
         emojiPickerRoot = null
         emojiScrollView = null
@@ -753,6 +816,19 @@ class ClipMaxImeService : InputMethodService() {
         emojiRecentSectionContainer = null
         emojiSectionViews.clear()
         emojiTabViews.clear()
+        stickerScrollView = null
+        stickerTabsScrollView = null
+        stickerSectionViews.clear()
+        stickerTabViews.clear()
+        kaomojiScrollView = null
+        kaomojiTabsScrollView = null
+        kaomojiRecentTabView = null
+        kaomojiSectionViews.clear()
+        kaomojiTabViews.clear()
+        gifGridHost = null
+        mediaSearchInputText = null
+        mediaSearchClearBtn = null
+        mediaSearchResultsStrip = null
         keyboardWrapper = null
         keyboardRowsContainer = null
         mainViewportFrame = null
@@ -806,57 +882,63 @@ class ClipMaxImeService : InputMethodService() {
             // 3B. Compact Expandable Saved-Clipboard / Pinned Panel
             viewportContainer.addView(buildClipboardPanel())
         } else {
-            // 3C. Live Search Clips Bar & Results Strip (above keyboard or emoji picker when active)
-            if (isFilterMode) {
+            // 3C. Live Search Clips Bar, Media Search Bar, or Tenor API Key Entry Bar above keyboard
+            if (isTenorKeyTyping) {
+                viewportContainer.addView(buildTenorKeyEntryInterface(viewport))
+            } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+                viewportContainer.addView(buildMediaSearchInterface(viewport))
+            } else if (isFilterMode) {
                 viewportContainer.addView(buildSearchInterface(viewport))
             }
 
-            if (isEmojiPickerOpen) {
-                // 3D. Native Offline Emoji Picker inside fixed viewport
-                viewportContainer.addView(buildEmojiPickerPanel())
+            if (isEmojiPickerOpen && !isMediaSearchTyping && !isTenorKeyTyping) {
+                // 3D. Unified 4-Mode Native Media Keyboard (Emoji | GIF | Stickers | Kaomoji)
+                viewportContainer.addView(buildMediaPickerPanel())
                 if (isFilterMode) {
                     renderSearchResults()
                 }
                 renderClipChips()
             } else {
                 // 4. Approved 4-row Ergonomic QWERTY / Numeric Keyboard Container
-            val geom = refreshKeyboardGeometry()
-            syncAutoCapitalization(preserveManualShift = true)
+                val geom = refreshKeyboardGeometry()
+                syncAutoCapitalization(preserveManualShift = true)
 
-            val wrapper = FrameLayout(this).apply {
-                layoutDirection = View.LAYOUT_DIRECTION_LTR
-                clipChildren = false
-                clipToPadding = false
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    0,
-                    1f
-                )
-            }
-            keyboardWrapper = wrapper
+                val wrapper = FrameLayout(this).apply {
+                    layoutDirection = View.LAYOUT_DIRECTION_LTR
+                    clipChildren = false
+                    clipToPadding = false
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                    )
+                }
+                keyboardWrapper = wrapper
 
-            val kbContainer = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                clipChildren = false
-                clipToPadding = false
-                setBackgroundColor(colorBg)
-                setPadding(
-                    dp(geom.sidePaddingDp).toInt(),
-                    dp(geom.topPaddingDp).toInt(),
-                    dp(geom.sidePaddingDp).toInt(),
-                    dp(geom.bottomPaddingDp).toInt()
-                )
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-            }
-            keyboardRowsContainer = kbContainer
-            renderKeyboardRows()
-            wrapper.addView(kbContainer)
+                val kbContainer = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    clipChildren = false
+                    clipToPadding = false
+                    setBackgroundColor(colorBg)
+                    setPadding(
+                        dp(geom.sidePaddingDp).toInt(),
+                        dp(geom.topPaddingDp).toInt(),
+                        dp(geom.sidePaddingDp).toInt(),
+                        dp(geom.bottomPaddingDp).toInt()
+                    )
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                keyboardRowsContainer = kbContainer
+                renderKeyboardRows()
+                wrapper.addView(kbContainer)
 
-            viewportContainer.addView(wrapper)
-                if (isFilterMode) {
+                viewportContainer.addView(wrapper)
+                if (isEmojiPickerOpen && isMediaSearchTyping) {
+                    renderMediaSearchStripResults()
+                } else if (isFilterMode) {
                     renderSearchResults()
                 }
                 renderClipChips()
@@ -1005,6 +1087,8 @@ class ClipMaxImeService : InputMethodService() {
                     pinnedOnly = false
                     isFilterMode = false
                     isEmojiPickerOpen = false
+                    isMediaSearchTyping = false
+                    isTenorKeyTyping = false
                     isSettingsOpen = false
                     settingsSavedScrollY = 0
                     isClipboardPanelOpen = !isClipboardPanelOpen
@@ -1116,12 +1200,14 @@ class ClipMaxImeService : InputMethodService() {
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setOnClickListener {
                 dismissPasteUndoCapsule()
-                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen
+                val wasPanelOpen = isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || isEmojiPickerOpen || isMediaSearchTyping || isTenorKeyTyping
                 val wasFilterMode = isFilterMode
                 toolbarState = 0
                 isSettingsOpen = false
                 isClipboardPanelOpen = false
                 isEmojiPickerOpen = false
+                isMediaSearchTyping = false
+                isTenorKeyTyping = false
                 clipboardSavedScrollY = 0
                 settingsSavedScrollY = 0
                 isFilterMode = false
@@ -1217,6 +1303,8 @@ class ClipMaxImeService : InputMethodService() {
                 pinnedOnly = true
                 isClipboardPanelOpen = true
                 isEmojiPickerOpen = false
+                isMediaSearchTyping = false
+                isTenorKeyTyping = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -1248,6 +1336,8 @@ class ClipMaxImeService : InputMethodService() {
                 isFilterMode = true
                 isClipboardPanelOpen = false
                 isEmojiPickerOpen = false
+                isMediaSearchTyping = false
+                isTenorKeyTyping = false
                 clipboardSavedScrollY = 0
                 isSettingsOpen = false
                 settingsSavedScrollY = 0
@@ -1270,6 +1360,8 @@ class ClipMaxImeService : InputMethodService() {
             settingsSavedScrollY = 0
             isClipboardPanelOpen = false
             isEmojiPickerOpen = false
+            isMediaSearchTyping = false
+            isTenorKeyTyping = false
             clipboardSavedScrollY = 0
             isFilterMode = false
             pinnedOnly = false
@@ -1757,6 +1849,81 @@ class ClipMaxImeService : InputMethodService() {
             })
         }
         list.addView(typingCard)
+
+        // 5B. GIFs & Tenor API Key Configuration Card
+        val tenorCard = makeSettingCard()
+        val effectiveKey = resolveEffectiveTenorApiKey()
+        val keyConfigured = MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)
+        val tenorTitle = TextView(this@ClipMaxImeService).apply {
+            text = if (keyConfigured) {
+                "GIF Search (Tenor API: ${MediaKeyboardSpec.TenorApiKeyConfig.maskKey(effectiveKey)})"
+            } else {
+                AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage)
+            }
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(pillPalette.sectionTitleFg)
+            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+        }
+        tenorCard.addView(tenorTitle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(6) })
+
+        val tenorRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val pasteKeyPill = makeOptionPill(
+            if (AppUiStrings.isArabic(keyboardLanguage)) "لصق المفتاح" else "Paste Key",
+            AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage),
+            dp(30)
+        ).apply {
+            applyPillVisual(this, false)
+            setOnClickListener {
+                pasteTenorApiKeyFromClipboard(openGifModeAfter = false)
+                renderFullImeView()
+            }
+        }
+        tenorRow.addView(pasteKeyPill, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+            marginEnd = pillGapPx
+        })
+
+        val typeKeyPill = makeOptionPill(
+            if (AppUiStrings.isArabic(keyboardLanguage)) "كتابة المفتاح" else "Type Key",
+            AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage),
+            dp(30)
+        ).apply {
+            applyPillVisual(this, true)
+            setOnClickListener {
+                startTenorKeyTypingSession()
+            }
+        }
+        tenorRow.addView(typeKeyPill, LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+            if (keyConfigured) marginEnd = pillGapPx
+        })
+
+        if (keyConfigured && !mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, null).isNullOrBlank()) {
+            val clearKeyPill = makeOptionPill(
+                AppUiStrings.tenorApiKeyClear(keyboardLanguage),
+                AppUiStrings.tenorApiKeyClear(keyboardLanguage),
+                dp(30)
+            ).apply {
+                applyPillVisual(this, false)
+                setTextColor(colorDangerText)
+                setOnClickListener {
+                    saveTenorApiKey("")
+                    renderFullImeView()
+                }
+            }
+            tenorRow.addView(clearKeyPill, LinearLayout.LayoutParams(0, dp(30), 0.7f))
+        }
+        tenorCard.addView(tenorRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        list.addView(tenorCard)
 
         // 6. Full-width Action Pill: Share ClipMax
         val shareLabel = AppUiStrings.shareClipMaxLabel(keyboardLanguage)
@@ -3424,11 +3591,21 @@ class ClipMaxImeService : InputMethodService() {
         val screenHeightDp = dm.heightPixels / density
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val heightPref = currentHeightPref()
-        return KeyboardLayoutSpec.computeViewportSpecDp(
-            heightPref = heightPref,
-            screenHeightDp = screenHeightDp,
-            isLandscape = isLandscape
-        )
+        val isExpandedMediaView = isEmojiPickerOpen && !isMediaSearchTyping && !isTenorKeyTyping &&
+            !isSettingsOpen && !isClipboardPanelOpen
+        return if (isExpandedMediaView) {
+            KeyboardLayoutSpec.computeMediaViewportSpecDp(
+                heightPref = heightPref,
+                screenHeightDp = screenHeightDp,
+                isLandscape = isLandscape
+            )
+        } else {
+            KeyboardLayoutSpec.computeViewportSpecDp(
+                heightPref = heightPref,
+                screenHeightDp = screenHeightDp,
+                isLandscape = isLandscape
+            )
+        }
     }
 
     private fun applyCanonicalViewportHeightInPlace() {
@@ -3449,7 +3626,7 @@ class ClipMaxImeService : InputMethodService() {
             heightPref = heightPref,
             screenHeightDp = screenHeightDp,
             isLandscape = isLandscape,
-            hasFilterBar = isFilterMode,
+            hasFilterBar = isFilterMode || (isEmojiPickerOpen && isMediaSearchTyping) || isTenorKeyTyping,
             hasStatusBanner = isInserting || isPasswordTarget
         )
         currentLayoutGeometry = geom
@@ -4216,7 +4393,161 @@ class ClipMaxImeService : InputMethodService() {
         root.addView(overlayHost)
     }
 
-    private fun buildEmojiPickerPanel(): View = FrameLayout(this).apply {
+    private var mediaStatusBannerRunnable: Runnable? = null
+
+    private fun resolveEffectiveTenorApiKey(): String {
+        val fromPref = runCatching {
+            mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, null)
+        }.getOrNull()
+        val fromRes = runCatching { getString(R.string.clipmax_tenor_api_key) }.getOrNull()
+        return MediaKeyboardSpec.TenorApiKeyConfig.resolveEffectiveKey(fromPref, fromRes)
+    }
+
+    private fun saveTenorApiKey(key: String) {
+        val cleaned = key.trim()
+        mediaPreferences.edit().apply {
+            if (cleaned.isEmpty()) remove(MediaKeyboardSpec.PREF_TENOR_API_KEY)
+            else putString(MediaKeyboardSpec.PREF_TENOR_API_KEY, cleaned)
+        }.apply()
+        gifProvider.updateApiKey(cleaned)
+        gifFetchResult = null
+        gifIsLoading = false
+        gifRequestGen++
+        if (cleaned.isNotEmpty() && isEmojiPickerOpen && currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+            loadGifsForCurrentState()
+        }
+    }
+
+    private fun pasteTenorApiKeyFromClipboard(openGifModeAfter: Boolean) {
+        val cm = clipboardManager ?: (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)
+        val clip = runCatching { cm?.primaryClip }.getOrNull()
+        val pasted = if (clip != null && clip.itemCount > 0) {
+            clip.getItemAt(0).coerceToText(this)?.toString()?.trim().orEmpty()
+        } else {
+            ""
+        }
+        if (pasted.isEmpty()) {
+            showMediaStatusBanner(
+                if (AppUiStrings.isArabic(keyboardLanguage)) "الحافظة فارغة — انسخ مفتاح Tenor API أولاً."
+                else "Clipboard is empty — copy your Tenor API key first."
+            )
+            return
+        }
+        saveTenorApiKey(pasted)
+        if (openGifModeAfter) {
+            isSettingsOpen = false
+            isClipboardPanelOpen = false
+            isFilterMode = false
+            isTenorKeyTyping = false
+            isMediaSearchTyping = false
+            isEmojiPickerOpen = true
+            currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
+            loadGifsForCurrentState()
+            renderFullImeView()
+        } else {
+            showMediaStatusBanner(
+                if (AppUiStrings.isArabic(keyboardLanguage)) "تم حفظ مفتاح Tenor API."
+                else "Tenor API key saved."
+            )
+        }
+    }
+
+    private fun startTenorKeyTypingSession() {
+        dismissPasteUndoCapsule()
+        isSettingsOpen = false
+        isClipboardPanelOpen = false
+        isFilterMode = false
+        isMediaSearchTyping = false
+        isTenorKeyTyping = true
+        tenorKeyDraft = runCatching {
+            mediaPreferences.getString(MediaKeyboardSpec.PREF_TENOR_API_KEY, "")
+        }.getOrNull().orEmpty()
+        modeController.toAlpha()
+        renderFullImeView()
+    }
+
+    private fun persistRecentStickers() {
+        mediaPreferences.edit()
+            .putString(MediaKeyboardSpec.PREF_RECENT_STICKERS, recentStickerHistory.encode())
+            .apply()
+    }
+
+    private fun persistRecentKaomojis() {
+        mediaPreferences.edit()
+            .putString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, recentKaomojiHistory.encode())
+            .apply()
+    }
+
+    private fun persistRecentGifs() {
+        mediaPreferences.edit()
+            .putString(MediaKeyboardSpec.PREF_RECENT_GIFS, recentGifHistory.encode())
+            .apply()
+    }
+
+    private fun showMediaStatusBanner(msg: String) {
+        val root = emojiPickerRoot
+        if (root == null) {
+            setStatus(msg)
+            return
+        }
+        mediaStatusBannerRunnable?.let(main::removeCallbacks)
+        for (i in root.childCount - 1 downTo 0) {
+            val child = root.getChildAt(i)
+            if (child.tag == "media_status_banner") {
+                root.removeViewAt(i)
+            }
+        }
+        val pill = TextView(this).apply {
+            tag = "media_status_banner"
+            text = msg
+            textSize = 12f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = roundedDrawable(
+                if (isClassicTheme) colorAltDeepBg else colorChipBg,
+                dp(12f),
+                colorAccent
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(6f)
+            }
+            isClickable = true
+            setOnClickListener { root.removeView(this) }
+        }
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply {
+            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val barH = if (isLandscape) MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_LANDSCAPE_DP else MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_PORTRAIT_DP
+            bottomMargin = dp(barH + 8f).toInt()
+            marginStart = dp(12)
+            marginEnd = dp(12)
+        }
+        root.addView(pill, lp)
+        pill.bringToFront()
+        val task = Runnable {
+            if (!serviceDestroyed && pill.parent === root) {
+                root.removeView(pill)
+            }
+        }
+        mediaStatusBannerRunnable = task
+        main.postDelayed(task, 3200L)
+    }
+
+    private fun startMediaSearchTyping() {
+        dismissPasteUndoCapsule()
+        dismissEmojiRemoveOverlay()
+        isMediaSearchTyping = true
+        isTenorKeyTyping = false
+        modeController.toAlpha()
+        renderFullImeView()
+    }
+
+    private fun buildMediaPickerPanel(): View = FrameLayout(this).apply {
         emojiPickerRoot = this
         setBackgroundColor(colorBg)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -4231,13 +4562,17 @@ class ClipMaxImeService : InputMethodService() {
 
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val headerH = dp(
-            if (isLandscape) EmojiInterfaceSpec.NAV_HEADER_HEIGHT_LANDSCAPE_DP
-            else EmojiInterfaceSpec.NAV_HEADER_HEIGHT_PORTRAIT_DP
+            if (isLandscape) MediaKeyboardSpec.TOP_BAR_HEIGHT_LANDSCAPE_DP
+            else MediaKeyboardSpec.TOP_BAR_HEIGHT_PORTRAIT_DP
+        ).toInt()
+        val bottomBarH = dp(
+            if (isLandscape) MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_LANDSCAPE_DP
+            else MediaKeyboardSpec.BOTTOM_BAR_HEIGHT_PORTRAIT_DP
         ).toInt()
         val navCtrlH = (headerH - dp(8)).coerceAtLeast(dp(28))
         val navHeaderBg = if (isClassicTheme) colorAltDeepBg else colorChipBg
 
-        // Category & Navigation Bar (ABC | Spaced Category Icons | Backspace)
+        // 1. TOP NAVIGATION BAR: [← Back] | [🔍 Search ...] | Mode-specific category strip
         val header = LinearLayout(this@ClipMaxImeService).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutDirection = uiLayoutDirection
@@ -4246,6 +4581,423 @@ class ClipMaxImeService : InputMethodService() {
             setBackgroundColor(navHeaderBg)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headerH)
         }
+
+        val backBtn = FrameLayout(this@ClipMaxImeService).apply {
+            background = roundedRipple(colorModBg, dp(navCtrlH / 2f), colorKeyBorder)
+            contentDescription = AppUiStrings.backToKeyboardA11y(keyboardLanguage)
+            isClickable = true
+            isFocusable = true
+            val arrowIcon = if (isUiRtl) IconType.ARROW_RIGHT else IconType.ARROW_LEFT
+            val iv = createIconView(IconDrawable(arrowIcon, colorKeyText, 15f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                dismissPasteUndoCapsule()
+                dismissEmojiRemoveOverlay()
+                if (mediaSearchQuery.isNotBlank()) {
+                    mediaSearchQuery = ""
+                    if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+                        loadGifsForCurrentState()
+                    }
+                    renderFullImeView()
+                } else {
+                    isEmojiPickerOpen = false
+                    isMediaSearchTyping = false
+                    isTenorKeyTyping = false
+                    renderFullImeView()
+                }
+            }
+        }
+        header.addView(backBtn, LinearLayout.LayoutParams(navCtrlH, navCtrlH).apply {
+            marginEnd = dp(6)
+        })
+
+        // Search pill/button inside top bar
+        val isSearching = mediaSearchQuery.isNotBlank()
+        val showSearchLabel = isSearching ||
+            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.EMOJI ||
+            currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS
+
+        val searchControl = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            val pillRadius = dp(navCtrlH / 2f)
+            background = roundedRipple(
+                if (isSearching) colorActiveTabBg else colorModBg,
+                pillRadius,
+                if (isSearching) colorAccent else colorKeyBorder
+            )
+            if (showSearchLabel) {
+                setPadding(dp(10), 0, if (isSearching) dp(6) else dp(12), 0)
+            }
+            contentDescription = when (currentMediaSubMode) {
+                MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
+                MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
+                MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
+                MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
+            }
+            val iconColor = if (isSearching) colorActiveTabText else colorModText
+            val iconIv = createIconView(IconDrawable(IconType.SEARCH, iconColor, 14f))
+            addView(iconIv, if (showSearchLabel) {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            } else {
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            })
+
+            if (showSearchLabel) {
+                val queryLabel = TextView(this@ClipMaxImeService).apply {
+                    text = if (isSearching) mediaSearchQuery else AppUiStrings.searchMediaPlaceholder(keyboardLanguage).trimEnd('…', '.')
+                    textSize = 12f
+                    typeface = if (isSearching) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    setTextColor(if (isSearching) colorActiveTabText else colorHintText)
+                    setSingleLine(true)
+                    ellipsize = TextUtils.TruncateAt.END
+                    includeFontPadding = false
+                }
+                addView(queryLabel, LinearLayout.LayoutParams(
+                    if (isSearching) 0 else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    if (isSearching) 1f else 0f
+                ).apply {
+                    marginStart = dp(5)
+                })
+            }
+
+            if (isSearching) {
+                val clearSearchBtn = FrameLayout(this@ClipMaxImeService).apply {
+                    contentDescription = AppUiStrings.clearSearchQueryA11y(keyboardLanguage)
+                    isClickable = true
+                    isFocusable = true
+                    background = roundedRipple(0, dp(10f), 0)
+                    val iv = createIconView(IconDrawable(IconType.CLOSE, colorActiveTabText, 11f))
+                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                    setOnClickListener {
+                        mediaSearchQuery = ""
+                        if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+                            loadGifsForCurrentState()
+                        }
+                        renderFullImeView()
+                    }
+                }
+                addView(clearSearchBtn, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    marginStart = dp(4)
+                })
+            }
+
+            setOnClickListener { startMediaSearchTyping() }
+        }
+
+        if (isSearching) {
+            header.addView(searchControl, LinearLayout.LayoutParams(0, navCtrlH, 1f))
+        } else {
+            val ctrlW = if (showSearchLabel) ViewGroup.LayoutParams.WRAP_CONTENT else navCtrlH
+            header.addView(searchControl, LinearLayout.LayoutParams(ctrlW, navCtrlH).apply {
+                marginEnd = dp(6)
+            })
+        }
+
+        // Mode-specific Category Strip (shown when not showing expanded search pill)
+        if (!isSearching) {
+            when (currentMediaSubMode) {
+                MediaKeyboardSpec.MediaSubMode.EMOJI -> {
+                    val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutDirection = uiLayoutDirection
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    }
+                    emojiTabsScrollView = tabsScroll
+                    val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutDirection = uiLayoutDirection
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    emojiTabViews.clear()
+                    emojiScrollTabController.reset(resolveActiveEmojiTabIndex())
+                    val tabW = dp(EmojiInterfaceSpec.TAB_WIDTH_DP).toInt()
+                    val tabGap = dp(EmojiInterfaceSpec.TAB_GAP_DP).toInt()
+                    val totalTabs = 1 + EmojiCatalog.CATEGORIES.size
+                    for (tabIdx in 0 until totalTabs) {
+                        val tab = FrameLayout(this@ClipMaxImeService).apply {
+                            contentDescription = labelForEmojiTab(tabIdx)
+                            isClickable = true
+                            isFocusable = true
+                            val iv = createIconView(
+                                IconDrawable(iconTypeForEmojiTab(tabIdx), colorModText, EmojiInterfaceSpec.TAB_ICON_SIZE_DP)
+                            )
+                            tag = iv
+                            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                            setOnClickListener {
+                                dismissEmojiRemoveOverlay()
+                                val targetView = emojiSectionViews.getOrNull(tabIdx)
+                                val targetY = targetView?.top ?: 0
+                                selectedEmojiCategoryIdx = emojiScrollTabController.onTabSelected(
+                                    tabIdx = tabIdx,
+                                    targetScrollY = targetY,
+                                    nowMs = SystemClock.elapsedRealtime()
+                                )
+                                updateEmojiCategoryTabsUI()
+                                if (targetView != null) {
+                                    emojiScrollView?.smoothScrollTo(0, targetY)
+                                } else {
+                                    emojiScrollView?.scrollTo(0, 0)
+                                }
+                            }
+                        }
+                        emojiTabViews.add(tabIdx to tab)
+                        tabsRow.addView(tab, LinearLayout.LayoutParams(tabW, navCtrlH).apply {
+                            if (tabIdx < totalTabs - 1) marginEnd = tabGap
+                        })
+                    }
+                    tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    header.addView(tabsScroll)
+                }
+
+                MediaKeyboardSpec.MediaSubMode.STICKERS -> {
+                    val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutDirection = uiLayoutDirection
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    }
+                    stickerTabsScrollView = tabsScroll
+                    val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutDirection = uiLayoutDirection
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    stickerTabViews.clear()
+                    val defaultStickerTab = if (recentStickerHistory.items().isEmpty() && selectedStickerSectionIdx == 0) 1 else selectedStickerSectionIdx.coerceIn(0, StickerCatalog.PACKS.size)
+                    selectedStickerSectionIdx = defaultStickerTab
+                    stickerScrollTabController.reset(defaultStickerTab)
+                    val tabSize = navCtrlH
+                    val tabGap = dp(6)
+                    val totalStickerTabs = 1 + StickerCatalog.PACKS.size
+                    val gen = mediaViewportGen
+                    for (tabIdx in 0 until totalStickerTabs) {
+                        val tab = FrameLayout(this@ClipMaxImeService).apply {
+                            contentDescription = if (tabIdx == 0) {
+                                AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                            } else {
+                                val pack = StickerCatalog.PACKS[tabIdx - 1]
+                                if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+                            }
+                            isClickable = true
+                            isFocusable = true
+                            if (tabIdx == 0) {
+                                val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, colorModText, 17f))
+                                tag = iv
+                                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                            } else {
+                                val pack = StickerCatalog.PACKS[tabIdx - 1]
+                                val iv = ImageView(this@ClipMaxImeService).apply {
+                                    scaleType = ImageView.ScaleType.FIT_CENTER
+                                    setPadding(dp(4), dp(4), dp(4), dp(4))
+                                }
+                                loadStickerBitmapAsync(pack.iconAssetPath, iv, gen)
+                                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                            }
+                            setOnClickListener {
+                                val targetView = stickerSectionViews.getOrNull(tabIdx)
+                                val targetY = targetView?.top ?: 0
+                                selectedStickerSectionIdx = stickerScrollTabController.onTabSelected(
+                                    tabIdx = tabIdx,
+                                    targetScrollY = targetY,
+                                    nowMs = SystemClock.elapsedRealtime()
+                                )
+                                updateStickerCategoryTabsUI()
+                                if (targetView != null) {
+                                    stickerScrollView?.smoothScrollTo(0, targetY)
+                                } else {
+                                    stickerScrollView?.scrollTo(0, 0)
+                                }
+                            }
+                        }
+                        stickerTabViews.add(tabIdx to tab)
+                        tabsRow.addView(tab, LinearLayout.LayoutParams(tabSize, navCtrlH).apply {
+                            if (tabIdx < totalStickerTabs - 1) marginEnd = tabGap
+                        })
+                    }
+                    tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    header.addView(tabsScroll)
+                }
+
+                MediaKeyboardSpec.MediaSubMode.KAOMOJI -> {
+                    val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutDirection = uiLayoutDirection
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    }
+                    kaomojiTabsScrollView = tabsScroll
+                    val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutDirection = uiLayoutDirection
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    kaomojiTabViews.clear()
+                    val defaultKaomojiTab = if (recentKaomojiHistory.items().isEmpty() && selectedKaomojiCategoryIdx == 0) 1 else selectedKaomojiCategoryIdx.coerceIn(0, KaomojiCatalog.CATEGORIES.size)
+                    selectedKaomojiCategoryIdx = defaultKaomojiTab
+                    kaomojiScrollTabController.reset(defaultKaomojiTab)
+
+                    // Recent clock icon tab at idx 0
+                    val recentTab = FrameLayout(this@ClipMaxImeService).apply {
+                        contentDescription = AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                        isClickable = true
+                        isFocusable = true
+                        val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, colorModText, 16.5f))
+                        tag = iv
+                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                        setOnClickListener {
+                            val targetView = kaomojiSectionViews.getOrNull(0)
+                            val targetY = targetView?.top ?: 0
+                            selectedKaomojiCategoryIdx = kaomojiScrollTabController.onTabSelected(
+                                tabIdx = 0,
+                                targetScrollY = targetY,
+                                nowMs = SystemClock.elapsedRealtime()
+                            )
+                            updateKaomojiCategoryTabsUI()
+                            if (targetView != null) kaomojiScrollView?.smoothScrollTo(0, targetY)
+                            else kaomojiScrollView?.scrollTo(0, 0)
+                        }
+                    }
+                    kaomojiRecentTabView = recentTab
+                    tabsRow.addView(recentTab, LinearLayout.LayoutParams(navCtrlH, navCtrlH).apply {
+                        marginEnd = dp(5)
+                    })
+
+                    KaomojiCatalog.CATEGORIES.forEachIndexed { idx, cat ->
+                        val tabIdx = idx + 1
+                        val pill = TextView(this@ClipMaxImeService).apply {
+                            text = if (AppUiStrings.isArabic(keyboardLanguage)) cat.labelAr else cat.labelEn
+                            textSize = 12f
+                            gravity = Gravity.CENTER
+                            includeFontPadding = false
+                            setSingleLine(true)
+                            isClickable = true
+                            isFocusable = true
+                            setPadding(dp(11), 0, dp(11), 0)
+                            setOnClickListener {
+                                val targetView = kaomojiSectionViews.getOrNull(tabIdx)
+                                val targetY = targetView?.top ?: 0
+                                selectedKaomojiCategoryIdx = kaomojiScrollTabController.onTabSelected(
+                                    tabIdx = tabIdx,
+                                    targetScrollY = targetY,
+                                    nowMs = SystemClock.elapsedRealtime()
+                                )
+                                updateKaomojiCategoryTabsUI()
+                                if (targetView != null) kaomojiScrollView?.smoothScrollTo(0, targetY)
+                                else kaomojiScrollView?.scrollTo(0, 0)
+                            }
+                        }
+                        kaomojiTabViews.add(tabIdx to pill)
+                        tabsRow.addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
+                            if (idx < KaomojiCatalog.CATEGORIES.lastIndex) marginEnd = dp(5)
+                        })
+                    }
+                    tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    header.addView(tabsScroll)
+                }
+
+                MediaKeyboardSpec.MediaSubMode.GIFS -> {
+                    val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutDirection = uiLayoutDirection
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    }
+                    val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutDirection = uiLayoutDirection
+                        gravity = Gravity.CENTER_VERTICAL
+                    }
+                    val recentSelected = selectedGifCategoryTag == "recent"
+                    val recentBtn = FrameLayout(this@ClipMaxImeService).apply {
+                        contentDescription = AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(
+                            if (recentSelected) colorActiveTabBg else 0,
+                            dp(navCtrlH / 2f),
+                            if (recentSelected) colorAccent else 0
+                        )
+                        val iv = createIconView(IconDrawable(IconType.EMOJI_RECENT, if (recentSelected) colorActiveTabText else colorModText, 16.5f))
+                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                        setOnClickListener {
+                            selectedGifCategoryTag = "recent"
+                            mediaSearchQuery = ""
+                            renderFullImeView()
+                        }
+                    }
+                    tabsRow.addView(recentBtn, LinearLayout.LayoutParams(navCtrlH, navCtrlH).apply {
+                        marginEnd = dp(5)
+                    })
+
+                    TenorV2GifProvider.FEATURED_CATEGORIES.filter { it.first != "recent" }.forEachIndexed { idx, (tag, label) ->
+                        val active = selectedGifCategoryTag == tag
+                        val pill = TextView(this@ClipMaxImeService).apply {
+                            text = localizeGifCategoryLabel(tag, label)
+                            textSize = 12f
+                            typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                            gravity = Gravity.CENTER
+                            includeFontPadding = false
+                            setSingleLine(true)
+                            isClickable = true
+                            isFocusable = true
+                            setTextColor(if (active) colorActiveTabText else colorModText)
+                            background = roundedRipple(
+                                if (active) colorActiveTabBg else 0,
+                                dp(navCtrlH / 2f),
+                                if (active) colorAccent else 0
+                            )
+                            setPadding(dp(11), 0, dp(11), 0)
+                            setOnClickListener {
+                                selectedGifCategoryTag = tag
+                                mediaSearchQuery = ""
+                                loadGifsForCurrentState()
+                                renderFullImeView()
+                            }
+                        }
+                        tabsRow.addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
+                            if (idx < TenorV2GifProvider.FEATURED_CATEGORIES.size - 2) marginEnd = dp(5)
+                        })
+                    }
+                    tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    header.addView(tabsScroll)
+                }
+            }
+        }
+
+        column.addView(header)
+
+        val topDivider = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }
+        column.addView(topDivider)
+
+        // 2. CONTENT BODY (switches cleanly per active sub-mode)
+        when (currentMediaSubMode) {
+            MediaKeyboardSpec.MediaSubMode.EMOJI -> column.addView(buildEmojiBrowserBody())
+            MediaKeyboardSpec.MediaSubMode.STICKERS -> column.addView(buildStickersBrowserBody())
+            MediaKeyboardSpec.MediaSubMode.KAOMOJI -> column.addView(buildKaomojiBrowserBody())
+            MediaKeyboardSpec.MediaSubMode.GIFS -> column.addView(buildGifBrowserBody())
+        }
+
+        val bottomDivider = View(this@ClipMaxImeService).apply {
+            setBackgroundColor(colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }
+        column.addView(bottomDivider)
+
+        // 3. SHARED BOTTOM SELECTOR BAR: [ABC] | [ 😊 | GIF | Sticker | :-) ] | [⌫]
+        val bottomBar = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setBackgroundColor(navHeaderBg)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, bottomBarH)
+        }
+        val ctrlH = (bottomBarH - dp(8)).coerceAtLeast(dp(28))
 
         val abcBtn = TextView(this@ClipMaxImeService).apply {
             text = KeyboardLayoutSpec.languageUiSpec(keyboardLanguage).alphaToggleLabel
@@ -4258,73 +5010,91 @@ class ClipMaxImeService : InputMethodService() {
             minWidth = dp(48)
             setPadding(dp(12), 0, dp(12), 0)
             setTextColor(colorKeyText)
-            background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
+            background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
             contentDescription = AppUiStrings.returnToKeyboardA11y(keyboardLanguage)
             setOnClickListener {
                 dismissPasteUndoCapsule()
                 dismissEmojiRemoveOverlay()
                 isEmojiPickerOpen = false
+                isMediaSearchTyping = false
+                isTenorKeyTyping = false
                 modeController.toAlpha()
                 renderFullImeView()
             }
         }
-        header.addView(abcBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, navCtrlH).apply {
-            marginEnd = dp(8)
+        bottomBar.addView(abcBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctrlH).apply {
+            marginEnd = dp(6)
         })
 
-        val tabsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
-            isHorizontalScrollBarEnabled = false
-            layoutDirection = uiLayoutDirection
+        // Centered 4-Mode Selector Group
+        val modeGroup = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         }
-        emojiTabsScrollView = tabsScroll
-        val tabsRow = LinearLayout(this@ClipMaxImeService).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = uiLayoutDirection
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        emojiTabViews.clear()
-        emojiScrollTabController.reset(resolveActiveEmojiTabIndex())
-        val tabW = dp(EmojiInterfaceSpec.TAB_WIDTH_DP).toInt()
-        val tabGap = dp(EmojiInterfaceSpec.TAB_GAP_DP).toInt()
-        val totalTabs = 1 + EmojiCatalog.CATEGORIES.size
-        for (tabIdx in 0 until totalTabs) {
-            val tab = FrameLayout(this@ClipMaxImeService).apply {
-                contentDescription = labelForEmojiTab(tabIdx)
+
+        fun makeModePill(
+            mode: MediaKeyboardSpec.MediaSubMode,
+            a11yLabel: String,
+            iconType: IconType? = null,
+            textLabel: String? = null
+        ): FrameLayout {
+            val active = (currentMediaSubMode == mode)
+            val bg = if (active) colorActiveTabBg else colorModBg
+            val fg = if (active) colorActiveTabText else colorModText
+            val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
+            return FrameLayout(this@ClipMaxImeService).apply {
+                contentDescription = a11yLabel
                 isClickable = true
                 isFocusable = true
-                val iv = createIconView(
-                    IconDrawable(iconTypeForEmojiTab(tabIdx), colorModText, EmojiInterfaceSpec.TAB_ICON_SIZE_DP)
-                )
-                tag = iv
-                addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                background = roundedRipple(bg, dp(ctrlH / 2f), stroke)
+                if (iconType != null) {
+                    val iv = createIconView(IconDrawable(iconType, fg, 17f))
+                    addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                } else {
+                    val tv = TextView(this@ClipMaxImeService).apply {
+                        text = textLabel
+                        textSize = if (textLabel == "GIF") 12.5f else 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(fg)
+                        includeFontPadding = false
+                        gravity = Gravity.CENTER
+                    }
+                    addView(tv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                }
                 setOnClickListener {
-                    dismissEmojiRemoveOverlay()
-                    val targetView = emojiSectionViews.getOrNull(tabIdx)
-                    val targetY = targetView?.top ?: 0
-                    selectedEmojiCategoryIdx = emojiScrollTabController.onTabSelected(
-                        tabIdx = tabIdx,
-                        targetScrollY = targetY,
-                        nowMs = SystemClock.elapsedRealtime()
-                    )
-                    updateEmojiCategoryTabsUI()
-                    if (targetView != null) {
-                        emojiScrollView?.smoothScrollTo(0, targetY)
-                    } else {
-                        emojiScrollView?.scrollTo(0, 0)
+                    if (currentMediaSubMode != mode) {
+                        dismissPasteUndoCapsule()
+                        dismissEmojiRemoveOverlay()
+                        currentMediaSubMode = mode
+                        mediaSearchQuery = ""
+                        isMediaSearchTyping = false
+                        isTenorKeyTyping = false
+                        if (mode == MediaKeyboardSpec.MediaSubMode.GIFS && gifFetchResult == null && !gifIsLoading) {
+                            loadGifsForCurrentState()
+                        }
+                        renderFullImeView()
                     }
                 }
             }
-            emojiTabViews.add(tabIdx to tab)
-            tabsRow.addView(tab, LinearLayout.LayoutParams(tabW, navCtrlH).apply {
-                if (tabIdx < totalTabs - 1) marginEnd = tabGap
-            })
         }
-        tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        header.addView(tabsScroll)
+
+        val pillW = dp(44)
+        val pillGap = dp(6)
+        val emojiPill = makeModePill(MediaKeyboardSpec.MediaSubMode.EMOJI, AppUiStrings.mediaEmojiTabA11y(keyboardLanguage), iconType = IconType.EMOJI)
+        val gifPill = makeModePill(MediaKeyboardSpec.MediaSubMode.GIFS, AppUiStrings.mediaGifTabA11y(keyboardLanguage), textLabel = "GIF")
+        val stickerPill = makeModePill(MediaKeyboardSpec.MediaSubMode.STICKERS, AppUiStrings.mediaStickersTabA11y(keyboardLanguage), iconType = IconType.MEDIA_STICKER)
+        val kaomojiPill = makeModePill(MediaKeyboardSpec.MediaSubMode.KAOMOJI, AppUiStrings.mediaKaomojiTabA11y(keyboardLanguage), textLabel = ":-)")
+
+        modeGroup.addView(emojiPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
+        modeGroup.addView(gifPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
+        modeGroup.addView(stickerPill, LinearLayout.LayoutParams(pillW, ctrlH).apply { marginEnd = pillGap })
+        modeGroup.addView(kaomojiPill, LinearLayout.LayoutParams(pillW, ctrlH))
+        bottomBar.addView(modeGroup)
 
         val backspaceBtn = FrameLayout(this@ClipMaxImeService).apply {
-            background = roundedRipple(colorModBg, dp(9f), colorKeyBorder)
+            background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
             contentDescription = AppUiStrings.deleteKeyA11y(keyboardLanguage)
             isClickable = true
             isFocusable = true
@@ -4332,19 +5102,31 @@ class ClipMaxImeService : InputMethodService() {
             addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
             setupBackspaceRepeat(this)
         }
-        header.addView(backspaceBtn, LinearLayout.LayoutParams(dp(EmojiInterfaceSpec.BACKSPACE_WIDTH_DP).toInt(), navCtrlH).apply {
-            marginStart = dp(8)
+        bottomBar.addView(backspaceBtn, LinearLayout.LayoutParams(dp(EmojiInterfaceSpec.BACKSPACE_WIDTH_DP).toInt(), ctrlH).apply {
+            marginStart = dp(6)
         })
 
-        column.addView(header)
+        column.addView(bottomBar)
+        addView(column)
+    }
 
-        val divider = View(this@ClipMaxImeService).apply {
-            setBackgroundColor(colorKeyBorder)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+    private fun localizeGifCategoryLabel(tag: String, defaultEn: String): String {
+        if (!AppUiStrings.isArabic(keyboardLanguage)) return defaultEn
+        return when (tag) {
+            "featured" -> "مميز"
+            "happy" -> "سعيد"
+            "love" -> "حب"
+            "haha" -> "ضحك"
+            "wow" -> "مذهل"
+            "thumbs up" -> "موافق"
+            "party" -> "احتفال"
+            "sad" -> "حزين"
+            else -> defaultEn
         }
-        column.addView(divider)
+    }
 
-        val scroll = android.widget.ScrollView(this@ClipMaxImeService).apply {
+    private fun buildEmojiBrowserBody(): View {
+        val scroll = android.widget.ScrollView(this).apply {
             isVerticalScrollBarEnabled = true
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             setOnTouchListener { _, event ->
@@ -4353,40 +5135,94 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 false
             }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 setOnScrollChangeListener { v, _, scrollY, _, _ ->
-                    val tops = emojiSectionViews.map { it.top }
-                    val bottomReached = scrollY > 0 && !v.canScrollVertically(1)
-                    val changed = emojiScrollTabController.onVerticalScroll(
-                        sectionTops = tops,
-                        scrollY = scrollY,
-                        bottomReached = bottomReached,
-                        anchorOffsetPx = dp(32),
-                        settleTolerancePx = dp(4),
-                        nowMs = SystemClock.elapsedRealtime()
-                    )
-                    if (changed) {
-                        selectedEmojiCategoryIdx = emojiScrollTabController.activeTabIdx
-                        updateEmojiCategoryTabsUI()
+                    if (mediaSearchQuery.isBlank()) {
+                        val tops = emojiSectionViews.map { it.top }
+                        val bottomReached = scrollY > 0 && !v.canScrollVertically(1)
+                        val changed = emojiScrollTabController.onVerticalScroll(
+                            sectionTops = tops,
+                            scrollY = scrollY,
+                            bottomReached = bottomReached,
+                            anchorOffsetPx = dp(32),
+                            settleTolerancePx = dp(4),
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        if (changed) {
+                            selectedEmojiCategoryIdx = emojiScrollTabController.activeTabIdx
+                            updateEmojiCategoryTabsUI()
+                        }
                     }
                 }
             }
         }
         emojiScrollView = scroll
 
-        val grid = LinearLayout(this@ClipMaxImeService).apply {
+        val grid = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = uiLayoutDirection
             setPadding(dp(6), dp(6), dp(6), dp(8))
         }
         emojiGridContainer = grid
         scroll.addView(grid, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        column.addView(scroll)
 
-        addView(column)
+        if (mediaSearchQuery.isNotBlank()) {
+            populateEmojiSearchResults(grid, EmojiCatalog.search(mediaSearchQuery))
+        } else {
+            updateEmojiCategoryTabsUI()
+            populateEmojiGrid()
+        }
+        return scroll
+    }
 
-        updateEmojiCategoryTabsUI()
-        populateEmojiGrid()
+    private fun populateEmojiSearchResults(grid: LinearLayout, results: List<String>) {
+        grid.removeAllViews()
+        emojiSectionViews.clear()
+        emojiRecentSectionContainer = null
+        val (cols, cellH, rowGap) = emojiGridMetrics()
+        if (results.isEmpty()) {
+            grid.addView(TextView(this).apply {
+                text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد رموز تعبيرية مطابقة" else "No matching emojis"
+                textSize = 13f
+                setTextColor(colorHintText)
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(32), dp(16), dp(16))
+            })
+            return
+        }
+        var i = 0
+        while (i < results.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
+                    bottomMargin = rowGap
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < results.size) {
+                    val emoji = results[idx]
+                    val cell = TextView(this).apply {
+                        text = emoji
+                        textSize = EmojiInterfaceSpec.CELL_TEXT_SIZE_SP
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(0x00000000, dp(10f), 0)
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleEmojiPress(emoji)
+                        }
+                    }
+                    row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                }
+            }
+            grid.addView(row)
+            i += cols
+        }
     }
 
     private fun updateEmojiCategoryTabsUI() {
@@ -4561,7 +5397,11 @@ class ClipMaxImeService : InputMethodService() {
         dismissPasteUndoCapsule()
         dismissEmojiRemoveOverlay()
         shiftStateMachine.onNonLetterInput()
-        if (isFilterMode) {
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
+            mediaSearchQuery += emoji
+            updateMediaSearchUI()
+            renderMediaSearchStripResults()
+        } else if (isFilterMode) {
             keyboardSearchQuery += emoji
             updateSearchUI()
             runKeyboardSearch()
@@ -4579,6 +5419,1263 @@ class ClipMaxImeService : InputMethodService() {
         recentEmojiHistory.record(emoji)
         persistRecentEmojis()
         refreshRecentEmojiSectionInPlace()
+    }
+
+    // -------------------------------------------------------------------------
+    // STICKERS BROWSER (3 Packs: Reactions, Daily, Notes — 24 Bundled PNGs)
+    // -------------------------------------------------------------------------
+    private fun updateStickerCategoryTabsUI() {
+        val activeIdx = selectedStickerSectionIdx.coerceIn(0, StickerCatalog.PACKS.size)
+        var activeView: FrameLayout? = null
+        for ((tabIdx, tab) in stickerTabViews) {
+            val active = (tabIdx == activeIdx)
+            if (active) activeView = tab
+            val bg = if (active) colorActiveTabBg else 0
+            val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
+            tab.background = roundedRipple(bg, dp(16f), stroke)
+            if (tabIdx == 0) {
+                val fg = if (active) colorActiveTabText else colorModText
+                (tab.tag as? ImageView)?.setImageDrawable(IconDrawable(IconType.EMOJI_RECENT, fg, 17f))
+            }
+        }
+        val tabsScroll = stickerTabsScrollView
+        if (tabsScroll != null && activeView != null && tabsScroll.width > 0) {
+            val targetX = activeView.left - (tabsScroll.width - activeView.width) / 2
+            tabsScroll.smoothScrollTo(targetX.coerceAtLeast(0), 0)
+        }
+    }
+
+    private fun loadStickerBitmapAsync(assetPath: String, imageView: ImageView, expectedGen: Int) {
+        val cached = stickerBitmapCache.get(assetPath)
+        if (cached != null && !cached.isRecycled) {
+            imageView.setImageBitmap(cached)
+            return
+        }
+        imageView.tag = assetPath
+        submitSafely(mediaIoExecutor) {
+            val bmp = runCatching {
+                assets.open(assetPath).use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }
+            }.getOrNull()
+            if (bmp != null) {
+                stickerBitmapCache.put(assetPath, bmp)
+                main.post {
+                    if (!serviceDestroyed && expectedGen == mediaViewportGen && imageView.tag == assetPath) {
+                        imageView.setImageBitmap(bmp)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun createStickerTileView(item: StickerCatalog.StickerItem, heightPx: Int, gen: Int): FrameLayout {
+        val tileBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        return FrameLayout(this).apply {
+            contentDescription = item.title
+            isClickable = true
+            isFocusable = true
+            background = roundedRipple(tileBg, dp(12f), colorKeyBorder)
+            val iv = ImageView(this@ClipMaxImeService).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            }
+            loadStickerBitmapAsync(item.assetPath, iv, gen)
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+            setOnClickListener {
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                handleStickerPress(item)
+            }
+        }
+    }
+
+    private fun addStickerGridRows(
+        container: LinearLayout,
+        items: List<StickerCatalog.StickerItem>,
+        cols: Int,
+        tileHeightPx: Int,
+        gapPx: Int,
+        gen: Int
+    ) {
+        var i = 0
+        while (i < items.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, tileHeightPx).apply {
+                    bottomMargin = gapPx
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < items.size) {
+                    val tile = createStickerTileView(items[idx], tileHeightPx, gen)
+                    row.addView(tile, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                }
+            }
+            container.addView(row)
+            i += cols
+        }
+    }
+
+    private fun buildStickersBrowserBody(): View {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val cols = if (isLandscape) MediaKeyboardSpec.STICKER_COLS_LANDSCAPE else MediaKeyboardSpec.STICKER_COLS_PORTRAIT
+        val tileHeightPx = dp(if (isLandscape) 66 else 76)
+        val gapPx = dp(6)
+        val gen = mediaViewportGen
+
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+                    stickerScrollTabController.onUserTouchInteraction()
+                }
+                false
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                setOnScrollChangeListener { v, _, scrollY, _, _ ->
+                    if (mediaSearchQuery.isBlank()) {
+                        val tops = stickerSectionViews.map { it.top }
+                        val bottomReached = scrollY > 0 && !v.canScrollVertically(1)
+                        val changed = stickerScrollTabController.onVerticalScroll(
+                            sectionTops = tops,
+                            scrollY = scrollY,
+                            bottomReached = bottomReached,
+                            anchorOffsetPx = dp(32),
+                            settleTolerancePx = dp(4),
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        if (changed) {
+                            selectedStickerSectionIdx = stickerScrollTabController.activeTabIdx
+                            updateStickerCategoryTabsUI()
+                        }
+                    }
+                }
+            }
+        }
+        stickerScrollView = scroll
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            setPadding(dp(8), dp(6), dp(8), dp(10))
+        }
+        stickerSectionViews.clear()
+
+        if (mediaSearchQuery.isNotBlank()) {
+            val matches = StickerCatalog.search(mediaSearchQuery)
+            if (matches.isEmpty()) {
+                body.addView(TextView(this).apply {
+                    text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
+                    textSize = 13f
+                    setTextColor(colorHintText)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(16), dp(32), dp(16), dp(16))
+                })
+            } else {
+                addStickerGridRows(body, matches, cols, tileHeightPx, gapPx, gen)
+            }
+        } else {
+            // Section 0: Recent stickers
+            val recentSec = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(10)
+                }
+            }
+            val recentItems = recentStickerHistory.items()
+            if (recentItems.isNotEmpty()) {
+                recentSec.addView(TextView(this).apply {
+                    text = AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorHintText)
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    setPadding(dp(4), dp(4), dp(4), dp(6))
+                })
+                addStickerGridRows(recentSec, recentItems, cols, tileHeightPx, gapPx, gen)
+            }
+            stickerSectionViews.add(recentSec)
+            body.addView(recentSec)
+
+            // Sections 1..3: All 3 sticker packs (Reactions, Daily, Notes — all 24 PNGs)
+            for (pack in StickerCatalog.PACKS) {
+                val packSec = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(10)
+                    }
+                }
+                packSec.addView(TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorHintText)
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                })
+                addStickerGridRows(packSec, pack.items, cols, tileHeightPx, gapPx, gen)
+                stickerSectionViews.add(packSec)
+                body.addView(packSec)
+            }
+            updateStickerCategoryTabsUI()
+        }
+
+        scroll.addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return scroll
+    }
+
+    private fun commitRichMediaFile(
+        file: File,
+        mimeType: String,
+        description: String,
+        linkUri: android.net.Uri? = null
+    ): Boolean {
+        val conn = currentInputConnection
+        if (conn == null) {
+            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+            return false
+        }
+        val info = currentInputEditorInfo
+        val mimeSupported = MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, mimeType)
+        if (!mimeSupported) {
+            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+            return false
+        }
+        val contentUri = MediaContentProvider.uriForFile(file.name)
+        val clipDesc = ClipDescription(description, arrayOf(mimeType))
+        val inputContentInfo = InputContentInfo(contentUri, clipDesc, linkUri)
+        val committed = runCatching {
+            conn.commitContent(inputContentInfo, InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null)
+        }.getOrDefault(false)
+        if (!committed) {
+            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+        }
+        return committed
+    }
+
+    private fun handleStickerPress(item: StickerCatalog.StickerItem) {
+        dismissPasteUndoCapsule()
+        val conn = currentInputConnection
+        if (conn == null) {
+            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+            return
+        }
+        val info = currentInputEditorInfo
+        if (!MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, "image/png")) {
+            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+            return
+        }
+        val cacheName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item)
+        val cached = mediaCacheManager.getCachedFile(cacheName)
+        if (cached != null) {
+            if (commitRichMediaFile(cached, "image/png", item.title)) {
+                recentStickerHistory.record(item.id)
+                persistRecentStickers()
+            }
+            return
+        }
+        submitSafely(mediaIoExecutor) {
+            val file = mediaCacheManager.ensureAssetCached(assets, item.assetPath, cacheName)
+            main.post {
+                if (serviceDestroyed) return@post
+                if (file == null) {
+                    showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+                    return@post
+                }
+                if (commitRichMediaFile(file, "image/png", item.title)) {
+                    recentStickerHistory.record(item.id)
+                    persistRecentStickers()
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // KAOMOJI BROWSER (All 13 Categories + Actual Kaomoji Entries + Search)
+    // -------------------------------------------------------------------------
+    private fun updateKaomojiCategoryTabsUI() {
+        val activeIdx = selectedKaomojiCategoryIdx.coerceIn(0, KaomojiCatalog.CATEGORIES.size)
+        var activeView: View? = null
+
+        val recentTab = kaomojiRecentTabView
+        if (recentTab != null) {
+            val recentActive = (activeIdx == 0)
+            if (recentActive) activeView = recentTab
+            val bg = if (recentActive) colorActiveTabBg else 0
+            val fg = if (recentActive) colorActiveTabText else colorModText
+            val stroke = if (recentActive) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
+            recentTab.background = roundedRipple(bg, dp(16f), stroke)
+            (recentTab.tag as? ImageView)?.setImageDrawable(IconDrawable(IconType.EMOJI_RECENT, fg, 16.5f))
+        }
+
+        for ((tabIdx, pill) in kaomojiTabViews) {
+            val active = (tabIdx == activeIdx)
+            if (active) activeView = pill
+            val bg = if (active) colorActiveTabBg else 0
+            val fg = if (active) colorActiveTabText else colorModText
+            val stroke = if (active) (if (isClassicTheme) colorAccent else colorChipBorder) else 0
+            pill.setTextColor(fg)
+            pill.typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            pill.background = roundedRipple(bg, dp(16f), stroke)
+        }
+        val tabsScroll = kaomojiTabsScrollView
+        if (tabsScroll != null && activeView != null && tabsScroll.width > 0) {
+            val targetX = activeView!!.left - (tabsScroll.width - activeView!!.width) / 2
+            tabsScroll.smoothScrollTo(targetX.coerceAtLeast(0), 0)
+        }
+    }
+
+    private fun addKaomojiGridRows(
+        container: LinearLayout,
+        items: List<String>,
+        cols: Int,
+        cellH: Int,
+        gapPx: Int
+    ) {
+        val cardBg = if (isClassicTheme) colorKeyBg else 0x00000000
+        var i = 0
+        while (i < items.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cellH).apply {
+                    bottomMargin = gapPx
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < items.size) {
+                    val kaomoji = items[idx]
+                    val tv = TextView(this).apply {
+                        text = kaomoji
+                        textSize = 13.5f
+                        setTextColor(colorKeyText)
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setSingleLine(true)
+                        setPadding(dp(2), 0, dp(2), 0)
+                        isClickable = true
+                        isFocusable = true
+                        background = roundedRipple(cardBg, dp(10f), if (isClassicTheme) colorKeyBorder else 0)
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleKaomojiPress(kaomoji)
+                        }
+                    }
+                    row.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                }
+            }
+            container.addView(row)
+            i += cols
+        }
+    }
+
+    private fun buildKaomojiBrowserBody(): View {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val cols = if (isLandscape) MediaKeyboardSpec.KAOMOJI_COLS_LANDSCAPE else MediaKeyboardSpec.KAOMOJI_COLS_PORTRAIT
+        val cellH = dp(if (isLandscape) 38 else 46)
+        val gapPx = dp(4)
+
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+                    kaomojiScrollTabController.onUserTouchInteraction()
+                }
+                false
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                setOnScrollChangeListener { v, _, scrollY, _, _ ->
+                    if (mediaSearchQuery.isBlank()) {
+                        val tops = kaomojiSectionViews.map { it.top }
+                        val bottomReached = scrollY > 0 && !v.canScrollVertically(1)
+                        val changed = kaomojiScrollTabController.onVerticalScroll(
+                            sectionTops = tops,
+                            scrollY = scrollY,
+                            bottomReached = bottomReached,
+                            anchorOffsetPx = dp(32),
+                            settleTolerancePx = dp(4),
+                            nowMs = SystemClock.elapsedRealtime()
+                        )
+                        if (changed) {
+                            selectedKaomojiCategoryIdx = kaomojiScrollTabController.activeTabIdx
+                            updateKaomojiCategoryTabsUI()
+                        }
+                    }
+                }
+            }
+        }
+        kaomojiScrollView = scroll
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            setPadding(dp(6), dp(6), dp(6), dp(10))
+        }
+        kaomojiSectionViews.clear()
+
+        if (mediaSearchQuery.isNotBlank()) {
+            val matches = KaomojiCatalog.search(mediaSearchQuery)
+            if (matches.isEmpty()) {
+                body.addView(TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد رموز كاوماوجي مطابقة" else "No matching kaomoji"
+                    textSize = 13f
+                    setTextColor(colorHintText)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(16), dp(32), dp(16), dp(16))
+                })
+            } else {
+                addKaomojiGridRows(body, matches, cols, cellH, gapPx)
+            }
+        } else {
+            // Section 0: Recent Kaomoji
+            val recentSec = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(8)
+                }
+            }
+            val recentEntries = recentKaomojiHistory.items()
+            if (recentEntries.isNotEmpty()) {
+                recentSec.addView(TextView(this).apply {
+                    text = AppUiStrings.emojiRecentLabel(keyboardLanguage)
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorHintText)
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                })
+                addKaomojiGridRows(recentSec, recentEntries, cols, cellH, gapPx)
+            }
+            kaomojiSectionViews.add(recentSec)
+            body.addView(recentSec)
+
+            // Sections 1..13: All 13 Kaomoji Categories + Actual Entries
+            for (cat in KaomojiCatalog.CATEGORIES) {
+                val catSec = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(10)
+                    }
+                }
+                catSec.addView(TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) cat.labelAr else cat.labelEn
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorHintText)
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    setPadding(dp(8), dp(6), dp(8), dp(4))
+                })
+                addKaomojiGridRows(catSec, cat.items, cols, cellH, gapPx)
+                kaomojiSectionViews.add(catSec)
+                body.addView(catSec)
+            }
+            updateKaomojiCategoryTabsUI()
+        }
+
+        scroll.addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return scroll
+    }
+
+    private fun handleKaomojiPress(kaomoji: String) {
+        dismissPasteUndoCapsule()
+        shiftStateMachine.onNonLetterInput()
+        if (isEmojiPickerOpen && isMediaSearchTyping) {
+            mediaSearchQuery += kaomoji
+            updateMediaSearchUI()
+            renderMediaSearchStripResults()
+        } else if (isFilterMode) {
+            keyboardSearchQuery += kaomoji
+            updateSearchUI()
+            runKeyboardSearch()
+        } else {
+            val conn = currentInputConnection
+            if (conn == null) {
+                showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+                return
+            }
+            insertionHistory.invalidateImmediateBackspaceRevert()
+            lastRevertOriginalWord = null
+            clearTypingSuggestionsView()
+            if (commitTextSafely(conn, kaomoji, 1)) {
+                shadowEditor.onCommitText(kaomoji)
+            }
+            updateInsertionHistoryButtons()
+            syncAutoCapitalization(preserveManualShift = false, predictedBeforeText = shadowEditor.beforeText(48))
+        }
+        recentKaomojiHistory.record(kaomoji)
+        persistRecentKaomojis()
+    }
+
+    // -------------------------------------------------------------------------
+    // GIFS BROWSER (Tenor API v2 Featured & Search + Offline Recent GIFs)
+    // -------------------------------------------------------------------------
+    private fun loadGifsForCurrentState() {
+        val effectiveKey = resolveEffectiveTenorApiKey()
+        gifProvider.updateApiKey(effectiveKey)
+        if (!MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)) {
+            gifIsLoading = false
+            gifFetchResult = GifProvider.GifFetchResult.Unconfigured(AppUiStrings.tenorApiKeyRequiredDesc(keyboardLanguage))
+            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
+                renderGifContentInPlace()
+            }
+            return
+        }
+        val gen = ++gifRequestGen
+        gifIsLoading = true
+        if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
+            renderGifContentInPlace()
+        }
+        val query = mediaSearchQuery.trim()
+        val tag = selectedGifCategoryTag
+        val callback: (GifProvider.GifFetchResult) -> Unit = { result ->
+            if (!serviceDestroyed && gen == gifRequestGen) {
+                gifIsLoading = false
+                gifFetchResult = result
+                if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS && isEmojiPickerOpen && !isMediaSearchTyping) {
+                    renderGifContentInPlace()
+                }
+            }
+        }
+        when {
+            query.isNotEmpty() -> gifProvider.search(query, callback)
+            tag == "featured" || tag == "recent" -> gifProvider.fetchFeatured(callback)
+            else -> gifProvider.search(tag, callback)
+        }
+    }
+
+    private fun renderGifContentInPlace() {
+        val host = gifGridHost ?: return
+        populateGifBrowserContent(host)
+    }
+
+    private fun buildGifBrowserBody(): View {
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        val host = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            setPadding(dp(8), dp(8), dp(8), dp(10))
+        }
+        gifGridHost = host
+        populateGifBrowserContent(host)
+        scroll.addView(host, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return scroll
+    }
+
+    private fun loadGifPreviewAsync(item: GifProvider.GifItem, imageView: ImageView, expectedGen: Int) {
+        val cacheName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = true)
+        imageView.tag = cacheName
+        submitSafely(mediaIoExecutor) {
+            val file = mediaCacheManager.getCachedFile(cacheName)
+                ?: mediaCacheManager.downloadAndCache(item.previewUrl, cacheName)
+                ?: return@submitSafely
+            val decodedDrawable: Drawable? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching {
+                    val src = ImageDecoder.createSource(file)
+                    ImageDecoder.decodeDrawable(src)
+                }.getOrNull()
+            } else {
+                null
+            }
+            val fallbackBitmap: Bitmap? = if (decodedDrawable == null) {
+                runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+            } else null
+
+            main.post {
+                if (serviceDestroyed || expectedGen != mediaViewportGen || imageView.tag != cacheName) return@post
+                if (decodedDrawable != null) {
+                    imageView.setImageDrawable(decodedDrawable)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && decodedDrawable is AnimatedImageDrawable) {
+                        decodedDrawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                        decodedDrawable.start()
+                    }
+                } else if (fallbackBitmap != null) {
+                    imageView.setImageBitmap(fallbackBitmap)
+                }
+            }
+        }
+    }
+
+    private fun addGifGridRows(
+        container: LinearLayout,
+        items: List<GifProvider.GifItem>,
+        cols: Int,
+        tileH: Int,
+        gapPx: Int,
+        gen: Int
+    ) {
+        val tileBg = if (isClassicTheme) colorAltDeepBg else colorChipBg
+        var i = 0
+        while (i < items.size) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, tileH).apply {
+                    bottomMargin = gapPx
+                }
+            }
+            for (c in 0 until cols) {
+                val idx = i + c
+                if (idx < items.size) {
+                    val gif = items[idx]
+                    val card = FrameLayout(this).apply {
+                        contentDescription = gif.title
+                        isClickable = true
+                        isFocusable = true
+                        clipToOutline = true
+                        background = roundedRipple(tileBg, dp(10f), colorKeyBorder)
+                        val iv = ImageView(this@ClipMaxImeService).apply {
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                        }
+                        loadGifPreviewAsync(gif, iv, gen)
+                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                        setOnClickListener {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            handleGifPress(gif)
+                        }
+                    }
+                    row.addView(card, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                } else {
+                    row.addView(View(this), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (c < cols - 1) marginEnd = gapPx
+                    })
+                }
+            }
+            container.addView(row)
+            i += cols
+        }
+    }
+
+    private fun populateGifBrowserContent(container: LinearLayout) {
+        container.removeAllViews()
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val cols = if (isLandscape) MediaKeyboardSpec.GIF_COLS_LANDSCAPE else MediaKeyboardSpec.GIF_COLS_PORTRAIT
+        val tileH = dp(if (isLandscape) 94 else 112)
+        val gapPx = dp(6)
+        val gen = mediaViewportGen
+
+        val recentGifs = recentGifHistory.items()
+        val showingRecentOnly = mediaSearchQuery.isBlank() && selectedGifCategoryTag == "recent"
+        if (showingRecentOnly) {
+            if (recentGifs.isEmpty()) {
+                container.addView(TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد صور GIF مستخدمة مؤخراً."
+                    else "No recently used GIFs yet."
+                    textSize = 13f
+                    setTextColor(colorHintText)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(16), dp(36), dp(16), dp(16))
+                })
+            } else {
+                addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
+            }
+            return
+        }
+
+        val effectiveKey = resolveEffectiveTenorApiKey()
+        if (!MediaKeyboardSpec.TenorApiKeyConfig.isConfigured(effectiveKey)) {
+            container.addView(buildTenorUnconfiguredCard())
+            if (recentGifs.isNotEmpty()) {
+                container.addView(TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorHintText)
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    setPadding(dp(4), dp(10), dp(4), dp(6))
+                })
+                addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
+            }
+            return
+        }
+
+        if (gifIsLoading) {
+            val loadingCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(16), dp(36), dp(16), dp(24))
+            }
+            loadingCol.addView(ProgressBar(this), LinearLayout.LayoutParams(dp(28), dp(28)))
+            loadingCol.addView(TextView(this).apply {
+                text = AppUiStrings.loadingGifsMessage(keyboardLanguage)
+                textSize = 12.5f
+                setTextColor(colorHintText)
+                setPadding(0, dp(10), 0, 0)
+            })
+            container.addView(loadingCol, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return
+        }
+
+        when (val res = gifFetchResult) {
+            null -> loadGifsForCurrentState()
+            is GifProvider.GifFetchResult.Unconfigured -> {
+                container.addView(buildTenorUnconfiguredCard())
+                if (recentGifs.isNotEmpty()) {
+                    addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
+                }
+            }
+            is GifProvider.GifFetchResult.NetworkError -> {
+                val errCard = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(dp(14), dp(14), dp(14), dp(14))
+                    background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
+                }
+                errCard.addView(TextView(this).apply {
+                    text = AppUiStrings.networkErrorGifsMessage(keyboardLanguage)
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorKeyText)
+                    gravity = Gravity.CENTER
+                })
+                errCard.addView(TextView(this).apply {
+                    text = res.error
+                    textSize = 11.5f
+                    setTextColor(colorHintText)
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(4), 0, dp(10))
+                })
+                val retryBtn = TextView(this).apply {
+                    text = AppUiStrings.retryLabel(keyboardLanguage)
+                    textSize = 12.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(colorAccentText)
+                    setPadding(dp(16), dp(8), dp(16), dp(8))
+                    background = roundedRipple(colorAccent, dp(8f), 0)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { loadGifsForCurrentState() }
+                }
+                errCard.addView(retryBtn)
+                container.addView(errCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+                if (recentGifs.isNotEmpty()) {
+                    container.addView(TextView(this).apply {
+                        text = if (AppUiStrings.isArabic(keyboardLanguage)) "صور GIF الأخيرة (دون اتصال)" else "Recent GIFs (Offline)"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(colorHintText)
+                        textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                        setPadding(dp(4), dp(12), dp(4), dp(6))
+                    })
+                    addGifGridRows(container, recentGifs, cols, tileH, gapPx, gen)
+                }
+            }
+            is GifProvider.GifFetchResult.Success -> {
+                if (res.items.isEmpty()) {
+                    container.addView(TextView(this).apply {
+                        text = AppUiStrings.emptyGifsMessage(keyboardLanguage)
+                        textSize = 13f
+                        setTextColor(colorHintText)
+                        gravity = Gravity.CENTER
+                        setPadding(dp(16), dp(36), dp(16), dp(16))
+                    })
+                } else {
+                    addGifGridRows(container, res.items, cols, tileH, gapPx, gen)
+                }
+            }
+        }
+    }
+
+    private fun buildTenorUnconfiguredCard(): View {
+        val cardBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = roundedDrawable(cardBg, dp(12f), colorKeyBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+            addView(TextView(this@ClipMaxImeService).apply {
+                text = AppUiStrings.tenorApiKeyRequiredTitle(keyboardLanguage)
+                textSize = 13.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(colorKeyText)
+                gravity = Gravity.CENTER
+            })
+            addView(TextView(this@ClipMaxImeService).apply {
+                text = AppUiStrings.tenorApiKeyRequiredDesc(keyboardLanguage)
+                textSize = 12f
+                setTextColor(colorHintText)
+                gravity = Gravity.CENTER
+                setPadding(dp(6), dp(4), dp(6), dp(12))
+            })
+
+            val row = LinearLayout(this@ClipMaxImeService).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = uiLayoutDirection
+                gravity = Gravity.CENTER
+            }
+            val pasteBtn = TextView(this@ClipMaxImeService).apply {
+                text = if (AppUiStrings.isArabic(keyboardLanguage)) "لصق المفتاح" else "Paste Key"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(colorKeyText)
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { pasteTenorApiKeyFromClipboard(openGifModeAfter = true) }
+            }
+            row.addView(pasteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(8)
+            })
+
+            val typeBtn = TextView(this@ClipMaxImeService).apply {
+                text = if (AppUiStrings.isArabic(keyboardLanguage)) "إدخال المفتاح" else "Enter Key"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(colorAccentText)
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                background = roundedRipple(colorAccent, dp(8f), 0)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { startTenorKeyTypingSession() }
+            }
+            row.addView(typeBtn)
+            addView(row)
+        }
+    }
+
+    private fun handleGifPress(item: GifProvider.GifItem) {
+        dismissPasteUndoCapsule()
+        val conn = currentInputConnection
+        if (conn == null) {
+            showMediaStatusBanner(AppUiStrings.noActiveTextFieldStatus(keyboardLanguage))
+            return
+        }
+        val info = currentInputEditorInfo
+        if (!MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(info?.contentMimeTypes, "image/gif")) {
+            showMediaStatusBanner(AppUiStrings.richMediaUnsupportedStatus(keyboardLanguage))
+            return
+        }
+        val fullName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = false)
+        val previewName = MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForGif(item, isPreview = true)
+        val cachedFull = mediaCacheManager.getCachedFile(fullName)
+        if (cachedFull != null) {
+            val link = runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
+            if (commitRichMediaFile(cachedFull, "image/gif", item.title, link)) {
+                recentGifHistory.record(item)
+                persistRecentGifs()
+            }
+            return
+        }
+        showMediaStatusBanner(
+            if (AppUiStrings.isArabic(keyboardLanguage)) "جارٍ تجهيز GIF..." else "Preparing GIF..."
+        )
+        submitSafely(mediaIoExecutor) {
+            val file = mediaCacheManager.downloadAndCache(item.gifUrl, fullName)
+                ?: mediaCacheManager.getCachedFile(previewName)
+                ?: mediaCacheManager.downloadAndCache(item.previewUrl, previewName)
+            main.post {
+                if (serviceDestroyed) return@post
+                if (file == null) {
+                    showMediaStatusBanner(AppUiStrings.networkErrorGifsMessage(keyboardLanguage))
+                    return@post
+                }
+                val link = runCatching { android.net.Uri.parse(item.gifUrl) }.getOrNull()
+                if (commitRichMediaFile(file, "image/gif", item.title, link)) {
+                    recentGifHistory.record(item)
+                    persistRecentGifs()
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // INLINE KEYBOARD INTERFACES FOR MEDIA SEARCH & TENOR API KEY ENTRY
+    // -------------------------------------------------------------------------
+    private fun buildMediaSearchInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutDirection = uiLayoutDirection
+        setBackgroundColor(colorBg)
+        setPadding(dp(6), dp(viewport.searchTopPaddingDp).toInt(), dp(6), dp(viewport.searchBottomPaddingDp).toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(viewport.searchInterfaceHeightDp).toInt()
+        )
+
+        val barH = dp(viewport.searchBarHeightDp).toInt()
+        val pillH = (barH - dp(2)).coerceAtLeast(dp(20))
+
+        val barRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, barH)
+        }
+
+        val pill = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(6), 0)
+            background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
+            layoutParams = LinearLayout.LayoutParams(0, pillH, 1f).apply {
+                marginEnd = dp(6)
+            }
+        }
+
+        val placeholder = when (currentMediaSubMode) {
+            MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
+        }
+
+        val queryTv = TextView(this@ClipMaxImeService).apply {
+            text = if (mediaSearchQuery.isEmpty()) placeholder else mediaSearchQuery
+            textSize = 11.5f
+            setTextColor(if (mediaSearchQuery.isEmpty()) colorHintText else colorKeyText)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.START
+            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            textDirection = if (mediaSearchQuery.isEmpty()) View.TEXT_DIRECTION_LOCALE else View.TEXT_DIRECTION_ANY_RTL
+            setIcon(IconDrawable(IconType.SEARCH, colorAccent, 12f), 5f)
+        }
+        mediaSearchInputText = queryTv
+        pill.addView(queryTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val clearBtn = FrameLayout(this@ClipMaxImeService).apply {
+            visibility = if (mediaSearchQuery.isEmpty()) View.GONE else View.VISIBLE
+            contentDescription = AppUiStrings.clearSearchQueryA11y(keyboardLanguage)
+            background = roundedRipple(colorModBg, dp(10f), 0)
+            val iv = createIconView(IconDrawable(IconType.CLOSE, colorModText, 10f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                mediaSearchQuery = ""
+                updateMediaSearchUI()
+                renderMediaSearchStripResults()
+            }
+        }
+        mediaSearchClearBtn = clearBtn
+        pill.addView(clearBtn, LinearLayout.LayoutParams(dp(20), dp(20)))
+        barRow.addView(pill)
+
+        val doneBtn = Button(this@ClipMaxImeService).apply {
+            text = AppUiStrings.doneButton(keyboardLanguage)
+            isAllCaps = false
+            textSize = 10.5f
+            typeface = Typeface.DEFAULT_BOLD
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(10), 0, dp(10), 0)
+            setTextColor(colorModText)
+            background = roundedRipple(colorModBg, dp(8f), colorKeyBorder)
+            setOnClickListener {
+                isMediaSearchTyping = false
+                if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+                    loadGifsForCurrentState()
+                }
+                renderFullImeView()
+            }
+        }
+        barRow.addView(doneBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, pillH))
+        addView(barRow)
+
+        val resultsScroll = HorizontalScrollView(this@ClipMaxImeService).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutDirection = uiLayoutDirection
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(viewport.searchResultsHeightDp).toInt()).apply {
+                topMargin = dp(viewport.searchResultsTopMarginDp).toInt()
+            }
+        }
+        val resultsRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(2), 0, dp(8), 0)
+        }
+        mediaSearchResultsStrip = resultsRow
+        resultsScroll.addView(resultsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(resultsScroll)
+    }
+
+    private fun updateMediaSearchUI() {
+        val placeholder = when (currentMediaSubMode) {
+            MediaKeyboardSpec.MediaSubMode.EMOJI -> AppUiStrings.searchEmojisPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.GIFS -> AppUiStrings.searchGifsPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.STICKERS -> AppUiStrings.searchStickersPlaceholder(keyboardLanguage)
+            MediaKeyboardSpec.MediaSubMode.KAOMOJI -> AppUiStrings.searchKaomojiPlaceholder(keyboardLanguage)
+        }
+        mediaSearchInputText?.text = if (mediaSearchQuery.isEmpty()) placeholder else mediaSearchQuery
+        mediaSearchInputText?.setTextColor(if (mediaSearchQuery.isEmpty()) colorHintText else colorKeyText)
+        mediaSearchClearBtn?.visibility = if (mediaSearchQuery.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun renderMediaSearchStripResults() {
+        val container = mediaSearchResultsStrip ?: return
+        container.removeAllViews()
+        val chipH = (dp(computeCurrentViewportSpec().searchResultsHeightDp).toInt() - dp(4)).coerceAtLeast(dp(26))
+
+        when (currentMediaSubMode) {
+            MediaKeyboardSpec.MediaSubMode.EMOJI -> {
+                val list = if (mediaSearchQuery.isBlank()) recentEmojiHistory.items().ifEmpty { EmojiCatalog.SMILEYS_EMOJIS.take(16) }
+                else EmojiCatalog.search(mediaSearchQuery).take(24)
+                if (list.isEmpty()) {
+                    container.addView(TextView(this).apply {
+                        text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد نتائج" else "No matching emojis"
+                        textSize = 11f
+                        setTextColor(colorHintText)
+                        setPadding(dp(8), dp(2), dp(8), dp(2))
+                    })
+                    return
+                }
+                list.forEach { emoji ->
+                    val tv = TextView(this).apply {
+                        text = emoji
+                        textSize = 20f
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setPadding(dp(8), 0, dp(8), 0)
+                        background = roundedRipple(colorChipBg, dp(10f), colorChipBorder)
+                        setOnClickListener {
+                            isMediaSearchTyping = false
+                            handleEmojiPress(emoji)
+                            renderFullImeView()
+                        }
+                    }
+                    container.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply { marginEnd = dp(6) })
+                }
+            }
+
+            MediaKeyboardSpec.MediaSubMode.STICKERS -> {
+                val list = StickerCatalog.search(mediaSearchQuery).take(16)
+                if (list.isEmpty()) {
+                    container.addView(TextView(this).apply {
+                        text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
+                        textSize = 11f
+                        setTextColor(colorHintText)
+                        setPadding(dp(8), dp(2), dp(8), dp(2))
+                    })
+                    return
+                }
+                val gen = mediaViewportGen
+                list.forEach { st ->
+                    val tile = FrameLayout(this).apply {
+                        contentDescription = st.title
+                        background = roundedRipple(colorChipBg, dp(8f), colorChipBorder)
+                        val iv = ImageView(this@ClipMaxImeService).apply {
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            setPadding(dp(3), dp(3), dp(3), dp(3))
+                        }
+                        loadStickerBitmapAsync(st.assetPath, iv, gen)
+                        addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                        setOnClickListener {
+                            isMediaSearchTyping = false
+                            renderFullImeView()
+                            handleStickerPress(st)
+                        }
+                    }
+                    container.addView(tile, LinearLayout.LayoutParams(chipH, chipH).apply { marginEnd = dp(6) })
+                }
+            }
+
+            MediaKeyboardSpec.MediaSubMode.KAOMOJI -> {
+                val list = if (mediaSearchQuery.isBlank()) KaomojiCatalog.CATEGORIES.first().items.take(16)
+                else KaomojiCatalog.search(mediaSearchQuery).take(24)
+                if (list.isEmpty()) {
+                    container.addView(TextView(this).apply {
+                        text = if (AppUiStrings.isArabic(keyboardLanguage)) "لا توجد نتائج" else "No matching kaomoji"
+                        textSize = 11f
+                        setTextColor(colorHintText)
+                        setPadding(dp(8), dp(2), dp(8), dp(2))
+                    })
+                    return
+                }
+                list.forEach { kao ->
+                    val tv = TextView(this).apply {
+                        text = kao
+                        textSize = 12.5f
+                        setTextColor(colorKeyText)
+                        gravity = Gravity.CENTER
+                        setPadding(dp(10), 0, dp(10), 0)
+                        background = roundedRipple(colorChipBg, dp(10f), colorChipBorder)
+                        setOnClickListener {
+                            isMediaSearchTyping = false
+                            handleKaomojiPress(kao)
+                            renderFullImeView()
+                        }
+                    }
+                    container.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply { marginEnd = dp(6) })
+                }
+            }
+
+            MediaKeyboardSpec.MediaSubMode.GIFS -> {
+                val hintChip = TextView(this).apply {
+                    text = if (AppUiStrings.isArabic(keyboardLanguage)) "اضغط تم أو Enter للبحث في Tenor" else "Tap Done or Enter to search GIFs"
+                    textSize = 11.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(colorAccentText)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), 0, dp(12), 0)
+                    background = roundedRipple(colorAccent, dp(10f), 0)
+                    setOnClickListener {
+                        isMediaSearchTyping = false
+                        loadGifsForCurrentState()
+                        renderFullImeView()
+                    }
+                }
+                container.addView(hintChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
+            }
+        }
+    }
+
+    private fun buildTenorKeyEntryInterface(viewport: KeyboardLayoutSpec.ViewportSpecDp): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutDirection = uiLayoutDirection
+        setBackgroundColor(colorBg)
+        setPadding(dp(6), dp(viewport.searchTopPaddingDp).toInt(), dp(6), dp(viewport.searchBottomPaddingDp).toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(viewport.searchInterfaceHeightDp).toInt()
+        )
+
+        val barH = dp(viewport.searchBarHeightDp).toInt()
+        val pillH = (barH - dp(2)).coerceAtLeast(dp(20))
+
+        val barRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, barH)
+        }
+
+        val pill = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(6), 0)
+            background = roundedDrawable(colorKeyBg, dp(8f), colorAccent)
+            layoutParams = LinearLayout.LayoutParams(0, pillH, 1f).apply {
+                marginEnd = dp(6)
+            }
+        }
+
+        val tv = TextView(this@ClipMaxImeService).apply {
+            text = if (tenorKeyDraft.isEmpty()) AppUiStrings.tenorApiKeyHint(keyboardLanguage) else tenorKeyDraft
+            textSize = 11.5f
+            setTextColor(if (tenorKeyDraft.isEmpty()) colorHintText else colorKeyText)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.START
+            textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            setIcon(IconDrawable(IconType.LOCK, colorAccent, 12f), 5f)
+        }
+        mediaSearchInputText = tv
+        pill.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val clearBtn = FrameLayout(this@ClipMaxImeService).apply {
+            visibility = if (tenorKeyDraft.isEmpty()) View.GONE else View.VISIBLE
+            background = roundedRipple(colorModBg, dp(10f), 0)
+            val iv = createIconView(IconDrawable(IconType.CLOSE, colorModText, 10f))
+            addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+            setOnClickListener {
+                tenorKeyDraft = ""
+                updateTenorKeyEntryUI()
+            }
+        }
+        mediaSearchClearBtn = clearBtn
+        pill.addView(clearBtn, LinearLayout.LayoutParams(dp(20), dp(20)))
+        barRow.addView(pill)
+
+        val saveBtn = Button(this@ClipMaxImeService).apply {
+            text = AppUiStrings.tenorApiKeySave(keyboardLanguage)
+            isAllCaps = false
+            textSize = 10.5f
+            typeface = Typeface.DEFAULT_BOLD
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(10), 0, dp(10), 0)
+            setTextColor(colorAccentText)
+            background = roundedRipple(colorAccent, dp(8f), 0)
+            setOnClickListener {
+                isTenorKeyTyping = false
+                saveTenorApiKey(tenorKeyDraft)
+                isEmojiPickerOpen = true
+                currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
+                renderFullImeView()
+            }
+        }
+        barRow.addView(saveBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, pillH))
+        addView(barRow)
+
+        // Row 2: Quick Paste + Cancel strip
+        val actionsRow = LinearLayout(this@ClipMaxImeService).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(viewport.searchResultsHeightDp).toInt()).apply {
+                topMargin = dp(viewport.searchResultsTopMarginDp).toInt()
+            }
+        }
+        val chipH = (dp(viewport.searchResultsHeightDp).toInt() - dp(4)).coerceAtLeast(dp(26))
+
+        val pasteChip = TextView(this@ClipMaxImeService).apply {
+            text = if (AppUiStrings.isArabic(keyboardLanguage)) "لصق من الحافظة" else "Paste from Clipboard"
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(colorKeyText)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), 0, dp(10), 0)
+            background = roundedRipple(colorChipBg, dp(10f), colorChipBorder)
+            setOnClickListener {
+                pasteTenorApiKeyFromClipboard(openGifModeAfter = true)
+            }
+        }
+        actionsRow.addView(pasteChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH).apply {
+            marginEnd = dp(6)
+        })
+
+        val cancelChip = TextView(this@ClipMaxImeService).apply {
+            text = AppUiStrings.cancelLabel(keyboardLanguage)
+            textSize = 11.5f
+            setTextColor(colorModText)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), 0, dp(10), 0)
+            background = roundedRipple(colorModBg, dp(10f), colorKeyBorder)
+            setOnClickListener {
+                isTenorKeyTyping = false
+                tenorKeyDraft = ""
+                renderFullImeView()
+            }
+        }
+        actionsRow.addView(cancelChip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
+        addView(actionsRow)
+    }
+
+    private fun updateTenorKeyEntryUI() {
+        mediaSearchInputText?.text = if (tenorKeyDraft.isEmpty()) AppUiStrings.tenorApiKeyHint(keyboardLanguage) else tenorKeyDraft
+        mediaSearchInputText?.setTextColor(if (tenorKeyDraft.isEmpty()) colorHintText else colorKeyText)
+        mediaSearchClearBtn?.visibility = if (tenorKeyDraft.isEmpty()) View.GONE else View.VISIBLE
     }
 
     // =========================================================================
@@ -4861,6 +6958,8 @@ class ClipMaxImeService : InputMethodService() {
                             dismissPasteUndoCapsule()
                             shiftStateMachine.resetDoubleTapTimer()
                             isEmojiPickerOpen = true
+                            isMediaSearchTyping = false
+                            isTenorKeyTyping = false
                             isClipboardPanelOpen = false
                             isSettingsOpen = false
                             renderFullImeView()
@@ -5595,7 +7694,14 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleLetterPress(char: String) {
         dismissPasteUndoCapsule()
         val letter = if (shiftState == 0) char.lowercase(Locale.ROOT) else char.uppercase(Locale.ROOT)
-        if (isFilterMode) {
+        if (isTenorKeyTyping) {
+            tenorKeyDraft += letter
+            updateTenorKeyEntryUI()
+        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            mediaSearchQuery += letter
+            updateMediaSearchUI()
+            renderMediaSearchStripResults()
+        } else if (isFilterMode) {
             keyboardSearchQuery += letter
             updateSearchUI()
             runKeyboardSearch()
@@ -5621,7 +7727,14 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleGenericCharPress(char: String) {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isFilterMode) {
+        if (isTenorKeyTyping) {
+            tenorKeyDraft += char
+            updateTenorKeyEntryUI()
+        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            mediaSearchQuery += char
+            updateMediaSearchUI()
+            renderMediaSearchStripResults()
+        } else if (isFilterMode) {
             keyboardSearchQuery += char
             updateSearchUI()
             runKeyboardSearch()
@@ -5652,7 +7765,13 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleSpacePress() {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isFilterMode) {
+        if (isTenorKeyTyping) {
+            // API keys don't contain spaces, ignore
+        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            mediaSearchQuery += " "
+            updateMediaSearchUI()
+            renderMediaSearchStripResults()
+        } else if (isFilterMode) {
             keyboardSearchQuery += " "
             updateSearchUI()
             runKeyboardSearch()
@@ -5665,7 +7784,18 @@ class ClipMaxImeService : InputMethodService() {
     private fun handleBackspace() {
         dismissPasteUndoCapsule()
         shiftStateMachine.onNonLetterInput()
-        if (isFilterMode) {
+        if (isTenorKeyTyping) {
+            if (tenorKeyDraft.isNotEmpty()) {
+                tenorKeyDraft = EmojiInterfaceSpec.dropLastGrapheme(tenorKeyDraft)
+                updateTenorKeyEntryUI()
+            }
+        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            if (mediaSearchQuery.isNotEmpty()) {
+                mediaSearchQuery = EmojiInterfaceSpec.dropLastGrapheme(mediaSearchQuery)
+                updateMediaSearchUI()
+                renderMediaSearchStripResults()
+            }
+        } else if (isFilterMode) {
             if (keyboardSearchQuery.isNotEmpty()) {
                 keyboardSearchQuery = EmojiInterfaceSpec.dropLastGrapheme(keyboardSearchQuery)
                 updateSearchUI()
@@ -5721,7 +7851,19 @@ class ClipMaxImeService : InputMethodService() {
         dismissPasteUndoCapsule()
         val resolution = resolveCurrentActionKey()
         shiftStateMachine.onNonLetterInput()
-        if (resolution.isFilterDismiss || isFilterMode) {
+        if (isTenorKeyTyping) {
+            isTenorKeyTyping = false
+            saveTenorApiKey(tenorKeyDraft)
+            isEmojiPickerOpen = true
+            currentMediaSubMode = MediaKeyboardSpec.MediaSubMode.GIFS
+            renderFullImeView()
+        } else if (isEmojiPickerOpen && isMediaSearchTyping) {
+            isMediaSearchTyping = false
+            if (currentMediaSubMode == MediaKeyboardSpec.MediaSubMode.GIFS) {
+                loadGifsForCurrentState()
+            }
+            renderFullImeView()
+        } else if (resolution.isFilterDismiss || isFilterMode) {
             isFilterMode = false
             keyboardSearchQuery = ""
             keyboardSearchResults = emptyList()
@@ -6206,11 +8348,19 @@ class ClipMaxImeService : InputMethodService() {
 
         if (!restarting && !preserveSession) {
             isEmojiPickerOpen = false
+            isMediaSearchTyping = false
+            isTenorKeyTyping = false
+            mediaSearchQuery = ""
+            tenorKeyDraft = ""
         }
         if (isPasswordTarget) {
             isFilterMode = false
             isClipboardPanelOpen = false
             isEmojiPickerOpen = false
+            isMediaSearchTyping = false
+            isTenorKeyTyping = false
+            mediaSearchQuery = ""
+            tenorKeyDraft = ""
             pinnedOnly = false
         }
         val numericRequirementChanged =
@@ -6450,6 +8600,7 @@ class ClipMaxImeService : InputMethodService() {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (languagePopupHost != null || variantPopupHost != null ||
                 contextMenuHost != null || isMergeMode || undoRedoHost != null ||
+                isTenorKeyTyping || isMediaSearchTyping ||
                 isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || toolbarState == 1) {
                 if (event.repeatCount == 0) {
                     event.startTracking()
@@ -6493,9 +8644,25 @@ class ClipMaxImeService : InputMethodService() {
                 }
                 return true
             }
+            if (isTenorKeyTyping) {
+                if (!event.isCanceled) {
+                    isTenorKeyTyping = false
+                    tenorKeyDraft = ""
+                    renderFullImeView()
+                }
+                return true
+            }
+            if (isEmojiPickerOpen && isMediaSearchTyping) {
+                if (!event.isCanceled) {
+                    isMediaSearchTyping = false
+                    renderFullImeView()
+                }
+                return true
+            }
             if (isEmojiPickerOpen) {
                 if (!event.isCanceled) {
                     isEmojiPickerOpen = false
+                    mediaSearchQuery = ""
                     renderFullImeView()
                 }
                 return true
@@ -6531,8 +8698,12 @@ class ClipMaxImeService : InputMethodService() {
         dismissUndoRedoControl()
         exitMergeMode(refresh = false)
         shiftStateMachine.resetDoubleTapTimer()
-        val needsReset = isEmojiPickerOpen || isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
+        val needsReset = isEmojiPickerOpen || isMediaSearchTyping || isTenorKeyTyping || isSettingsOpen || isClipboardPanelOpen || isFilterMode || pinnedOnly || toolbarState != 0
         isEmojiPickerOpen = false
+        isMediaSearchTyping = false
+        isTenorKeyTyping = false
+        mediaSearchQuery = ""
+        tenorKeyDraft = ""
         isSettingsOpen = false
         settingsSavedScrollY = 0
         isClipboardPanelOpen = false
@@ -6616,10 +8787,13 @@ class ClipMaxImeService : InputMethodService() {
         pendingSelectionCapture?.let(main::removeCallbacks)
         expiryCleanupRunnable?.let(main::removeCallbacks)
         insertTask?.cancel(true)
+        mediaStatusBannerRunnable?.let(main::removeCallbacks)
+        mediaStatusBannerRunnable = null
         io.shutdownNow()
         inserter.shutdownNow()
         suggestExecutor.shutdownNow()
         icQueryExecutor.shutdownNow()
+        mediaIoExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -7731,6 +9905,7 @@ class ClipMaxImeService : InputMethodService() {
         CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_LEFT, ARROW_RIGHT, CLOSE, LOCK, SHIFT, SHIFT_ACTIVE, CAPS_LOCK, BACKSPACE, ENTER,
         SEND, GO, NEXT, DONE, SPACE,
         EMOJI_RECENT, EMOJI, EMOJI_PEOPLE, EMOJI_NATURE, EMOJI_FOOD, EMOJI_ACTIVITIES, EMOJI_TRAVEL, EMOJI_OBJECTS, EMOJI_SYMBOLS,
+        MEDIA_STICKER,
         MERGE, SPLIT, UNDO, REDO, SETTINGS
     }
 
@@ -8242,6 +10417,35 @@ class ClipMaxImeService : InputMethodService() {
                         lineTo(8.5f, 6.5f)
                     }
                     canvas.drawPath(p, strokePaint)
+                }
+                IconType.MEDIA_STICKER -> {
+                    val body = Path().apply {
+                        moveTo(4.0f, 2.5f)
+                        lineTo(12.0f, 2.5f)
+                        quadTo(13.5f, 2.5f, 13.5f, 4.0f)
+                        lineTo(13.5f, 9.5f)
+                        lineTo(9.5f, 13.5f)
+                        lineTo(4.0f, 13.5f)
+                        quadTo(2.5f, 13.5f, 2.5f, 12.0f)
+                        lineTo(2.5f, 4.0f)
+                        quadTo(2.5f, 2.5f, 4.0f, 2.5f)
+                        close()
+                    }
+                    canvas.drawPath(body, strokePaint)
+                    val peel = Path().apply {
+                        moveTo(9.5f, 13.5f)
+                        lineTo(9.5f, 10.2f)
+                        quadTo(9.5f, 9.5f, 10.2f, 9.5f)
+                        lineTo(13.5f, 9.5f)
+                    }
+                    canvas.drawPath(peel, strokePaint)
+                    canvas.drawCircle(6.2f, 6.6f, 0.7f, fillPaint)
+                    canvas.drawCircle(9.8f, 6.6f, 0.7f, fillPaint)
+                    val grin = Path().apply {
+                        moveTo(6.0f, 8.8f)
+                        quadTo(8.0f, 10.2f, 10.0f, 8.8f)
+                    }
+                    canvas.drawPath(grin, strokePaint)
                 }
             }
             canvas.restoreToCount(save)

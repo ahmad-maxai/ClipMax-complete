@@ -716,6 +716,26 @@ internal object KeyboardLayoutSpec {
     }
 
     /**
+     * Computes the canonical shared expanded viewport height for media panels
+     * (Emoji, Kaomoji, Stickers, and GIFs), ensuring a generous, comfortable browsing
+     * grid that never covers the active target text field or exceeds screen bounds.
+     */
+    fun computeMediaViewportSpecDp(
+        heightPref: String,
+        screenHeightDp: Float,
+        isLandscape: Boolean
+    ): ViewportSpecDp {
+        val standard = computeViewportSpecDp(heightPref, screenHeightDp, isLandscape)
+        val maxFraction = if (isLandscape) 0.60f else 0.48f
+        val maxMediaBudgetDp = (screenHeightDp * maxFraction - TOOLBAR_HEIGHT_DP).coerceAtLeast(standard.mainPanelHeightDp)
+        val desiredMediaPanelDp = (standard.mainPanelHeightDp * 1.28f).coerceIn(standard.mainPanelHeightDp, maxMediaBudgetDp)
+        return standard.copy(
+            mainPanelHeightDp = desiredMediaPanelDp,
+            totalContentHeightDp = TOOLBAR_HEIGHT_DP + desiredMediaPanelDp
+        )
+    }
+
+    /**
      * Computes scaled ergonomic dimensions in dp for the 4-row keyboard inside the canonical
      * fixed viewport, subtracting exact measured dimensions of any active Search Clips or
      * status banner so total IME height never shifts.

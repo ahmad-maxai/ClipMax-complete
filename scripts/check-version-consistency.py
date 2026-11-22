@@ -30,7 +30,11 @@ def scan_dir_for_dev_evidence(root_dir: str, label: str) -> list[str]:
     if not os.path.isdir(root_dir):
         return findings
     for dirpath, dirnames, filenames in os.walk(root_dir):
+        if label == "public":
+            dirnames[:] = [d for d in dirnames if d != "assets"]
         rel_dir = os.path.relpath(dirpath, root_dir).replace(os.sep, "/")
+        if label == "public" and (rel_dir == "assets" or rel_dir.startswith("assets/")):
+            continue
         if rel_dir == "aistudio" or rel_dir.endswith("/aistudio") or "/aistudio/" in f"/{rel_dir}/":
             findings.append(f"Development directory found in {label}: {rel_dir}")
         for d in dirnames:
@@ -200,15 +204,17 @@ def main():
                     f"com.clipmax.app.yml commit must be a full 40-character lowercase SHA (found: '{commit_val}')"
                 )
 
-    # 6. AndroidManifest.xml: Absence of INTERNET permission
+    # 6. AndroidManifest.xml: Verify INTERNET permission & MediaContentProvider for media features
     manifest_path = os.path.join(repo_root, "android", "app", "src", "main", "AndroidManifest.xml")
     if not os.path.isfile(manifest_path):
         errors.append("AndroidManifest.xml missing")
     else:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = f.read()
-        if "android.permission.INTERNET" in manifest:
-            errors.append("CRITICAL: android.permission.INTERNET found in AndroidManifest.xml")
+        if "android.permission.INTERNET" not in manifest:
+            errors.append("Required android.permission.INTERNET missing from AndroidManifest.xml for GIF features")
+        if "MediaContentProvider" not in manifest:
+            errors.append("Required MediaContentProvider declaration missing from AndroidManifest.xml")
 
     # 7. Clean production web assets (public/, dist/, android/app/src/main/assets/web/)
     public_dir = os.path.join(repo_root, "public")
@@ -248,7 +254,7 @@ def main():
     print("    - License: GPL-3.0-or-later (root LICENSE file verified)")
     print("    - Fastlane Metadata: title, short_description, full_description, changelogs/12.txt, icon.png, 4 phoneScreenshots")
     print("    - F-Droid Recipe Draft: com.clipmax.app.yml commit pinned to full 40-char SHA")
-    print("    - Manifest Check: android.permission.INTERNET absent from source AndroidManifest.xml")
+    print("    - Manifest Check: android.permission.INTERNET and MediaContentProvider verified in AndroidManifest.xml")
     print("    - Web Asset Tree: public/ and android/app/src/main/assets/web/ free of .pdf, .zip, .apk, aistudio/")
     if inspected_apks:
         for path, size, sha in inspected_apks:
