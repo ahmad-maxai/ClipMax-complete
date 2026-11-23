@@ -4412,7 +4412,6 @@ class ClipMaxImeService : InputMethodService() {
         submitSafely(mediaIoExecutor) {
             val savedOk = runCatching {
                 val ext = when (mimeType) {
-                    "image/gif" -> "gif"
                     "image/webp" -> "webp"
                     else -> "png"
                 }
@@ -4974,6 +4973,8 @@ class ClipMaxImeService : InputMethodService() {
                         })
                     }
                     tabsScroll.addView(tabsRow, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    header.addView(tabsScroll)
+                }
             }
         }
 
@@ -5994,8 +5995,7 @@ class ClipMaxImeService : InputMethodService() {
             hasActiveConnection = currentInputConnection != null,
             inputType = info?.inputType ?: 0,
             isPasswordTarget = isPasswordTarget,
-            acceptedMimeTypes = info?.contentMimeTypes,
-            isSticker = true
+            acceptedMimeTypes = info?.contentMimeTypes
         )
         val bestMime = if (outcome == MediaKeyboardSpec.MediaRichContentPolicy.MediaFallbackOutcome.ELIGIBLE) {
             MediaKeyboardSpec.MediaRichContentPolicy.resolveBestStickerMime(info?.contentMimeTypes) ?: "image/png"

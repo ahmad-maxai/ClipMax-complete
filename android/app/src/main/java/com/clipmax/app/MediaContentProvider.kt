@@ -11,7 +11,7 @@ import java.io.File
 import java.io.FileNotFoundException
 
 /**
- * Secure read-only ContentProvider for sharing local sticker and GIF files with target editors
+ * Secure read-only ContentProvider for sharing local sticker files with target editors
  * via InputConnection.commitContent() (API 26+).
  * Enforces strict canonical path confinement within filesDir/ime_media_cache/.
  */
@@ -47,7 +47,6 @@ class MediaContentProvider : ContentProvider() {
         val file = resolveFileFromUri(uri) ?: return "application/octet-stream"
         return when {
             file.name.endsWith(".png", ignoreCase = true) -> "image/png"
-            file.name.endsWith(".gif", ignoreCase = true) -> "image/gif"
             file.name.endsWith(".webp", ignoreCase = true) -> "image/webp"
             else -> "image/*"
         }

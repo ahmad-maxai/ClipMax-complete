@@ -168,10 +168,10 @@ class MediaKeyboardSpecTest {
     @Test
     fun testRichContentEligibilityWebpFallbackAndCacheNaming() {
         assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(null, "image/png"))
-        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(emptyArray(), "image/gif"))
+        assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(emptyArray(), "image/webp"))
         assertFalse(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("text/plain"), "image/png"))
         assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("image/png"), "image/png"))
-        assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("image/*"), "image/gif"))
+        assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("image/*"), "image/webp"))
         assertTrue(MediaKeyboardSpec.MediaRichContentPolicy.supportsMimeType(arrayOf("*/*"), "image/png"))
 
         // Sticker WebP fallback for hosts that accept WebP over PNG

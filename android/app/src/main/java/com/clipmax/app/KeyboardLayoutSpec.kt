@@ -717,7 +717,7 @@ internal object KeyboardLayoutSpec {
 
     /**
      * Computes the canonical shared expanded viewport height for media panels
-     * (Emoji, Kaomoji, Stickers, and GIFs), ensuring a generous, comfortable browsing
+     * (Emoji, Stickers, and Kaomoji), ensuring a generous, comfortable browsing
      * grid that never covers the active target text field or exceeds screen bounds.
      */
     fun computeMediaViewportSpecDp(
