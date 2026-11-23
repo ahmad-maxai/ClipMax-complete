@@ -4329,7 +4329,7 @@ class ClipMaxImeService : InputMethodService() {
         if (!removed) {
             val msg = AppUiStrings.stickerNotInHistoryStatus(keyboardLanguage)
             emojiPickerRoot?.announceForAccessibility(msg)
-            showMediaStatusBanner(msg, isError = false)
+            showMediaStatusBanner(msg)
             return
         }
         val prevScrollY = stickerScrollView?.scrollY ?: 0
