@@ -5933,11 +5933,20 @@ class ClipMaxImeService : InputMethodService() {
                     background = roundedRipple(colorAccent, dp(6f), 0)
                     setOnClickListener {
                         stickerPackManager.clearError(pack.packId)
-                        stickerPackManager.installPackAsync(pack.packId) {
-                            if (!serviceDestroyed && isStickerPackManagerOpen) {
-                                populateStickerPackStoreContent(container)
+                        stickerPackManager.installPackAsync(
+                            packId = pack.packId,
+                            onProgress = {
+                                if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                    populateStickerPackStoreContent(container)
+                                }
+                            },
+                            onComplete = { _, _ ->
+                                if (!serviceDestroyed && isStickerPackManagerOpen) {
+                                    populateStickerPackStoreContent(container)
+                                }
                             }
-                        }
+                        )
+                        populateStickerPackStoreContent(container)
                     }
                 })
                 card.addView(errRow)
