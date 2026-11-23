@@ -79,18 +79,10 @@ internal class StickerPackManager(
         return File(packDir(item.packId), "${item.id}.png")
     }
 
-    private fun deletedStickerIds(): Set<String> {
-        val raw = runCatching { prefs.getString(MediaKeyboardSpec.PREF_DELETED_STICKERS, null) }.getOrNull()
-        return MediaKeyboardSpec.DeletedStickerStore.decode(raw)
-    }
-
     fun hasAllPackFilesOnDisk(pack: StickerCatalog.StickerPack): Boolean {
         val dir = packDir(pack.packId)
         if (!dir.isDirectory) return false
-        val deletedIds = deletedStickerIds()
-        val remainingItems = pack.items.filterNot { it.id in deletedIds }
-        if (remainingItems.isEmpty()) return true
-        return remainingItems.all { item ->
+        return pack.items.all { item ->
             val f = File(dir, "${item.id}.png")
             f.isFile && f.length() > 0L
         }
@@ -229,30 +221,12 @@ internal class StickerPackManager(
         }.getOrDefault(false)
     }
 
-    fun deleteStickerLocalFiles(item: StickerCatalog.StickerItem, cacheManager: MediaCacheManager) {
-        ioExecutor.execute {
-            runCatching {
-                val localFile = localFileForSticker(item)
-                if (localFile.exists()) {
-                    localFile.delete()
-                }
-            }
-            cacheManager.removeCachedFile(MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item, "image/png"))
-            cacheManager.removeCachedFile(MediaKeyboardSpec.MediaRichContentPolicy.cacheFileNameForSticker(item, "image/webp"))
-        }
-    }
-
     private fun copyPackAssetsToLocal(pack: StickerCatalog.StickerPack, onProgress: ((Int) -> Unit)?) {
         val dir = packDir(pack.packId)
         if (!dir.exists() && !dir.mkdirs()) {
             throw IllegalStateException("Cannot create pack directory")
         }
-        val deletedIds = deletedStickerIds()
-        val items = pack.items.filterNot { it.id in deletedIds }
-        if (items.isEmpty()) {
-            onProgress?.invoke(100)
-            return
-        }
+        val items = pack.items
         val total = items.size.coerceAtLeast(1)
         items.forEachIndexed { idx, item ->
             val target = File(dir, "${item.id}.png")

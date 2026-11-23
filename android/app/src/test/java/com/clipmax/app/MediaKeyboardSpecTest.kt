@@ -257,32 +257,24 @@ class MediaKeyboardSpecTest {
     }
 
     @Test
-    fun testDeletedStickerStorePersistsSingleDeletionWithoutRemovingPackOrSiblings() {
-        val recent = MediaKeyboardSpec.RecentStickerHistory(listOf("react_great", "daily_hi"))
+    fun testRecentStickerHistoryRemovalPreservesPackFavoritesAndOtherRecents() {
+        val recent = MediaKeyboardSpec.RecentStickerHistory(listOf("react_great", "daily_hi", "react_love"))
         val favs = MediaKeyboardSpec.StickerFavoritesHistory(listOf("react_great", "react_love"))
-        val deleted = MediaKeyboardSpec.DeletedStickerStore()
-
-        assertFalse(deleted.markDeleted(""))
-        assertFalse(deleted.markDeleted("nonexistent_sticker_xyz"))
-        assertTrue(deleted.markDeleted("react_great"))
-        assertFalse(deleted.markDeleted("react_great"))
 
         assertTrue(recent.remove("react_great"))
-        assertTrue(favs.remove("react_great"))
+        assertFalse(recent.remove("react_great"))
+        assertFalse(recent.remove("nonexistent_sticker_xyz"))
 
-        val restored = MediaKeyboardSpec.DeletedStickerStore(
-            MediaKeyboardSpec.DeletedStickerStore.decode(deleted.encode())
+        val restored = MediaKeyboardSpec.RecentStickerHistory(
+            MediaKeyboardSpec.RecentStickerHistory.decode(recent.encode())
         )
-        assertTrue(restored.isDeleted("react_great"))
-        assertFalse(restored.isDeleted("react_love"))
-        assertFalse(restored.isDeleted("daily_hi"))
+        assertEquals(listOf("daily_hi", "react_love"), restored.items().map { it.id })
+        assertTrue(favs.isFavorite("react_great"))
+        assertTrue(favs.isFavorite("react_love"))
 
         val reactionsPack = StickerCatalog.findPack("reactions")!!
-        val remainingReactions = reactionsPack.items.filterNot { restored.isDeleted(it.id) }
-        assertEquals(reactionsPack.items.size - 1, remainingReactions.size)
-        assertTrue(remainingReactions.any { it.id == "react_love" })
-        assertEquals(listOf("daily_hi"), recent.items().map { it.id })
-        assertEquals(listOf("react_love"), favs.items().map { it.id })
+        assertTrue(reactionsPack.items.any { it.id == "react_great" })
+        assertTrue(StickerCatalog.search("great").any { it.id == "react_great" })
     }
 
     @Test
@@ -301,9 +293,11 @@ class MediaKeyboardSpecTest {
             assertFalse(AppUiStrings.stickerFavoritesEmpty(locale).contains("Long-press", ignoreCase = true))
             assertFalse(AppUiStrings.stickerFavoritesEmpty(locale).contains("لإضافته"))
             assertTrue(AppUiStrings.stickerAddedFavoriteStatus(locale, true).isNotBlank())
-            assertTrue(AppUiStrings.stickerDeletedStatus(locale).isNotBlank())
-            assertTrue(AppUiStrings.deleteStickerA11y(locale, "Great").isNotBlank())
-            assertTrue(AppUiStrings.dismissStickerDeleteOverlayA11y(locale).isNotBlank())
+            assertTrue(AppUiStrings.removeStickerFromHistoryLabel(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerRemovedFromHistoryStatus(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerNotInHistoryStatus(locale).isNotBlank())
+            assertTrue(AppUiStrings.removeStickerFromHistoryA11y(locale, "Great").isNotBlank())
+            assertTrue(AppUiStrings.dismissStickerHistoryOverlayA11y(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerTileA11y(locale, "Great").isNotBlank())
             assertTrue(AppUiStrings.actionDelete(locale).isNotBlank())
             assertTrue(AppUiStrings.cancelLabel(locale).isNotBlank())
@@ -319,8 +313,8 @@ class MediaKeyboardSpecTest {
             assertTrue(AppUiStrings.localizeStickerPackError(locale, "Install failed").isNotBlank())
         }
 
-        assertEquals("حذف", AppUiStrings.actionDelete("ar"))
-        assertEquals("Delete", AppUiStrings.actionDelete("en"))
+        assertEquals("Remove from history", AppUiStrings.removeStickerFromHistoryLabel("en"))
+        assertEquals("إزالة من السجل", AppUiStrings.removeStickerFromHistoryLabel("ar"))
         assertEquals("500 ك.ب", AppUiStrings.formatStorageSize("ar", 500 * 1024L))
         assertEquals("1.5 م.ب", AppUiStrings.formatStorageSize("ar", (1.5 * 1024 * 1024).toLong()))
         assertEquals("500 KB", AppUiStrings.formatStorageSize("en", 500 * 1024L))

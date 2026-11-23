@@ -383,20 +383,26 @@ internal object AppUiStrings {
         if (added) "Added sticker to Favourites ★" else "Removed sticker from Favourites"
     }
 
-    fun stickerDeletedStatus(locale: String?): String =
-        if (isArabic(locale)) "تم حذف الملصق." else "Sticker deleted."
+    fun removeStickerFromHistoryLabel(locale: String?): String =
+        if (isArabic(locale)) "إزالة من السجل" else "Remove from history"
 
-    fun deleteStickerA11y(locale: String?, label: String): String =
-        if (isArabic(locale)) "حذف ملصق $label" else "Delete $label sticker"
+    fun stickerRemovedFromHistoryStatus(locale: String?): String =
+        if (isArabic(locale)) "تمت إزالة الملصق من السجل." else "Removed sticker from history."
 
-    fun dismissStickerDeleteOverlayA11y(locale: String?): String =
-        if (isArabic(locale)) "إغلاق خيارات حذف الملصق" else "Dismiss sticker delete options"
+    fun stickerNotInHistoryStatus(locale: String?): String =
+        if (isArabic(locale)) "الملصق غير موجود في السجل." else "Sticker is not in recent history."
+
+    fun removeStickerFromHistoryA11y(locale: String?, label: String): String =
+        if (isArabic(locale)) "إزالة ملصق $label من السجل" else "Remove $label sticker from history"
+
+    fun dismissStickerHistoryOverlayA11y(locale: String?): String =
+        if (isArabic(locale)) "إغلاق خيارات السجل" else "Dismiss sticker history options"
 
     fun stickerTileA11y(locale: String?, label: String): String =
         if (isArabic(locale)) {
-            "ملصق $label. اضغط للإرسال. اضغط مطولاً للحذف."
+            "ملصق $label. اضغط للإرسال. اضغط مطولاً للإزالة من السجل."
         } else {
-            "$label sticker. Tap to send. Long press to delete."
+            "$label sticker. Tap to send. Long press to remove from history."
         }
 
     fun formatStorageSize(locale: String?, bytes: Long): String {
