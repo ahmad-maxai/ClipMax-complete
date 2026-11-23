@@ -505,6 +505,16 @@ internal object StickerCatalog {
 
     fun totalStickerCount(): Int = itemsById.size
 
+    fun localizedTitle(item: StickerItem, locale: String?): String {
+        if (!AppUiStrings.isArabic(locale)) return item.title
+        val pack = findPack(item.packId)
+        val arabicKeywords = item.keywords.filter { kw ->
+            kw.any { ch -> ch in '\u0600'..'\u06FF' }
+        }
+        val specificAr = arabicKeywords.firstOrNull { it.isNotBlank() }
+        return specificAr ?: pack?.titleAr ?: item.title
+    }
+
     fun search(query: String, allowedPackIds: Set<String>? = null): List<StickerItem> {
         val q = query.trim().lowercase(Locale.ROOT)
         val pool = if (allowedPackIds == null) PACKS else PACKS.filter { it.packId in allowedPackIds }

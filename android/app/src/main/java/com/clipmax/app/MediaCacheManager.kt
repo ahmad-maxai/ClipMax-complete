@@ -83,6 +83,13 @@ internal class MediaCacheManager(context: Context) {
         }.getOrDefault(0L)
     }
 
+    fun removeCachedFile(targetFileName: String): Boolean {
+        return runCatching {
+            val target = File(cacheDir, targetFileName)
+            !target.exists() || target.delete()
+        }.getOrDefault(false)
+    }
+
     fun clearCache() {
         runCatching {
             cacheDir.listFiles()?.forEach { it.deleteRecursively() }

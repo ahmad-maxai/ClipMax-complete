@@ -257,6 +257,35 @@ class MediaKeyboardSpecTest {
     }
 
     @Test
+    fun testDeletedStickerStorePersistsSingleDeletionWithoutRemovingPackOrSiblings() {
+        val recent = MediaKeyboardSpec.RecentStickerHistory(listOf("react_great", "daily_hi"))
+        val favs = MediaKeyboardSpec.StickerFavoritesHistory(listOf("react_great", "react_love"))
+        val deleted = MediaKeyboardSpec.DeletedStickerStore()
+
+        assertFalse(deleted.markDeleted(""))
+        assertFalse(deleted.markDeleted("nonexistent_sticker_xyz"))
+        assertTrue(deleted.markDeleted("react_great"))
+        assertFalse(deleted.markDeleted("react_great"))
+
+        assertTrue(recent.remove("react_great"))
+        assertTrue(favs.remove("react_great"))
+
+        val restored = MediaKeyboardSpec.DeletedStickerStore(
+            MediaKeyboardSpec.DeletedStickerStore.decode(deleted.encode())
+        )
+        assertTrue(restored.isDeleted("react_great"))
+        assertFalse(restored.isDeleted("react_love"))
+        assertFalse(restored.isDeleted("daily_hi"))
+
+        val reactionsPack = StickerCatalog.findPack("reactions")!!
+        val remainingReactions = reactionsPack.items.filterNot { restored.isDeleted(it.id) }
+        assertEquals(reactionsPack.items.size - 1, remainingReactions.size)
+        assertTrue(remainingReactions.any { it.id == "react_love" })
+        assertEquals(listOf("daily_hi"), recent.items().map { it.id })
+        assertEquals(listOf("react_love"), favs.items().map { it.id })
+    }
+
+    @Test
     fun testMediaStringsLocalizedInEnglishAndArabic() {
         for (locale in listOf("en", "ar")) {
             assertTrue(AppUiStrings.mediaEmojiTabA11y(locale).isNotBlank())
@@ -269,7 +298,15 @@ class MediaKeyboardSpecTest {
             assertTrue(AppUiStrings.mediaSaveFailedStatus(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerFavoritesLabel(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerFavoritesEmpty(locale).isNotBlank())
+            assertFalse(AppUiStrings.stickerFavoritesEmpty(locale).contains("Long-press", ignoreCase = true))
+            assertFalse(AppUiStrings.stickerFavoritesEmpty(locale).contains("لإضافته"))
             assertTrue(AppUiStrings.stickerAddedFavoriteStatus(locale, true).isNotBlank())
+            assertTrue(AppUiStrings.stickerDeletedStatus(locale).isNotBlank())
+            assertTrue(AppUiStrings.deleteStickerA11y(locale, "Great").isNotBlank())
+            assertTrue(AppUiStrings.dismissStickerDeleteOverlayA11y(locale).isNotBlank())
+            assertTrue(AppUiStrings.stickerTileA11y(locale, "Great").isNotBlank())
+            assertTrue(AppUiStrings.actionDelete(locale).isNotBlank())
+            assertTrue(AppUiStrings.cancelLabel(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerPackStoreTitle(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerPackInstallLabel(locale).isNotBlank())
             assertTrue(AppUiStrings.stickerPackRemoveLabel(locale).isNotBlank())
@@ -278,6 +315,19 @@ class MediaKeyboardSpecTest {
             assertTrue(AppUiStrings.stickerPacksNoneInstalled(locale).isNotBlank())
             assertTrue(AppUiStrings.retryLabel(locale).isNotBlank())
             assertTrue(AppUiStrings.emptyStickersMessage(locale).isNotBlank())
+            assertTrue(AppUiStrings.searchStickersPlaceholder(locale).isNotBlank())
+            assertTrue(AppUiStrings.localizeStickerPackError(locale, "Install failed").isNotBlank())
         }
+
+        assertEquals("حذف", AppUiStrings.actionDelete("ar"))
+        assertEquals("Delete", AppUiStrings.actionDelete("en"))
+        assertEquals("500 ك.ب", AppUiStrings.formatStorageSize("ar", 500 * 1024L))
+        assertEquals("1.5 م.ب", AppUiStrings.formatStorageSize("ar", (1.5 * 1024 * 1024).toLong()))
+        assertEquals("500 KB", AppUiStrings.formatStorageSize("en", 500 * 1024L))
+        assertEquals("فشل التثبيت.", AppUiStrings.localizeStickerPackError("ar", "Install failed"))
+
+        val great = StickerCatalog.findById("react_great")!!
+        assertEquals("Great", StickerCatalog.localizedTitle(great, "en"))
+        assertTrue(StickerCatalog.localizedTitle(great, "ar").any { it in '\u0600'..'\u06FF' })
     }
 }

@@ -374,13 +374,51 @@ internal object AppUiStrings {
         if (isArabic(locale)) "المفضلة" else "Favourites"
 
     fun stickerFavoritesEmpty(locale: String?): String =
-        if (isArabic(locale)) "اضغط مطولاً على أي ملصق لإضافته للمفضلة."
-        else "Long-press any sticker to save it to Favourites."
+        if (isArabic(locale)) "لا توجد ملصقات مفضلة بعد."
+        else "No favourite stickers yet."
 
     fun stickerAddedFavoriteStatus(locale: String?, added: Boolean): String = if (isArabic(locale)) {
         if (added) "تمت إضافة الملصق إلى المفضلة ★" else "تمت إزالة الملصق من المفضلة"
     } else {
         if (added) "Added sticker to Favourites ★" else "Removed sticker from Favourites"
+    }
+
+    fun stickerDeletedStatus(locale: String?): String =
+        if (isArabic(locale)) "تم حذف الملصق." else "Sticker deleted."
+
+    fun deleteStickerA11y(locale: String?, label: String): String =
+        if (isArabic(locale)) "حذف ملصق $label" else "Delete $label sticker"
+
+    fun dismissStickerDeleteOverlayA11y(locale: String?): String =
+        if (isArabic(locale)) "إغلاق خيارات حذف الملصق" else "Dismiss sticker delete options"
+
+    fun stickerTileA11y(locale: String?, label: String): String =
+        if (isArabic(locale)) {
+            "ملصق $label. اضغط للإرسال. اضغط مطولاً للحذف."
+        } else {
+            "$label sticker. Tap to send. Long press to delete."
+        }
+
+    fun formatStorageSize(locale: String?, bytes: Long): String {
+        val base = MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(bytes)
+        if (!isArabic(locale)) return base
+        return base
+            .replace(" KB", " ك.ب")
+            .replace(" MB", " م.ب")
+    }
+
+    fun localizeStickerPackError(locale: String?, rawError: String?): String {
+        val msg = rawError?.trim().orEmpty()
+        if (!isArabic(locale)) {
+            return msg.ifEmpty { "Failed to save pack locally." }
+        }
+        return when (msg) {
+            "", "Failed to save pack locally." -> "تعذر حفظ الحزمة محلياً."
+            "Unknown sticker pack." -> "حزمة ملصقات غير معروفة."
+            "Install failed" -> "فشل التثبيت."
+            "Cannot create pack directory" -> "تعذر إنشاء مجلد الحزم."
+            else -> msg
+        }
     }
 
     fun stickerPackStoreTitle(locale: String?): String =

@@ -297,6 +297,10 @@ class ClipMaxImeService : InputMethodService() {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_FAVORITE_STICKERS, null) }.getOrNull()
         MediaKeyboardSpec.StickerFavoritesHistory(MediaKeyboardSpec.StickerFavoritesHistory.decode(raw))
     }
+    private val deletedStickers: MediaKeyboardSpec.DeletedStickerStore by lazy {
+        val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_DELETED_STICKERS, null) }.getOrNull()
+        MediaKeyboardSpec.DeletedStickerStore(MediaKeyboardSpec.DeletedStickerStore.decode(raw))
+    }
     private val recentKaomojiHistory: MediaKeyboardSpec.RecentKaomojiHistory by lazy {
         val raw = runCatching { mediaPreferences.getString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, null) }.getOrNull()
         MediaKeyboardSpec.RecentKaomojiHistory(MediaKeyboardSpec.RecentKaomojiHistory.decode(raw))
@@ -4324,6 +4328,126 @@ class ClipMaxImeService : InputMethodService() {
             .apply()
     }
 
+    private fun persistDeletedStickers() {
+        mediaPreferences.edit()
+            .putString(MediaKeyboardSpec.PREF_DELETED_STICKERS, deletedStickers.encode())
+            .apply()
+    }
+
+    private fun deleteIndividualSticker(item: StickerCatalog.StickerItem) {
+        val prevScrollY = stickerScrollView?.scrollY ?: 0
+        deletedStickers.markDeleted(item.id)
+        persistDeletedStickers()
+        if (recentStickerHistory.remove(item.id)) {
+            persistRecentStickers()
+        }
+        if (favoriteStickers.remove(item.id)) {
+            persistFavoriteStickers()
+        }
+        stickerBitmapCache.remove(item.assetPath)
+        stickerPackManager.deleteStickerLocalFiles(item, mediaCacheManager)
+        emojiPickerRoot?.announceForAccessibility(AppUiStrings.stickerDeletedStatus(keyboardLanguage))
+        renderFullImeView()
+        val scrollAfter = stickerScrollView
+        if (scrollAfter != null && prevScrollY > 0) {
+            scrollAfter.post {
+                if (!serviceDestroyed && scrollAfter.isAttachedToWindow) {
+                    scrollAfter.scrollTo(0, prevScrollY)
+                }
+            }
+        }
+    }
+
+    private fun showStickerDeleteOverlay(item: StickerCatalog.StickerItem) {
+        val root = emojiPickerRoot ?: return
+        dismissEmojiRemoveOverlay()
+
+        val gen = mediaViewportGen
+        val localizedName = StickerCatalog.localizedTitle(item, keyboardLanguage)
+        val overlayHost = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            contentDescription = AppUiStrings.dismissStickerDeleteOverlayA11y(keyboardLanguage)
+            setBackgroundColor(0x66000000.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setOnClickListener { dismissEmojiRemoveOverlay() }
+        }
+
+        val cardBg = if (isClassicTheme) colorKeyBg else colorChipBg
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = uiLayoutDirection
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedDrawable(cardBg, dp(14f), colorKeyBorder)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(8f)
+            }
+
+            val previewIv = ImageView(this@ClipMaxImeService).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = localizedName
+            }
+            loadStickerBitmapAsync(item.assetPath, previewIv, gen, item)
+            addView(previewIv, LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+                marginEnd = dp(10)
+            })
+
+            val deleteBtn = TextView(this@ClipMaxImeService).apply {
+                text = AppUiStrings.actionDelete(keyboardLanguage)
+                textSize = 13.5f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(colorDangerText)
+                layoutDirection = uiLayoutDirection
+                textDirection = View.TEXT_DIRECTION_LOCALE
+                isClickable = true
+                isFocusable = true
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = roundedRipple(0, dp(8f), 0)
+                setIcon(IconDrawable(IconType.DELETE, colorDangerText, 15f), 8f)
+                contentDescription = AppUiStrings.deleteStickerA11y(keyboardLanguage, localizedName)
+                setOnClickListener {
+                    dismissEmojiRemoveOverlay()
+                    deleteIndividualSticker(item)
+                }
+            }
+            addView(deleteBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            val cancelBtn = TextView(this@ClipMaxImeService).apply {
+                text = AppUiStrings.cancelLabel(keyboardLanguage)
+                textSize = 12.5f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(colorModText)
+                layoutDirection = uiLayoutDirection
+                textDirection = View.TEXT_DIRECTION_LOCALE
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(10), dp(8), dp(8), dp(8))
+                background = roundedRipple(0, dp(8f), 0)
+                setOnClickListener { dismissEmojiRemoveOverlay() }
+            }
+            addView(cancelBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = dp(6)
+            })
+        }
+
+        overlayHost.addView(
+            card,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        )
+        emojiRemoveOverlay = overlayHost
+        root.addView(overlayHost)
+    }
+
     private fun persistRecentKaomojis() {
         mediaPreferences.edit()
             .putString(MediaKeyboardSpec.PREF_RECENT_KAOMOJI, recentKaomojiHistory.encode())
@@ -4484,10 +4608,12 @@ class ClipMaxImeService : InputMethodService() {
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setTextColor(colorKeyText)
             textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+            textDirection = View.TEXT_DIRECTION_LOCALE
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginEnd = dp(8)
         })
         val closeBtn = FrameLayout(this).apply {
+            contentDescription = AppUiStrings.closeButton(keyboardLanguage)
             background = roundedRipple(colorModBg, dp(11f), 0)
             isClickable = true
             isFocusable = true
@@ -4650,12 +4776,15 @@ class ClipMaxImeService : InputMethodService() {
                 setTextColor(colorKeyText)
                 setSingleLine(true)
                 ellipsize = TextUtils.TruncateAt.END
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                textDirection = View.TEXT_DIRECTION_LOCALE
             }
             val storageTv = TextView(this@ClipMaxImeService).apply {
-                text = "$installedCount/${StickerCatalog.PACKS.size} · ${MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(totalBytes)}"
+                text = "$installedCount/${StickerCatalog.PACKS.size} · ${AppUiStrings.formatStorageSize(keyboardLanguage, totalBytes)}"
                 textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorAccentText)
+                textDirection = View.TEXT_DIRECTION_LOCALE
                 setPadding(dp(8), dp(4), dp(8), dp(4))
                 background = roundedDrawable(colorAccent, dp(10f))
             }
@@ -4806,6 +4935,7 @@ class ClipMaxImeService : InputMethodService() {
                         background = roundedRipple(colorModBg, dp(navCtrlH / 2f), colorKeyBorder)
                         addView(createIconView(IconDrawable(IconType.PLUS, colorKeyText, 14f)), FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
                         setOnClickListener {
+                            dismissEmojiRemoveOverlay()
                             isStickerPackManagerOpen = true
                             renderFullImeView()
                         }
@@ -4826,11 +4956,16 @@ class ClipMaxImeService : InputMethodService() {
                         gravity = Gravity.CENTER_VERTICAL
                     }
                     stickerTabViews.clear()
-                    val installedPacks = stickerPackManager.installedPacks()
+                    val installedIds = stickerPackManager.installedPackIds()
+                    val installedPacks = stickerPackManager.installedPacks().filter { pack ->
+                        pack.items.any { !deletedStickers.isDeleted(it.id) }
+                    }
+                    val hasRecentStickers = recentStickerHistory.items().any { it.packId in installedIds && !deletedStickers.isDeleted(it.id) }
+                    val hasFavoriteStickers = favoriteStickers.items().any { it.packId in installedIds && !deletedStickers.isDeleted(it.id) }
                     val maxTabIdx = 1 + installedPacks.size
-                    val defaultStickerTab = if (selectedStickerSectionIdx == 0 && recentStickerHistory.items().isEmpty()) {
-                        if (favoriteStickers.items().isNotEmpty()) 1 else if (installedPacks.isNotEmpty()) 2 else 0
-                    } else if (selectedStickerSectionIdx == 1 && favoriteStickers.items().isEmpty() && installedPacks.isNotEmpty()) {
+                    val defaultStickerTab = if (selectedStickerSectionIdx == 0 && !hasRecentStickers) {
+                        if (hasFavoriteStickers) 1 else if (installedPacks.isNotEmpty()) 2 else 0
+                    } else if (selectedStickerSectionIdx == 1 && !hasFavoriteStickers && installedPacks.isNotEmpty()) {
                         selectedStickerSectionIdx
                     } else {
                         selectedStickerSectionIdx.coerceIn(0, maxTabIdx)
@@ -4866,16 +5001,19 @@ class ClipMaxImeService : InputMethodService() {
                                 }
                                 else -> {
                                     val pack = installedPacks[tabIdx - 2]
-                                    val repItem = pack.items.firstOrNull()
+                                    val remainingItems = pack.items.filterNot { deletedStickers.isDeleted(it.id) }
+                                    val iconItem = remainingItems.firstOrNull { it.assetPath == pack.iconAssetPath } ?: remainingItems.firstOrNull()
+                                    val iconAsset = iconItem?.assetPath ?: pack.iconAssetPath
                                     val iv = ImageView(this@ClipMaxImeService).apply {
                                         scaleType = ImageView.ScaleType.FIT_CENTER
                                         setPadding(dp(3), dp(3), dp(3), dp(3))
                                     }
-                                    loadStickerBitmapAsync(pack.iconAssetPath, iv, gen, repItem)
+                                    loadStickerBitmapAsync(iconAsset, iv, gen, iconItem)
                                     addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER))
                                 }
                             }
                             setOnClickListener {
+                                dismissEmojiRemoveOverlay()
                                 val targetView = stickerSectionViews.getOrNull(tabIdx)
                                 val targetY = targetView?.top ?: 0
                                 selectedStickerSectionIdx = stickerScrollTabController.onTabSelected(
@@ -4888,6 +5026,9 @@ class ClipMaxImeService : InputMethodService() {
                                     stickerScrollView?.smoothScrollTo(0, targetY)
                                 } else {
                                     stickerScrollView?.scrollTo(0, 0)
+                                }
+                                if (tabIdx == 1 && !hasFavoriteStickers) {
+                                    showMediaStatusBanner(AppUiStrings.stickerFavoritesEmpty(keyboardLanguage))
                                 }
                             }
                         }
@@ -5477,8 +5618,9 @@ class ClipMaxImeService : InputMethodService() {
     private fun createStickerTileView(item: StickerCatalog.StickerItem, heightPx: Int, gen: Int): FrameLayout {
         val tileBg = if (isClassicTheme) colorKeyBg else colorChipBg
         val isFav = favoriteStickers.isFavorite(item.id)
+        val localizedName = StickerCatalog.localizedTitle(item, keyboardLanguage)
         return FrameLayout(this).apply {
-            contentDescription = item.title
+            contentDescription = AppUiStrings.stickerTileA11y(keyboardLanguage, localizedName)
             isClickable = true
             isFocusable = true
             isLongClickable = true
@@ -5505,10 +5647,7 @@ class ClipMaxImeService : InputMethodService() {
             }
             setOnLongClickListener {
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                val nowFav = favoriteStickers.toggle(item.id)
-                persistFavoriteStickers()
-                showMediaStatusBanner(AppUiStrings.stickerAddedFavoriteStatus(keyboardLanguage, nowFav))
-                renderFullImeView()
+                showStickerDeleteOverlay(item)
                 true
             }
         }
@@ -5596,15 +5735,19 @@ class ClipMaxImeService : InputMethodService() {
         stickerSectionViews.clear()
 
         val installedIds = stickerPackManager.installedPackIds()
-        val installedPacks = stickerPackManager.installedPacks()
+        val installedPacks = stickerPackManager.installedPacks().filter { pack ->
+            pack.items.any { !deletedStickers.isDeleted(it.id) }
+        }
 
         if (mediaSearchQuery.isNotBlank()) {
             val matches = StickerCatalog.search(mediaSearchQuery, installedIds.takeIf { it.isNotEmpty() })
+                .filterNot { deletedStickers.isDeleted(it.id) }
             if (matches.isEmpty()) {
                 body.addView(TextView(this).apply {
                     text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
                     textSize = 13f
                     setTextColor(colorHintText)
+                    textDirection = View.TEXT_DIRECTION_LOCALE
                     gravity = Gravity.CENTER
                     setPadding(dp(16), dp(32), dp(16), dp(16))
                 })
@@ -5615,11 +5758,13 @@ class ClipMaxImeService : InputMethodService() {
             // Section 0: Recent stickers
             val recentSec = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
+                layoutDirection = uiLayoutDirection
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dp(8)
                 }
             }
-            val recentItems = recentStickerHistory.items().filter { it.packId in installedIds }
+            val recentItems = recentStickerHistory.items()
+                .filter { it.packId in installedIds && !deletedStickers.isDeleted(it.id) }
             if (recentItems.isNotEmpty()) {
                 recentSec.addView(TextView(this).apply {
                     text = AppUiStrings.emojiRecentLabel(keyboardLanguage)
@@ -5627,6 +5772,7 @@ class ClipMaxImeService : InputMethodService() {
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(colorHintText)
                     textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    textDirection = View.TEXT_DIRECTION_LOCALE
                     setPadding(dp(4), dp(4), dp(4), dp(6))
                 })
                 addStickerGridRows(recentSec, recentItems, cols, tileHeightPx, gapPx, gen)
@@ -5634,31 +5780,26 @@ class ClipMaxImeService : InputMethodService() {
             stickerSectionViews.add(recentSec)
             body.addView(recentSec)
 
-            // Section 1: Favourites (long-press any sticker to save)
+            // Section 1: Favourites
             val favSec = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
+                layoutDirection = uiLayoutDirection
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dp(8)
                 }
             }
-            val favItems = favoriteStickers.items().filter { it.packId in installedIds }
-            favSec.addView(TextView(this).apply {
-                text = AppUiStrings.stickerFavoritesLabel(keyboardLanguage)
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(colorHintText)
-                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                setPadding(dp(4), dp(4), dp(4), dp(6))
-            })
-            if (favItems.isEmpty()) {
+            val favItems = favoriteStickers.items()
+                .filter { it.packId in installedIds && !deletedStickers.isDeleted(it.id) }
+            if (favItems.isNotEmpty()) {
                 favSec.addView(TextView(this).apply {
-                    text = AppUiStrings.stickerFavoritesEmpty(keyboardLanguage)
-                    textSize = 11.5f
+                    text = AppUiStrings.stickerFavoritesLabel(keyboardLanguage)
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
                     setTextColor(colorHintText)
                     textAlignment = View.TEXT_ALIGNMENT_VIEW_START
-                    setPadding(dp(6), dp(2), dp(6), dp(6))
+                    textDirection = View.TEXT_DIRECTION_LOCALE
+                    setPadding(dp(4), dp(4), dp(4), dp(6))
                 })
-            } else {
                 addStickerGridRows(favSec, favItems, cols, tileHeightPx, gapPx, gen)
             }
             stickerSectionViews.add(favSec)
@@ -5666,52 +5807,72 @@ class ClipMaxImeService : InputMethodService() {
 
             // Sections 2..: Installed Sticker Packs
             if (installedPacks.isEmpty()) {
-                val emptyCard = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    setPadding(dp(14), dp(18), dp(14), dp(18))
-                    background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
-                }
-                emptyCard.addView(TextView(this).apply {
-                    text = AppUiStrings.stickerPacksNoneInstalled(keyboardLanguage)
-                    textSize = 12.5f
-                    setTextColor(colorKeyText)
-                    gravity = Gravity.CENTER
-                    setPadding(0, 0, 0, dp(10))
-                })
-                emptyCard.addView(TextView(this).apply {
-                    text = AppUiStrings.stickerPackInstallAllLabel(keyboardLanguage)
-                    textSize = 12f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(colorAccentText)
-                    setPadding(dp(16), dp(8), dp(16), dp(8))
-                    background = roundedRipple(colorAccent, dp(8f), 0)
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        isStickerPackManagerOpen = true
-                        renderFullImeView()
+                val hasInstalledPackWithZeroRemaining = stickerPackManager.installedPacks().isNotEmpty()
+                if (hasInstalledPackWithZeroRemaining) {
+                    body.addView(TextView(this).apply {
+                        text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
+                        textSize = 13f
+                        setTextColor(colorHintText)
+                        textDirection = View.TEXT_DIRECTION_LOCALE
+                        gravity = Gravity.CENTER
+                        setPadding(dp(16), dp(32), dp(16), dp(16))
+                    })
+                } else {
+                    val emptyCard = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutDirection = uiLayoutDirection
+                        gravity = Gravity.CENTER_HORIZONTAL
+                        setPadding(dp(14), dp(18), dp(14), dp(18))
+                        background = roundedDrawable(if (isClassicTheme) colorKeyBg else colorChipBg, dp(12f), colorKeyBorder)
                     }
-                })
-                body.addView(emptyCard)
+                    emptyCard.addView(TextView(this).apply {
+                        text = AppUiStrings.stickerPacksNoneInstalled(keyboardLanguage)
+                        textSize = 12.5f
+                        setTextColor(colorKeyText)
+                        textDirection = View.TEXT_DIRECTION_LOCALE
+                        gravity = Gravity.CENTER
+                        setPadding(0, 0, 0, dp(10))
+                    })
+                    emptyCard.addView(TextView(this).apply {
+                        text = AppUiStrings.stickerPackInstallAllLabel(keyboardLanguage)
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(colorAccentText)
+                        textDirection = View.TEXT_DIRECTION_LOCALE
+                        setPadding(dp(16), dp(8), dp(16), dp(8))
+                        background = roundedRipple(colorAccent, dp(8f), 0)
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener {
+                            dismissEmojiRemoveOverlay()
+                            isStickerPackManagerOpen = true
+                            renderFullImeView()
+                        }
+                    })
+                    body.addView(emptyCard)
+                }
             } else {
                 for (pack in installedPacks) {
+                    val remainingItems = pack.items.filterNot { deletedStickers.isDeleted(it.id) }
+                    if (remainingItems.isEmpty()) continue
                     val packSec = LinearLayout(this).apply {
                         orientation = LinearLayout.VERTICAL
+                        layoutDirection = uiLayoutDirection
                         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             bottomMargin = dp(10)
                         }
                     }
                     packSec.addView(TextView(this).apply {
                         val title = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
-                        text = "$title (${pack.items.size})"
+                        text = "$title (${remainingItems.size})"
                         textSize = 12f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(colorHintText)
                         textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                        textDirection = View.TEXT_DIRECTION_LOCALE
                         setPadding(dp(4), dp(6), dp(4), dp(6))
                     })
-                    addStickerGridRows(packSec, pack.items, cols, tileHeightPx, gapPx, gen)
+                    addStickerGridRows(packSec, remainingItems, cols, tileHeightPx, gapPx, gen)
                     stickerSectionViews.add(packSec)
                     body.addView(packSec)
                 }
@@ -5758,16 +5919,19 @@ class ClipMaxImeService : InputMethodService() {
             }
             summaryRow.addView(TextView(this).apply {
                 val installedCount = stickerPackManager.installedPacks().size
-                text = "$installedCount/${StickerCatalog.PACKS.size} · ${MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(stickerPackManager.totalDiskBytes())}"
+                text = "$installedCount/${StickerCatalog.PACKS.size} · ${AppUiStrings.formatStorageSize(keyboardLanguage, stickerPackManager.totalDiskBytes())}"
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorKeyText)
+                textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                textDirection = View.TEXT_DIRECTION_LOCALE
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val installAllBtn = TextView(this).apply {
                 text = AppUiStrings.stickerPackInstallAllLabel(keyboardLanguage)
                 textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorAccentText)
+                textDirection = View.TEXT_DIRECTION_LOCALE
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 background = roundedRipple(colorAccent, dp(8f), 0)
                 isClickable = true
@@ -5795,8 +5959,9 @@ class ClipMaxImeService : InputMethodService() {
             val installed = stickerPackManager.isPackInstalled(pack.packId)
             val progress = stickerPackManager.activeProgress(pack.packId)
             val err = stickerPackManager.lastError(pack.packId)
+            val remainingItems = pack.items.filterNot { deletedStickers.isDeleted(it.id) }
             val sizeBytes = if (installed) stickerPackManager.packDiskBytes(pack.packId) else pack.estimatedSizeBytes
-            val sizeLabel = MediaKeyboardSpec.StickerPackStorePolicy.formatStorageSize(sizeBytes)
+            val sizeLabel = AppUiStrings.formatStorageSize(keyboardLanguage, sizeBytes)
             val title = if (AppUiStrings.isArabic(keyboardLanguage)) pack.titleAr else pack.titleEn
             val desc = if (AppUiStrings.isArabic(keyboardLanguage)) pack.descAr else pack.descEn
 
@@ -5815,21 +5980,25 @@ class ClipMaxImeService : InputMethodService() {
                 layoutDirection = uiLayoutDirection
                 gravity = Gravity.CENTER_VERTICAL
             }
+            val iconItem = remainingItems.firstOrNull { it.assetPath == pack.iconAssetPath } ?: remainingItems.firstOrNull()
+            val iconAsset = iconItem?.assetPath ?: pack.iconAssetPath
             val iconIv = ImageView(this).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = title
             }
-            loadStickerBitmapAsync(pack.iconAssetPath, iconIv, gen, pack.items.firstOrNull())
+            loadStickerBitmapAsync(iconAsset, iconIv, gen, iconItem)
             topRow.addView(iconIv, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(8) })
 
             val infoCol = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
             }
             infoCol.addView(TextView(this).apply {
-                text = "$title · ${pack.items.size} · $sizeLabel"
+                text = "$title · ${remainingItems.size} · $sizeLabel"
                 textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(colorKeyText)
                 textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                textDirection = View.TEXT_DIRECTION_LOCALE
             })
             infoCol.addView(TextView(this).apply {
                 text = desc
@@ -5838,6 +6007,7 @@ class ClipMaxImeService : InputMethodService() {
                 setSingleLine(true)
                 ellipsize = TextUtils.TruncateAt.END
                 textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                textDirection = View.TEXT_DIRECTION_LOCALE
             })
             topRow.addView(infoCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = dp(8)
@@ -5857,6 +6027,7 @@ class ClipMaxImeService : InputMethodService() {
                     textSize = 11.5f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(if (installed) colorModText else colorAccentText)
+                    textDirection = View.TEXT_DIRECTION_LOCALE
                     setPadding(dp(12), dp(6), dp(12), dp(6))
                     background = roundedRipple(if (installed) colorModBg else colorAccent, dp(8f), if (installed) colorKeyBorder else 0)
                     isClickable = true
@@ -5893,9 +6064,10 @@ class ClipMaxImeService : InputMethodService() {
                 layoutDirection = uiLayoutDirection
                 setPadding(0, dp(8), 0, 0)
             }
-            for (sample in pack.items.take(4)) {
+            for (sample in remainingItems.take(4)) {
                 val thumb = ImageView(this).apply {
                     scaleType = ImageView.ScaleType.FIT_CENTER
+                    contentDescription = StickerCatalog.localizedTitle(sample, keyboardLanguage)
                     setPadding(dp(3), dp(3), dp(3), dp(3))
                     background = roundedDrawable(if (isClassicTheme) colorAltDeepBg else colorModBg, dp(8f))
                 }
@@ -5920,15 +6092,20 @@ class ClipMaxImeService : InputMethodService() {
                     setPadding(0, dp(6), 0, 0)
                 }
                 errRow.addView(TextView(this).apply {
-                    text = err
+                    text = AppUiStrings.localizeStickerPackError(keyboardLanguage, err)
                     textSize = 11f
                     setTextColor(colorDangerText)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    textAlignment = View.TEXT_ALIGNMENT_VIEW_START
+                    textDirection = View.TEXT_DIRECTION_LOCALE
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(8)
+                })
                 errRow.addView(TextView(this).apply {
                     text = AppUiStrings.retryLabel(keyboardLanguage)
                     textSize = 11f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(colorAccentText)
+                    textDirection = View.TEXT_DIRECTION_LOCALE
                     setPadding(dp(10), dp(4), dp(10), dp(4))
                     background = roundedRipple(colorAccent, dp(6f), 0)
                     setOnClickListener {
@@ -5999,6 +6176,7 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun handleStickerPress(item: StickerCatalog.StickerItem) {
         dismissPasteUndoCapsule()
+        dismissEmojiRemoveOverlay()
         val info = currentInputEditorInfo
         val outcome = MediaKeyboardSpec.MediaRichContentPolicy.evaluateMediaEligibility(
             hasActiveConnection = currentInputConnection != null,
@@ -6449,12 +6627,16 @@ class ClipMaxImeService : InputMethodService() {
             }
 
             MediaKeyboardSpec.MediaSubMode.STICKERS -> {
-                val list = StickerCatalog.search(mediaSearchQuery).take(16)
+                val installedIds = stickerPackManager.installedPackIds()
+                val list = StickerCatalog.search(mediaSearchQuery, installedIds.takeIf { it.isNotEmpty() })
+                    .filterNot { deletedStickers.isDeleted(it.id) }
+                    .take(16)
                 if (list.isEmpty()) {
                     container.addView(TextView(this).apply {
                         text = AppUiStrings.emptyStickersMessage(keyboardLanguage)
                         textSize = 11f
                         setTextColor(colorHintText)
+                        textDirection = View.TEXT_DIRECTION_LOCALE
                         setPadding(dp(8), dp(2), dp(8), dp(2))
                     })
                     return
@@ -6462,13 +6644,13 @@ class ClipMaxImeService : InputMethodService() {
                 val gen = mediaViewportGen
                 list.forEach { st ->
                     val tile = FrameLayout(this).apply {
-                        contentDescription = st.title
+                        contentDescription = StickerCatalog.localizedTitle(st, keyboardLanguage)
                         background = roundedRipple(colorChipBg, dp(8f), colorChipBorder)
                         val iv = ImageView(this@ClipMaxImeService).apply {
                             scaleType = ImageView.ScaleType.FIT_CENTER
                             setPadding(dp(3), dp(3), dp(3), dp(3))
                         }
-                        loadStickerBitmapAsync(st.assetPath, iv, gen)
+                        loadStickerBitmapAsync(st.assetPath, iv, gen, st)
                         addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
                         setOnClickListener {
                             isMediaSearchTyping = false
@@ -10300,13 +10482,13 @@ class ClipMaxImeService : InputMethodService() {
 
     private fun Button.setIcon(icon: IconDrawable, paddingDp: Float = 3f) {
         icon.setBounds(0, 0, icon.intrinsicWidth, icon.intrinsicHeight)
-        setCompoundDrawables(icon, null, null, null)
+        setCompoundDrawablesRelative(icon, null, null, null)
         compoundDrawablePadding = dp(paddingDp).toInt()
     }
 
     private fun TextView.setIcon(icon: IconDrawable, paddingDp: Float = 3f) {
         icon.setBounds(0, 0, icon.intrinsicWidth, icon.intrinsicHeight)
-        setCompoundDrawables(icon, null, null, null)
+        setCompoundDrawablesRelative(icon, null, null, null)
         compoundDrawablePadding = dp(paddingDp).toInt()
     }
 

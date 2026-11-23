@@ -21,6 +21,7 @@ internal object MediaKeyboardSpec {
     const val PREF_FAVORITE_STICKERS = "favorite_stickers"
     const val PREF_INSTALLED_STICKER_PACKS = "installed_sticker_packs"
     const val PREF_STICKER_PACKS_INIT = "sticker_packs_v2_initialized"
+    const val PREF_DELETED_STICKERS = "deleted_stickers"
     const val PREF_RECENT_KAOMOJI = "recent_kaomoji"
     const val MAX_RECENT_MEDIA = 24
     const val MAX_FAVORITE_STICKERS = 64
@@ -160,6 +161,10 @@ internal object MediaKeyboardSpec {
             }
         }
 
+        fun remove(stickerId: String): Boolean {
+            return ids.remove(stickerId)
+        }
+
         fun encode(): String = ids.joinToString("\n")
 
         companion object {
@@ -197,6 +202,8 @@ internal object MediaKeyboardSpec {
             }
         }
 
+        fun remove(stickerId: String): Boolean = ids.remove(stickerId)
+
         fun items(): List<StickerCatalog.StickerItem> = ids.mapNotNull { StickerCatalog.findById(it) }
 
         fun encode(): String = ids.joinToString("\n")
@@ -205,6 +212,40 @@ internal object MediaKeyboardSpec {
             fun decode(raw: String?): List<String> {
                 if (raw.isNullOrBlank()) return emptyList()
                 return raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_FAVORITE_STICKERS)
+            }
+        }
+    }
+
+    /**
+     * Pure JVM store tracking individual user-deleted sticker IDs so deleted stickers
+     * stay removed across restarts without deleting their parent pack or sibling stickers.
+     */
+    class DeletedStickerStore(initialIds: Collection<String> = emptyList()) {
+        private val ids = LinkedHashSet<String>().apply {
+            initialIds
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && StickerCatalog.findById(it) != null }
+                .forEach { add(it) }
+        }
+
+        fun isDeleted(stickerId: String): Boolean = stickerId in ids
+
+        fun deletedIds(): Set<String> = ids.toSet()
+
+        fun markDeleted(stickerId: String): Boolean {
+            if (stickerId.isBlank() || StickerCatalog.findById(stickerId) == null) return false
+            return ids.add(stickerId)
+        }
+
+        fun encode(): String = ids.joinToString("\n")
+
+        companion object {
+            fun decode(raw: String?): Set<String> {
+                if (raw.isNullOrBlank()) return emptySet()
+                return raw.split('\n')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && StickerCatalog.findById(it) != null }
+                    .toSet()
             }
         }
     }
