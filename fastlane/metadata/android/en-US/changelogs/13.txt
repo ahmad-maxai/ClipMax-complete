@@ -1,0 +1,6 @@
+ClipMax v0.5.2 (versionCode 13):
+* Expanded the offline native media keyboard into three dedicated panels: Emoji, Stickers, and Kaomoji with search, recents, and favourites.
+* Added 349 bundled offline stickers across 10 local sticker packs with pack management, image caching, and PNG/WebP content insertion.
+* Added long-press sticker history removal ("Remove from history" / "إزالة من السجل") that removes only the Recent history entry while keeping installed packs, assets, and favourites intact.
+* Completed English and Arabic (العربية) RTL localization across the media browser, pack manager, and history actions, with live layout updates on language switch.
+* Refined the three-stage first-launch onboarding layout, floating translator view, clipboard expiry retention handling, and IME main-thread typing responsiveness.
